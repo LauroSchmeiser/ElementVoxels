@@ -3,7 +3,7 @@
 
 int main() {
     // Create the game instance
-    gl3::Game game(800, 600, "Voxel Test");
+    gl3::Game game(1920, 1200, "Voxel Test");
 
     try {
         game.run();

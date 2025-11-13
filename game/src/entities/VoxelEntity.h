@@ -12,7 +12,7 @@ namespace gl3 {
     class VoxelEntity : public Entity {
     public:
         VoxelEntity(Shader shader, Mesh mesh, glm::vec3 position)
-                : Entity(std::move(shader), std::move(mesh), position, 0.0f, glm::vec3(1.0f), glm::vec4(1.0f))
+                : Entity(shader, std::move(mesh), position, 0.0f, glm::vec3(1.0f), glm::vec4(1.0f))
         {}
 
     void update(Game* game, float dt) override {

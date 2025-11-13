@@ -13,6 +13,7 @@ namespace gl3 {
     class Game {
     public:
         Game(int width, int height, const std::string &title);
+
         virtual ~Game();
         void run();
         glm::mat4 calculateMvpMatrix(glm::vec3 position, float zRotationInDegrees, glm::vec3 scale);
@@ -35,10 +36,8 @@ namespace gl3 {
         float accumulator = 0.f;
         glm::vec3 cameraPos = glm::vec3(0.0f, 0.0f, 50.0f);
         glm::vec2 cameraRotation = glm::vec2(-90.0f, 0.0f); // pitch, yaw
-        float cameraSpeed = 20.0f; // units per second
-        float mouseSensitivity = 0.1f;
-        double lastMouseX, lastMouseY;
-        bool firstMouse = true;
+        int windowWidth, windowHeight;
+
 
     };
 }
