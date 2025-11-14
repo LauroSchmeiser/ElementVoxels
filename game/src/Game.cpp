@@ -114,24 +114,37 @@ namespace gl3 {
         struct Planet {
             glm::vec3 position;
             glm::vec3 scale;
-            float rotation;
+            float rotationAngle;
             glm::vec3 rotationAxis;
+            float rotationSpeed;
+            glm::vec3 color;     // << NEW
         };
+
+
         std::vector<Planet> planets;
 
         std::mt19937 rng(std::random_device{}());
         std::uniform_real_distribution<float> distPos(-100.0f, 100.0f);
         std::uniform_real_distribution<float> distScale(0.5f, 3.0f);
         std::uniform_real_distribution<float> distAxis(-1.0f, 1.0f);
+        std::uniform_real_distribution<float> distSpeed(5.0f, 10.0f);
 
-        for (int i = 0; i < 20; ++i) {
+        std::uniform_real_distribution<float> distColor(0.3f, 1.0f);
+
+        for (int i = 0; i < 100; ++i) {
+            glm::vec3 axis = glm::normalize(glm::vec3(distAxis(rng), distAxis(rng), distAxis(rng)));
+            if (glm::length(axis) < 0.001f) axis = glm::vec3(0, 1, 0);
+
             planets.push_back({
                                       glm::vec3(distPos(rng), distPos(rng), distPos(rng)),
                                       glm::vec3(distScale(rng)),
                                       0.0f,
-                                      glm::normalize(glm::vec3(distAxis(rng), distAxis(rng), distAxis(rng)))
+                                      axis,
+                                      distSpeed(rng),
+                                      glm::vec3(distColor(rng), distColor(rng), distColor(rng))  // << ONE color per planet
                               });
         }
+
 
         // --- Camera setup ---
         cameraPos = glm::vec3(0.0f, 0.0f, 80.0f);
@@ -151,16 +164,18 @@ namespace gl3 {
             voxelShader.use();
 
             for (auto &planet : planets) {
-                // Spin each planet slowly
-                planet.rotation += deltaTime * 15.0f;
+                // Each planet spins around its own random axis
+                planet.rotationAngle += deltaTime * planet.rotationSpeed;
+                if (planet.rotationAngle > 360.0f) planet.rotationAngle -= 360.0f;
 
                 glm::mat4 model = glm::mat4(1.0f);
                 model = glm::translate(model, planet.position);
-                model = glm::rotate(model, glm::radians(planet.rotation), planet.rotationAxis);
+                model = glm::rotate(model, glm::radians(planet.rotationAngle), planet.rotationAxis);
                 model = glm::scale(model, planet.scale);
 
-                glm::mat4 mvp = calculateMvpMatrix(planet.position, planet.rotation, planet.scale);
+                glm::mat4 mvp = calculateMvpMatrix(planet.position, planet.rotationAngle, planet.scale);
 
+                voxelShader.setVec3("uniformColor", planet.color);
                 voxelShader.setMatrix("model", model);
                 voxelShader.setMatrix("mvp", mvp);
 
@@ -171,6 +186,7 @@ namespace gl3 {
             glfwPollEvents();
         }
     }
+
 
 
 

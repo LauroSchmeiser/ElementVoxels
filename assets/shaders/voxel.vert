@@ -8,10 +8,12 @@ out vec3 normal;
 
 uniform mat4 mvp;
 uniform mat4 model;
+uniform vec3 uniformColor;
+
 
 void main() {
     fragPos = vec3(model * vec4(aPos, 1.0));
-    vertexColor = aColor;
+    vertexColor = uniformColor;
     normal = aPos == vec3(0.0) ? vec3(0,0,1) : normalize(aPos);
     gl_Position = mvp * vec4(aPos, 1.0);
 }

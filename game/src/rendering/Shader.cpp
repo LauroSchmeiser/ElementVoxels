@@ -60,6 +60,17 @@ namespace gl3 {
         glUniform4fv(uniformLocation, 1, glm::value_ptr(vector));
     }
 
+    void Shader::setVec3(const std::string& uniformName, glm::vec3 vector) const {
+        auto loc = glGetUniformLocation(shaderProgram, uniformName.c_str());
+        glUniform3fv(loc, 1, glm::value_ptr(vector));
+    }
+
+
+    void Shader::setBool(const std::string &uniformName, bool value) const {
+        auto uniformLocation = glGetUniformLocation(shaderProgram, uniformName.c_str());
+        glUniform1i(uniformLocation, value ? 1 : 0);
+    }
+
     void Shader::use() const {
         glUseProgram(shaderProgram);
     }

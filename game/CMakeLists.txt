@@ -21,7 +21,9 @@ add_executable(${EXE_FILE} ${SOURCE_FILES}
         src/rendering/TestChunk.cpp
         src/rendering/TestChunk.h
         src/entities/VoxelEntity.cpp
-        src/entities/VoxelEntity.h)
+        src/entities/VoxelEntity.h
+        src/rendering/smoothMesher.h
+        src/rendering/smoothMesher.cpp)
 
 
 

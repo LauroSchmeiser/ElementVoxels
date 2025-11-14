@@ -25,6 +25,8 @@ namespace gl3 {
 
         void setMatrix(const std::string &uniformName, glm::mat4 matrix) const;
         void setVector(const std::string &uniformName, glm::vec4 vector) const;
+        void setBool(const std::string &uniformName, bool value) const;
+        void setVec3(const std::string& uniformName, glm::vec3 vector) const;
         void use() const;
 
     private:
