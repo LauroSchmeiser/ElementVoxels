@@ -6,7 +6,7 @@ namespace gl3 {
     static inline float sample(const Chunk &c, int x, int y, int z) {
         return (c.voxels[x][y][z].type > 0) ? 1.0f : 0.0f;
     }
-
+/*
     Mesh generateSmoothPlanetMesh(const Chunk &chunk) {
         std::vector<glm::vec3> verts;
         std::vector<glm::vec3> norms;
@@ -58,9 +58,5 @@ namespace gl3 {
             }
         }
 
-        // Construct mesh
-        Mesh mesh;
-        mesh.loadData(verts, norms, idx);
-        return mesh;
-    }
+    }*/
 }
