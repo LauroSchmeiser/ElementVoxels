@@ -6,6 +6,7 @@ namespace gl3 {
     struct Voxel {
         uint8_t type = 0;
         glm::vec3 color = glm::vec3(1.0f);
+        float emission=0.0f;
         bool isSolid() const { return type != 0; }
     };
 

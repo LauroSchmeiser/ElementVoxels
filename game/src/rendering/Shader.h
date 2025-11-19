@@ -27,6 +27,7 @@ namespace gl3 {
         void setVector(const std::string &uniformName, glm::vec4 vector) const;
         void setBool(const std::string &uniformName, bool value) const;
         void setVec3(const std::string& uniformName, glm::vec3 vector) const;
+        void setFloat(const std::string &uniformName, float value) const;
         void use() const;
 
     private:

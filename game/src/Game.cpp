@@ -7,6 +7,7 @@
 #include "rendering/TestChunk.h"
 #include "rendering/Shader.h"
 #include "entities/VoxelEntity.h"
+#include "rendering/smoothMesher.h"
 
 namespace gl3 {
     void Game::framebuffer_size_callback(GLFWwindow* window, int width, int height) {
@@ -107,8 +108,37 @@ namespace gl3 {
             }
         }
 
+        // --- Create one base voxel chunk (sphere) ---
+        Chunk sunChunk;
+
+        for (int x = 0; x < CHUNK_SIZE; ++x) {
+            for (int y = 0; y < CHUNK_SIZE; ++y) {
+                for (int z = 0; z < CHUNK_SIZE; ++z) {
+                    float dx = x - CHUNK_SIZE / 2.0f;
+                    float dy = y - CHUNK_SIZE / 2.0f;
+                    float dz = z - CHUNK_SIZE / 2.0f;
+                    float dist = sqrt(dx * dx + dy * dy + dz * dz);
+
+                    auto &voxel = sunChunk.voxels[x][y][z];
+                    if (dist < CHUNK_SIZE / 2.0f) {
+                        voxel.type = 1;
+                        voxel.color = glm::vec3(
+                                (float)x / CHUNK_SIZE,
+                                (float)y / CHUNK_SIZE,
+                                (float)z / CHUNK_SIZE
+                        );
+                    } else {
+                        voxel.type = 0;
+                    }
+                    voxel.emission=5.0f;
+                }
+            }
+        }
+
         // --- Generate mesh from voxel chunk ---
         Mesh planetMesh = generateVoxelChunkMesh(baseChunk);
+        Mesh sunMesh = generateVoxelChunkMesh(sunChunk);
+
 
         // --- Generate planet transforms ---
         struct Planet {
@@ -120,7 +150,7 @@ namespace gl3 {
             glm::vec3 color;     // << NEW
         };
 
-
+        std::vector<Planet> suns;
         std::vector<Planet> planets;
 
         std::mt19937 rng(std::random_device{}());
@@ -131,6 +161,19 @@ namespace gl3 {
 
         std::uniform_real_distribution<float> distColor(0.3f, 1.0f);
 
+        for (int j = 0; j < 3; ++j) {
+                glm::vec3 axis = glm::normalize(glm::vec3(distAxis(rng), distAxis(rng), distAxis(rng)));
+                if (glm::length(axis) < 0.001f) axis = glm::vec3(0, 1, 0);
+
+                suns.push_back({
+                                       glm::vec3(distPos(rng), distPos(rng), distPos(rng)),
+                                       glm::vec3(5 * distScale(rng)),
+                                       0.0f,
+                                       axis,
+                                       distSpeed(rng),
+                                       glm::vec3(1.0f, 1.0f, 0)
+                               });
+            }
         for (int i = 0; i < 100; ++i) {
             glm::vec3 axis = glm::normalize(glm::vec3(distAxis(rng), distAxis(rng), distAxis(rng)));
             if (glm::length(axis) < 0.001f) axis = glm::vec3(0, 1, 0);
@@ -163,6 +206,31 @@ namespace gl3 {
 
             voxelShader.use();
 
+            for(auto & sun : suns){
+                // Each planet spins around its own random axis
+                sun.rotationAngle += deltaTime * sun.rotationSpeed;
+                if (sun.rotationAngle > 360.0f) sun.rotationAngle -= 360.0f;
+
+                glm::mat4 model = glm::mat4(1.0f);
+                model = glm::translate(model, sun.position);
+                model = glm::rotate(model, glm::radians(sun.rotationAngle), sun.rotationAxis);
+                model = glm::scale(model, sun.scale);
+
+                glm::mat4 mvp = calculateMvpMatrix(sun.position, sun.rotationAngle, sun.scale);
+
+                voxelShader.setVec3("uniformColor", sun.color);
+                float combinedLight=10.0f;
+                glm::vec3 combinedDir= glm::vec3(0,0,0);
+                combinedLight= 1000.0f;
+                combinedDir=glm::vec3(0,0,0);
+                voxelShader.setFloat("emission", 1000.0f);
+                voxelShader.setFloat("lightIntensity",combinedLight);
+                voxelShader.setMatrix("model", model);
+                voxelShader.setVec3("lightPos",combinedDir);
+                voxelShader.setMatrix("mvp", mvp);
+                sunMesh.draw();
+            }
+
             for (auto &planet : planets) {
                 // Each planet spins around its own random axis
                 planet.rotationAngle += deltaTime * planet.rotationSpeed;
@@ -176,9 +244,23 @@ namespace gl3 {
                 glm::mat4 mvp = calculateMvpMatrix(planet.position, planet.rotationAngle, planet.scale);
 
                 voxelShader.setVec3("uniformColor", planet.color);
-                voxelShader.setMatrix("model", model);
-                voxelShader.setMatrix("mvp", mvp);
+                float combinedLight = 0.0f;
+                glm::vec3 lightDir = glm::vec3(0);
 
+                for (auto &sun : suns) {
+                    float dist = glm::distance(planet.position, sun.position);
+
+                    combinedLight += 100 / (dist * dist);
+                    lightDir += glm::normalize(sun.position - planet.position);
+                }
+
+                lightDir = glm::normalize(lightDir);
+
+                voxelShader.setFloat("emission", 0.0f);
+                voxelShader.setFloat("lightIntensity",combinedLight);
+                voxelShader.setMatrix("model", model);
+                voxelShader.setVec3("lightPos",lightDir);
+                voxelShader.setMatrix("mvp", mvp);
                 planetMesh.draw();
             }
 

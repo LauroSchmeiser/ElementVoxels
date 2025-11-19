@@ -70,6 +70,10 @@ namespace gl3 {
         auto uniformLocation = glGetUniformLocation(shaderProgram, uniformName.c_str());
         glUniform1i(uniformLocation, value ? 1 : 0);
     }
+    void Shader::setFloat(const std::string &uniformName, float value) const {
+        auto uniformLocation = glGetUniformLocation(shaderProgram, uniformName.c_str());
+        glUniform1i(uniformLocation, value ? value : 0);
+    }
 
     void Shader::use() const {
         glUseProgram(shaderProgram);
