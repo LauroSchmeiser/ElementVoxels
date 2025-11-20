@@ -35,7 +35,17 @@ target_link_libraries(${EXE_FILE} PRIVATE glad glfw glm soloud)
 
 target_compile_definitions(${EXE_FILE} PRIVATE ASSET_ROOT=assets)
 
+file(GLOB_RECURSE ASSET_FILES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/assets/*)
+set(COPIED_FILES)
 # copy assets to output directory before build
-add_custom_command(TARGET ${EXE_FILE} PRE_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_SOURCE_DIR}/assets $<TARGET_FILE_DIR:${EXE_FILE}>/assets)
+foreach (FILE IN LISTS ASSET_FILES)
+    file(RELATIVE_PATH REL ${CMAKE_SOURCE_DIR} ${FILE})
+    set(OUTPUT_FILE "${CMAKE_CURRENT_BINARY_DIR}/${REL}")
+    add_custom_command(
+            OUTPUT ${OUTPUT_FILE}
+            COMMAND ${CMAKE_COMMAND} -E copy ${FILE} ${OUTPUT_FILE}
+            DEPENDS ${FILE})
+    list(APPEND COPIED_FILES ${OUTPUT_FILE})
+endforeach ()
+add_custom_target(copyAssets DEPENDS ${COPIED_FILES})
+add_dependencies(${EXE_FILE} copyAssets)
