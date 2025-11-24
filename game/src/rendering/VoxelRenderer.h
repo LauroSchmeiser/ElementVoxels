@@ -17,7 +17,7 @@ namespace gl3 {
     };
 
 
-    constexpr int CHUNK_SIZE = 7;
+    constexpr int CHUNK_SIZE =12;
 
     struct Chunk {
         Voxel voxels[CHUNK_SIZE][CHUNK_SIZE][CHUNK_SIZE];

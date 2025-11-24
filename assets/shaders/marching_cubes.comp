@@ -82,7 +82,8 @@ vec3 computeNormal(vec3 worldPos) {
 
     vec3 g = vec3(dX1 - dX0, dY1 - dY0, dZ1 - dZ0);
     float len = length(g);
-    return (len > 0.0001) ? normalize(g) : vec3(0.0, 1.0, 0.0);
+    // return outward normal; you may flip sign if you prefer
+    return (len > 0.0001) ? -normalize(g) : vec3(0.0, 1.0, 0.0);
 }
 
 // helper to read triTable row: triTable is flattened as [case*16 + j]
@@ -121,8 +122,11 @@ void main() {
         c[i] = sampleColor(corners[i]);
     }
 
+    const float EPS = 1e-6;
     int caseIndex = 0;
-    for (int i=0;i<8;i++) if (d[i] > 0.0) caseIndex |= (1 << i);
+    for (int i=0;i<8;i++) {
+        if (d[i] >= -EPS) caseIndex |= (1 << i);
+    }
 
     int e = edgeTable[caseIndex];
     if (e == 0) return; // no triangles
@@ -133,8 +137,9 @@ void main() {
     vec3 pos[8];
     for (int i=0;i<8;i++) pos[i] = voxelWorldPos(corners[i]);
 
-    const int edgeToCornerA[12] = int[](0,1,1,0,4,5,5,4,0,1,2,3);
-    const int edgeToCornerB[12] = int[](1,2,3,3,5,6,7,7,4,5,6,7);
+    // STANDARD edge->corner mapping (important)
+    const int edgeToCornerA[12] = int[](0,1,2,3,4,5,6,7,0,1,2,3);
+    const int edgeToCornerB[12] = int[](1,2,3,0,5,6,7,4,4,5,6,7);
 
     for (int ei = 0; ei < 12; ++ei) {
         if ((e & (1 << ei)) != 0) {
@@ -154,17 +159,46 @@ void main() {
         int i1 = flattenedTriTable[base + tri + 1];
         int i2 = flattenedTriTable[base + tri + 2];
 
+        // gather triangle vertices & colors
         vec3 v0 = edgeVertex[i0];
         vec3 v1 = edgeVertex[i1];
         vec3 v2 = edgeVertex[i2];
 
+        vec3 col0 = edgeColor[i0];
+        vec3 col1 = edgeColor[i1];
+        vec3 col2 = edgeColor[i2];
+
+        // compute geometric face normal
+        vec3 fn = cross(v1 - v0, v2 - v0);
+        float fnLen = length(fn);
+        if (fnLen > 1e-9) {
+            fn = normalize(fn);
+        } else {
+            fn = vec3(0.0, 1.0, 0.0); // fallback
+        }
+
+        // compute gradient-based normal (points outward for SDF). Use vertex 0 as sample.
+        vec3 g0 = computeNormal(v0);
+
+        // If face normal points opposite to SDF gradient, flip triangle winding so it's consistently outward
+        if (dot(fn, g0) < 0.0) {
+            // swap v1 <-> v2 and their colors
+            vec3 tmpV = v1; v1 = v2; v2 = tmpV;
+            vec3 tmpC = col1; col1 = col2; col2 = tmpC;
+
+            // flip face normal
+            fn = -fn;
+        }
+
+        // use smoothed per-vertex normals derived from the SDF gradient
         vec3 n0 = computeNormal(v0);
         vec3 n1 = computeNormal(v1);
         vec3 n2 = computeNormal(v2);
 
-        vec3 col0 = edgeColor[i0];
-        vec3 col1 = edgeColor[i1];
-        vec3 col2 = edgeColor[i2];
+        // fallback if any normal is degenerate
+        if (length(n0) < 1e-6) n0 = fn;
+        if (length(n1) < 1e-6) n1 = fn;
+        if (length(n2) < 1e-6) n2 = fn;
 
         uint idx = atomicAdd(vertexCounter, 3u);
 

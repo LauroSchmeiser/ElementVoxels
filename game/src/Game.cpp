@@ -12,7 +12,15 @@
 
 namespace gl3 {
     // CPU-side voxel format that matches the compute shader's Voxel { float density; vec4 color; }
-    struct CpuVoxel { float density; glm::vec4 color; };
+    struct CpuVoxel {
+        float density;
+        // explicit padding so next member is at 16-byte offset
+        float _pad0;
+        float _pad1;
+        float _pad2;
+        glm::vec4 color;
+    };
+    static_assert(sizeof(CpuVoxel) == 32, "CpuVoxel size must be 32 bytes to match std430 layout");
 
     void Game::framebuffer_size_callback(GLFWwindow* window, int width, int height) {
         if (height == 0) height = 1; // prevent divide-by-zero
@@ -418,49 +426,44 @@ namespace gl3 {
         // Create chunks and set densities properly (density = radius - dist)
         Chunk baseChunk;
         Chunk sunChunk;
-        const float radius = CHUNK_SIZE * 0.5f;
+        // inside run(), replace the chunk population loops with this:
+
+        const float centerOffset = (CHUNK_SIZE - 1) * 0.5f;
+        const float radius = centerOffset; // radius in voxel units to roughly touch inside
+        const float densityEpsilon = 1e-4f; // small bias to avoid exact zeros
 
         for (int x = 0; x < CHUNK_SIZE; ++x) {
             for (int y = 0; y < CHUNK_SIZE; ++y) {
                 for (int z = 0; z < CHUNK_SIZE; ++z) {
-                    float dx = x - CHUNK_SIZE / 2.0f;
-                    float dy = y - CHUNK_SIZE / 2.0f;
-                    float dz = z - CHUNK_SIZE / 2.0f;
+                    float dx = x - centerOffset;
+                    float dy = y - centerOffset;
+                    float dz = z - centerOffset;
                     float dist = sqrt(dx * dx + dy * dy + dz * dz);
 
                     auto &voxel = baseChunk.voxels[x][y][z];
-                    if (dist < radius) {
-                        voxel.type = 1;
-                        voxel.density = radius - dist; // positive inside
-                        voxel.color = glm::vec3((float)x / CHUNK_SIZE, (float)y / CHUNK_SIZE, (float)z / CHUNK_SIZE);
-                    } else {
-                        voxel.type = 0;
-                        voxel.density = radius - dist; // negative outside
-                        voxel.color = glm::vec3(0.0f);
-                    }
+                    // SDF: positive inside, negative outside
+                    voxel.density = radius - dist + densityEpsilon;
+                    voxel.type = (voxel.density > 0.0f) ? 1 : 0;
+
+                    // default chunk color (will be overridden per-object if desired)
+                    voxel.color = glm::vec3(0.5f);
                 }
             }
         }
 
-        // sunChunk similar (maybe different color/scale)
+        // sunChunk: same but optionally different color
         for (int x = 0; x < CHUNK_SIZE; ++x) {
             for (int y = 0; y < CHUNK_SIZE; ++y) {
                 for (int z = 0; z < CHUNK_SIZE; ++z) {
-                    float dx = x - CHUNK_SIZE / 2.0f;
-                    float dy = y - CHUNK_SIZE / 2.0f;
-                    float dz = z - CHUNK_SIZE / 2.0f;
+                    float dx = x - centerOffset;
+                    float dy = y - centerOffset;
+                    float dz = z - centerOffset;
                     float dist = sqrt(dx * dx + dy * dy + dz * dz);
 
                     auto &voxel = sunChunk.voxels[x][y][z];
-                    if (dist < radius) {
-                        voxel.type = 1;
-                        voxel.density = radius - dist;
-                        voxel.color = glm::vec3((float)x / CHUNK_SIZE, (float)y / CHUNK_SIZE, (float)z / CHUNK_SIZE);
-                    } else {
-                        voxel.type = 0;
-                        voxel.density = radius - dist;
-                        voxel.color = glm::vec3(0.0f);
-                    }
+                    voxel.density = radius - dist + densityEpsilon;
+                    voxel.type = (voxel.density > 0.0f) ? 1 : 0;
+                    voxel.color = glm::vec3(1.0f, 0.9f, 0.4f);
                 }
             }
         }
@@ -792,25 +795,25 @@ namespace gl3 {
 
     }
 
-
     void Game::uploadVoxelChunk(const Chunk& chunk, const glm::vec3* overrideColor)
     {
-        struct CpuVoxel { float density; glm::vec4 color; };
         size_t voxelCount = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
         std::vector<CpuVoxel> voxels(voxelCount);
 
         for(int x=0;x<CHUNK_SIZE;x++) {
             for(int y=0;y<CHUNK_SIZE;y++) {
                 for(int z=0;z<CHUNK_SIZE;z++) {
-                    auto &v = chunk.voxels[x][y][z];
+                    const auto &v = chunk.voxels[x][y][z];
                     int idx = x + y*CHUNK_SIZE + z*CHUNK_SIZE*CHUNK_SIZE;
 
-                    voxels[idx].density = v.type ? v.density : -1.0f;
+                    // ALWAYS upload the real SDF/density value (radius - dist).
+                    // Do NOT substitute -1 for empty voxels.
+                    voxels[idx].density = v.density;
 
                     if (overrideColor) {
-                        voxels[idx].color = glm::vec4(*overrideColor, 1.0f); // use uniform color
+                        voxels[idx].color = glm::vec4(*overrideColor, 1.0f); // uniform color
                     } else {
-                        voxels[idx].color = glm::vec4(v.color, 1.0f);        // per-voxel color as before
+                        voxels[idx].color = glm::vec4(v.color, 1.0f);
                     }
                 }
             }
@@ -819,10 +822,15 @@ namespace gl3 {
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboVoxels);
         glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, voxels.size()*sizeof(CpuVoxel), voxels.data());
 
-        // Debug (optional): print first and center voxel colors/density
-        // int centerIdx = (CHUNK_SIZE/2) + (CHUNK_SIZE/2)*CHUNK_SIZE + (CHUNK_SIZE/2)*CHUNK_SIZE*CHUNK_SIZE;
-        // std::cout << "uploadVoxelChunk: color0=" << voxels[0].color.r << ","<<voxels[0].color.g<<","<<voxels[0].color.b
-        //           << " centerDensity=" << voxels[centerIdx].density << "\n";
+        // DEBUG: read back a few densities to verify they arrived correctly (disable in release)
+#if defined(DEBUG) || 1
+        {
+            std::vector<CpuVoxel> back(voxels.size());
+            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, back.size() * sizeof(CpuVoxel), back.data());
+            int centerIdx = (CHUNK_SIZE/2) + (CHUNK_SIZE/2)*CHUNK_SIZE + (CHUNK_SIZE/2)*CHUNK_SIZE*CHUNK_SIZE;
+            std::cout << "SSBO voxels[0].density=" << back[0].density << " center=" << back[centerIdx].density << std::endl;
+        }
+#endif
     }
 
     void Game::resetAtomicCounter()
@@ -847,7 +855,7 @@ namespace gl3 {
 
         // We want the chunk centered at 'position'. The compute shader expects gridOrigin
         // to be the world position of voxel (0,0,0). So offset by half the grid extents:
-        glm::vec3 halfExtents = (glm::vec3(CHUNK_SIZE) * 0.5f) * effectiveVoxelSize;
+        glm::vec3 halfExtents = (glm::vec3(CHUNK_SIZE - 1) * 0.5f) * effectiveVoxelSize;
         glm::vec3 gridOrigin = position - halfExtents;
 
         // upload uniforms
