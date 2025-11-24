@@ -101,6 +101,16 @@ namespace gl3 {
         glUniform1f(uniformLocation, value);
     }
 
+    void Shader::setInt(const std::string &uniformName, int value) const
+    {
+        auto uniformLocation = glGetUniformLocation(shaderProgram, uniformName.c_str());
+        if(uniformLocation==-1)
+        {
+            std::cout<< "This doesnt work" << uniformName.c_str() ;
+        }
+        glUniform1i(uniformLocation, value);
+    }
+
     void Shader::use() const {
         glUseProgram(shaderProgram);
     }

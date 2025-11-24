@@ -294,6 +294,7 @@ namespace gl3 {
                               });
         }
 
+
         for (int j = 0; j < 2; ++j) {
                 glm::vec3 axis = glm::normalize(glm::vec3(distAxis(rng), distAxis(rng), distAxis(rng)));
                 if (glm::length(axis) < 0.001f) axis = glm::vec3(0, 1, 0);
@@ -304,10 +305,11 @@ namespace gl3 {
                                        0.0f,
                                        axis,
                                        distSpeed(rng),
-                                       glm::vec3(distColor(rng), distColor(rng), distColor(rng))  // << ONE color per planet
+                                       glm::vec3(distColor(rng), distColor(rng), 0)  // << ONE color per planet
                                });
             }
-        for (int i = 0; i < 20; ++i) {
+
+        for (int i = 0; i < 25; ++i) {
             glm::vec3 axis = glm::normalize(glm::vec3(distAxis(rng), distAxis(rng), distAxis(rng)));
             if (glm::length(axis) < 0.001f) axis = glm::vec3(0, 1, 0);
 
@@ -487,7 +489,7 @@ namespace gl3 {
                 float sphereRadiusWorld = ((CHUNK_SIZE - 1) * 0.5f) * (baseVoxelSize * scaleAvg) *1.0f;
 
 // billboard scale = diameter (world units). small padding avoids clipping.
-                inst.scale = sphereRadiusWorld * 2.0f * 1.05f;
+                inst.scale = sphereRadiusWorld * 2.0f*1.05f;
                 inst.color = sun.color; // use sun.color (set when creating suns)
                 instances.push_back(inst);
 
@@ -510,90 +512,63 @@ namespace gl3 {
                 //Vertex-Count Debug
                 //std::cout << "[compute] planet vertexCount = " << vertexCount << std::endl;
 
+                // choose top-N lights to send to shader
+                constexpr int MAX_LIGHTS = 4;
+                struct LightEntry {
+                    glm::vec3 pos;
+                    glm::vec3 color;
+                    float intensity; // scaled brightness including inverse-square
+                };
 
-                // --------------------------------------------------------------
-                // Compute multi-sun lighting color (distance weighted)
-                // --------------------------------------------------------------
-                glm::vec3 totalLightColor(0.0f);
-                glm::vec3 weightedLightPos(0.0f);
-                float totalIntensity = 0.0f;
+                // build list of candidate lights (with computed intensity)
+                std::vector<LightEntry> candidates;
+                candidates.reserve(suns.size());
 
+                const float EPS = 1e-5f;
                 for (auto &s : suns) {
+                    float dist = glm::distance(planet.position, s.position);
+                    float invSq = 2.0f / (dist * dist + EPS);
 
-                    float distance = glm::distance(planet.position, s.position);
-                    float invSq = 1.0f / (distance * distance + 1e-5f);
+                    // sunBrightness: tune to your scene. using scale length as proxy
+                    float sunBase = glm::length(s.scale)* glm::length(s.scale) * (125.0f); // tweak multiplier
+                    float intensity = sunBase * invSq;
 
-                    // Sun emission strength (use your own value — or scale s.color length)
-                    float sunBrightness = glm::length(s.scale)*1000.0f; // or: s.brightness if you store one
-
-                    float intensity = sunBrightness * invSq;
-
-                    // Add to color sum
-                    totalLightColor += s.color * intensity;
-
-                    // Weighted average light position (optional)
-                    weightedLightPos += s.position * intensity;
-                    totalIntensity += intensity;
+                    candidates.push_back({ s.position, s.color, intensity });
                 }
 
-                // Normalize light color (prevents insane HDR blowout)
-                if (glm::length(totalLightColor) > 1.0f)
-                    totalLightColor = glm::normalize(totalLightColor);
+                // sort by intensity descending
+                std::sort(candidates.begin(), candidates.end(),
+                          [](const LightEntry &a, const LightEntry &b) {
+                              return a.intensity > b.intensity;
+                          });
 
-                // Ensure minimum brightness
-                totalLightColor = glm::max(totalLightColor, glm::vec3(0.15f));
+                // take top MAX_LIGHTS
+                int numLights = std::min<int>((int)candidates.size(), MAX_LIGHTS);
 
-                // Compute primary light position (weighted by intensity)
-                glm::vec3 finalLightPos = (totalIntensity > 0.0f)
-                                          ? (weightedLightPos / totalIntensity)
-                                          : glm::vec3(20.0f,20.0f,20.0f);
+                // optional: if all intensities tiny, you can set numLights = 0
 
-                // --------------------------------------------------------------
-                // Send to shader
-                // --------------------------------------------------------------
+                // send uniforms
                 voxelShader.use();
+                voxelShader.setInt("numLights", numLights);
+
+                for (int i = 0; i < numLights; ++i) {
+                    std::string idx = std::to_string(i);
+                    voxelShader.setVec3(("lightPos[" + idx + "]").c_str(), candidates[i].pos);
+                    voxelShader.setVec3(("lightColor[" + idx + "]").c_str(), candidates[i].color);
+                    voxelShader.setFloat(("lightIntensity[" + idx + "]").c_str(), candidates[i].intensity);
+                }
+
+                // fallback ambient if desired
+                voxelShader.setVec3("ambientColor", glm::vec3(0.001f)); // very small ambient term
+
+                // other per-object uniforms
                 voxelShader.setMatrix("model", identityModel);
                 voxelShader.setMatrix("mvp", pv);
                 voxelShader.setVec3("viewPos", cameraPos);
-
-                voxelShader.setVec3("lightPos", finalLightPos);
-                voxelShader.setFloat("lightIntensity", 1.0f); // intensity now in lightColor
-                voxelShader.setVec3("lightColor", totalLightColor);
-
                 voxelShader.setFloat("emission", 0.0f);
-                voxelShader.setVec3("emissionColor", glm::vec3(0));
-                voxelShader.setVec3("uniformColor", planet.color);
+                voxelShader.setVec3("emissionColor", glm::vec3(0.0f));
+                voxelShader.setVec3("uniformColor", planet.color); // albedo
 
-                drawTriangles(voxelShader);
-
-            }
-
-            for (auto &meteor : meteors) {
-                //Debugging with Wireframe
-                //glDisable(GL_CULL_FACE); glDisable(GL_DEPTH_TEST); glPolygonMode(GL_FRONT_AND_BACK, GL_LINE); drawTriangles(voxelShader); glPolygonMode(GL_FRONT_AND_BACK, GL_FILL); glEnable(GL_DEPTH_TEST);
-                // upload meteor chunk using the meteor's uniform color
-                uploadVoxelChunk(meteorChunk, &meteor.color);
-                resetAtomicCounter();
-                setComputeUniforms(meteor.position, meteor.scale, computeShader);
-                dispatchCompute();
-
-                unsigned int vertexCount = 0;
-                glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
-                glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(unsigned int), &vertexCount);
-                //Vertex-Count Debug
-                //std::cout << "[compute] meteor vertexCount = " << vertexCount << std::endl;
-
-                voxelShader.use();
-                voxelShader.setMatrix("model", identityModel);
-                voxelShader.setMatrix("mvp", pv);
-                voxelShader.setVec3("viewPos", cameraPos);
-                // light settings like planets
-                glm::vec3 primaryLightPos = suns.empty() ? glm::vec3(20.0f,20.0f,20.0f) : suns[0].position;
-                voxelShader.setVec3("lightPos", primaryLightPos);
-                voxelShader.setFloat("lightIntensity", 1.0f);
-                voxelShader.setFloat("emission", 0.0f);
-                voxelShader.setVec3("emissionColor", glm::vec3(0,0,0));
-                voxelShader.setVec3("uniformColor", meteor.color);
 
                 drawTriangles(voxelShader);
             }
