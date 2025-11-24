@@ -7,7 +7,7 @@ layout (local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
 // we store voxels in Z-major or any consistent order: index = x + y*W + z*W*H
 struct Voxel {
     float density;
-    vec3 color; // packed to vec4 in SSBO for alignment, but we will read as vec3 below
+    vec4 color; // use vec4 for safe std430 alignment; rgb in xyz
 };
 layout(std430, binding = 0) readonly buffer Voxels {
     Voxel voxels[]; // size = CHUNK_SIZE^3
@@ -24,7 +24,7 @@ layout(std430, binding = 2) readonly buffer TriTableSSBO {
 
 
 // Atomic counter for allocating vertices (we allocate per-vertex)
-layout(std430, binding = 2) buffer Counter {
+layout(std430, binding = 3) buffer Counter {
     uint vertexCounter;
 };
 
@@ -34,7 +34,7 @@ struct OutVertex {
     vec4 normal; // xyz: normal
     vec4 color;  // rgb: color, a: unused
 };
-layout(std430, binding = 3) buffer Triangles {
+layout(std430, binding = 4) buffer Triangles {
     OutVertex verts[]; // sized to max vertices = numCells * 5 * 3
 };
 
@@ -55,12 +55,13 @@ float sampleDensity(ivec3 p) {
 
 vec3 sampleColor(ivec3 p) {
     int idx = voxelIndex(p);
-    return voxels[idx].color;
+    return voxels[idx].color.xyz;
 }
 
 // interpolate along edge p1->p2 where d1,d2 are densities
 vec3 vertexInterpolate(vec3 p1, vec3 p2, float d1, float d2) {
-    float t = d1 / (d1 - d2);
+    float denom = (d1 - d2);
+    float t = denom == 0.0 ? 0.5 : (d1 / denom);
     return mix(p1, p2, clamp(t, 0.0, 1.0));
 }
 
@@ -70,10 +71,8 @@ vec3 computeNormal(vec3 worldPos) {
     vec3 inv = vec3(1.0 / voxelSize);
     vec3 idxF = (worldPos - gridOrigin) * inv;
 
-    // sample nearby densities (nearest indices)
     ivec3 p = ivec3(floor(idxF));
-    float dx = 0.5 * voxelSize;
-    // small offset in worldspace
+    // sample neighbor densities (clamped)
     float dX1 = sampleDensity(clamp(p + ivec3(1,0,0), ivec3(0), voxelGridDim - 1));
     float dX0 = sampleDensity(clamp(p + ivec3(-1,0,0), ivec3(0), voxelGridDim - 1));
     float dY1 = sampleDensity(clamp(p + ivec3(0,1,0), ivec3(0), voxelGridDim - 1));
@@ -82,7 +81,8 @@ vec3 computeNormal(vec3 worldPos) {
     float dZ0 = sampleDensity(clamp(p + ivec3(0,0,-1), ivec3(0), voxelGridDim - 1));
 
     vec3 g = vec3(dX1 - dX0, dY1 - dY0, dZ1 - dZ0);
-    return normalize(g);
+    float len = length(g);
+    return (len > 0.0001) ? normalize(g) : vec3(0.0, 1.0, 0.0);
 }
 
 // helper to read triTable row: triTable is flattened as [case*16 + j]
@@ -96,16 +96,13 @@ vec3 voxelWorldPos(ivec3 v) {
 }
 
 void main() {
-    // each invocation corresponds to a cell coordinate (cell is between voxels)
     ivec3 cell = ivec3(gl_GlobalInvocationID);
-    // cells per axis:
     ivec3 cellsDim = voxelGridDim - ivec3(1);
 
     if (any(greaterThanEqual(cell, cellsDim))) {
         return;
     }
 
-    // corner voxel coords
     ivec3 p0 = cell;
     ivec3 p1 = cell + ivec3(1,0,0);
     ivec3 p2 = cell + ivec3(1,1,0);
@@ -119,44 +116,37 @@ void main() {
     vec3 c[8];
     ivec3 corners[8] = ivec3[](p0,p1,p2,p3,p4,p5,p6,p7);
 
-
     for (int i=0;i<8;i++) {
         d[i] = sampleDensity(corners[i]);
         c[i] = sampleColor(corners[i]);
     }
 
-    // build case index
     int caseIndex = 0;
     for (int i=0;i<8;i++) if (d[i] > 0.0) caseIndex |= (1 << i);
 
     int e = edgeTable[caseIndex];
     if (e == 0) return; // no triangles
 
-    // Prepare the 12 possible edge vertices
     vec3 edgeVertex[12];
     vec3 edgeColor[12];
 
-    // positions of the 8 corners in world space
     vec3 pos[8];
     for (int i=0;i<8;i++) pos[i] = voxelWorldPos(corners[i]);
 
-    // for each edge, if intersects (e bit set), compute interpolated vertex
-    // edge to corner mapping (standard)
     const int edgeToCornerA[12] = int[](0,1,1,0,4,5,5,4,0,1,2,3);
     const int edgeToCornerB[12] = int[](1,2,3,3,5,6,7,7,4,5,6,7);
-
 
     for (int ei = 0; ei < 12; ++ei) {
         if ((e & (1 << ei)) != 0) {
             int a = edgeToCornerA[ei];
             int b = edgeToCornerB[ei];
             edgeVertex[ei] = vertexInterpolate(pos[a], pos[b], d[a], d[b]);
-            float t = d[a] / (d[a] - d[b]);
+            float denom = (d[a] - d[b]);
+            float t = denom == 0.0 ? 0.5 : (d[a] / denom);
             edgeColor[ei] = mix(c[a], c[b], clamp(t, 0.0, 1.0));
         }
     }
 
-    // emit triangles according to triTable row
     int base = caseIndex * 16;
     for (int tri = 0; tri < 16; tri += 3) {
         int i0 = flattenedTriTable[base + tri + 0];
@@ -164,7 +154,6 @@ void main() {
         int i1 = flattenedTriTable[base + tri + 1];
         int i2 = flattenedTriTable[base + tri + 2];
 
-        // compute normals (computeNormal sample method)
         vec3 v0 = edgeVertex[i0];
         vec3 v1 = edgeVertex[i1];
         vec3 v2 = edgeVertex[i2];
@@ -177,10 +166,8 @@ void main() {
         vec3 col1 = edgeColor[i1];
         vec3 col2 = edgeColor[i2];
 
-        // allocate 3 verts
         uint idx = atomicAdd(vertexCounter, 3u);
-        // guard: ensure we don't overflow buffer (caller must allocate sufficient space)
-        // store vertices
+
         verts[idx + 0].pos = vec4(v0, 1.0);
         verts[idx + 0].normal = vec4(n0, 0.0);
         verts[idx + 0].color = vec4(col0, 1.0);

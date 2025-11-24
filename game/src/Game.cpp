@@ -11,6 +11,9 @@
 #include "rendering/smoothMesher.h"
 
 namespace gl3 {
+    // CPU-side voxel format that matches the compute shader's Voxel { float density; vec4 color; }
+    struct CpuVoxel { float density; glm::vec4 color; };
+
     void Game::framebuffer_size_callback(GLFWwindow* window, int width, int height) {
         if (height == 0) height = 1; // prevent divide-by-zero
         glViewport(0, 0, width, height);
@@ -80,8 +83,15 @@ namespace gl3 {
 
 
     void Game::run() {
-// 0: voxel grid
+        // Prepare SSBOs and static tables
+        size_t voxelCount = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
+        size_t maxVerts = CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE * 5 * 3;
+
+        // 0: voxels SSBO
         glGenBuffers(1, &ssboVoxels);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboVoxels);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, voxelCount * sizeof(CpuVoxel), nullptr, GL_DYNAMIC_DRAW);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssboVoxels); // bind to 0
 
         int edgeTableCPU[256]={
                 0x0  , 0x109, 0x203, 0x30a, 0x406, 0x50f, 0x605, 0x70c,
@@ -377,41 +387,38 @@ namespace gl3 {
                  0, 3, 8, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
                  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
 
-        size_t maxVerts = CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE * 5 * 3;
-
-
-
-        // Edge table SSBO
+        // 1: edge table SSBO
         glGenBuffers(1, &ssboEdgeTable);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboEdgeTable);
         glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(edgeTableCPU), edgeTableCPU, GL_STATIC_DRAW);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ssboEdgeTable); // matches binding = 1
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ssboEdgeTable);
 
-// Triangle table SSBO
+        // 2: tri table SSBO
         glGenBuffers(1, &ssboTriTable);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboTriTable);
         glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(triTableCPU), triTableCPU, GL_STATIC_DRAW);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, ssboTriTable); // matches binding = 2
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, ssboTriTable);
 
-// SSBO for atomic counter
+        // 3: atomic counter (SSBO containing uint vertexCounter)
         glGenBuffers(1, &ssboCounter);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
         unsigned int zero = 0;
         glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(unsigned int), &zero, GL_DYNAMIC_DRAW);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, ssboCounter);
 
-// SSBO for triangles
+        // 4: triangles SSBO (output)
         glGenBuffers(1, &ssboTriangles);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboTriangles);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, maxVerts*sizeof(OutVertex), nullptr, GL_DYNAMIC_DRAW);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, maxVerts * sizeof(OutVertex), nullptr, GL_DYNAMIC_DRAW);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, ssboTriangles);
 
-
-
-
-        // --- Setup shader ---
+        // --- Setup shaders ---
         Shader voxelShader("shaders/voxel.vert", "shaders/voxel.frag");
         Shader computeShader("shaders/marching_cubes.comp");
-        // --- Create one base voxel chunk (sphere) ---
+        // Create chunks and set densities properly (density = radius - dist)
         Chunk baseChunk;
+        Chunk sunChunk;
+        const float radius = CHUNK_SIZE * 0.5f;
 
         for (int x = 0; x < CHUNK_SIZE; ++x) {
             for (int y = 0; y < CHUNK_SIZE; ++y) {
@@ -422,23 +429,20 @@ namespace gl3 {
                     float dist = sqrt(dx * dx + dy * dy + dz * dz);
 
                     auto &voxel = baseChunk.voxels[x][y][z];
-                    if (dist < CHUNK_SIZE / 2.0f) {
+                    if (dist < radius) {
                         voxel.type = 1;
-                        voxel.color = glm::vec3(
-                                (float)x / CHUNK_SIZE,
-                                (float)y / CHUNK_SIZE,
-                                (float)z / CHUNK_SIZE
-                        );
+                        voxel.density = radius - dist; // positive inside
+                        voxel.color = glm::vec3((float)x / CHUNK_SIZE, (float)y / CHUNK_SIZE, (float)z / CHUNK_SIZE);
                     } else {
                         voxel.type = 0;
+                        voxel.density = radius - dist; // negative outside
+                        voxel.color = glm::vec3(0.0f);
                     }
                 }
             }
         }
 
-        // --- Create one base voxel chunk (sphere) ---
-        Chunk sunChunk;
-
+        // sunChunk similar (maybe different color/scale)
         for (int x = 0; x < CHUNK_SIZE; ++x) {
             for (int y = 0; y < CHUNK_SIZE; ++y) {
                 for (int z = 0; z < CHUNK_SIZE; ++z) {
@@ -448,26 +452,23 @@ namespace gl3 {
                     float dist = sqrt(dx * dx + dy * dy + dz * dz);
 
                     auto &voxel = sunChunk.voxels[x][y][z];
-                    if (dist < CHUNK_SIZE / 2.0f) {
+                    if (dist < radius) {
                         voxel.type = 1;
-                        voxel.density =  dist;
-
-                        voxel.color = glm::vec3(
-                                (float)x / CHUNK_SIZE,
-                                (float)y / CHUNK_SIZE,
-                                (float)z / CHUNK_SIZE
-                        );
+                        voxel.density = radius - dist;
+                        voxel.color = glm::vec3((float)x / CHUNK_SIZE, (float)y / CHUNK_SIZE, (float)z / CHUNK_SIZE);
                     } else {
                         voxel.type = 0;
-                        voxel.density = - dist;
+                        voxel.density = radius - dist;
+                        voxel.color = glm::vec3(0.0f);
                     }
                 }
             }
         }
 
+
         // --- Generate mesh from voxel chunk ---
-        Mesh planetMesh = generateVoxelChunkMesh(baseChunk);
-        Mesh sunMesh = generateVoxelChunkMesh(sunChunk);
+        //Mesh planetMesh = generateVoxelChunkMesh(baseChunk);
+        //Mesh sunMesh = generateVoxelChunkMesh(sunChunk);
 
         std::vector<Planet> suns;
         std::vector<Planet> planets;
@@ -613,26 +614,40 @@ namespace gl3 {
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
             // --- Rotate suns and planets ---
-            for (auto &sun : suns) UpdateRotation(reinterpret_cast<const std::vector<gl3::Game::Planet> &>(sun));
-            for (auto &planet : planets) UpdateRotation(reinterpret_cast<const std::vector<gl3::Game::Planet> &>(planet));
+            UpdateRotation(suns);
+            UpdateRotation(planets);
 
             computeShader.use(); // use your marching cubes compute shader
 
-            // --- Render Suns ---
+            // For each sun: upload voxels, reset counter, set uniforms, dispatch compute, read vertex count, draw
             for (auto &sun : suns) {
-                uploadVoxelChunk(sunChunk);       // step 3
-                resetAtomicCounter();              // step 4
-                setComputeUniforms(sun.position,computeShader); // step 5a
-                dispatchCompute();                 // step 5b
-                drawTriangles(voxelShader);                   // step 5c
+                uploadVoxelChunk(sunChunk);               // upload densities/colors, uses binding 0
+                resetAtomicCounter();                     // zero counter in binding 3
+                setComputeUniforms(sun.position, computeShader);
+                dispatchCompute();
+
+                // read debug vertex count
+                unsigned int vertexCount = 0;
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
+                glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(unsigned int), &vertexCount);
+                std::cout << "[compute] sun vertexCount = " << vertexCount << std::endl;
+
+                drawTriangles(voxelShader);
             }
 
-            // --- Render Planets ---
+
+            // Render planets
             for (auto &planet : planets) {
                 uploadVoxelChunk(baseChunk);
                 resetAtomicCounter();
-                setComputeUniforms(planet.position,computeShader);
+                setComputeUniforms(planet.position, computeShader);
                 dispatchCompute();
+
+                unsigned int vertexCount = 0;
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
+                glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(unsigned int), &vertexCount);
+                std::cout << "[compute] planet vertexCount = " << vertexCount << std::endl;
+
                 drawTriangles(voxelShader);
             }
 
@@ -642,10 +657,9 @@ namespace gl3 {
 
     }
 
-    void Game::UpdateRotation(std::vector<Planet> planets)
+    void Game::UpdateRotation(std::vector<Planet>& planets)
     {
         for(auto & planet : planets){
-            // Each planet spins around its own random axis
             planet.rotationAngle += deltaTime * planet.rotationSpeed;
             if (planet.rotationAngle > 360.0f) planet.rotationAngle -= 360.0f;
         }
@@ -733,25 +747,27 @@ namespace gl3 {
     }
 
 
-    void Game::uploadVoxelChunk(Chunk chunk)
+    void Game::uploadVoxelChunk(const Chunk& chunk)
     {
-        auto uploadVoxelChunk = [&](Chunk &chunk) {
-            std::vector<Voxel> voxels(CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE);
-            for(int x=0;x<CHUNK_SIZE;x++)
-                for(int y=0;y<CHUNK_SIZE;y++)
-                    for(int z=0;z<CHUNK_SIZE;z++)
-                    {
-                        auto &v = chunk.voxels[x][y][z];
-                        int idx = x + y*CHUNK_SIZE + z*CHUNK_SIZE*CHUNK_SIZE;
-                        voxels[idx].density = v.type ? v.density : -1.0f;
-                        voxels[idx].color = v.color;
-                    }
+        // CPU-side struct must match shader's Voxel (density + vec4 color)
+        struct CpuVoxel { float density; glm::vec4 color; };
 
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboVoxels);
-            glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, voxels.size()*sizeof(Voxel), voxels.data());
-        };
+        size_t voxelCount = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
+        std::vector<CpuVoxel> voxels(voxelCount);
 
-        uploadVoxelChunk(chunk);
+        for(int x=0;x<CHUNK_SIZE;x++)
+            for(int y=0;y<CHUNK_SIZE;y++)
+                for(int z=0;z<CHUNK_SIZE;z++)
+                {
+                    auto &v = chunk.voxels[x][y][z];
+                    int idx = x + y*CHUNK_SIZE + z*CHUNK_SIZE*CHUNK_SIZE;
+                    voxels[idx].density = v.type ? v.density : -1.0f;
+                    // pack color into vec4 (alpha unused)
+                    voxels[idx].color = glm::vec4(v.color, 1.0f);
+                }
+
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboVoxels);
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, voxels.size()*sizeof(CpuVoxel), voxels.data());
     }
 
 
@@ -763,66 +779,58 @@ namespace gl3 {
 
     }
 
-    void Game::setComputeUniforms(glm::vec3 position, Shader computeShader)
+    void Game::setComputeUniforms(const glm::vec3& position, Shader& computeShader)
     {
-            computeShader.use();
+        computeShader.use();
 
-            // Position/origin of this chunk in world space
-            computeShader.setVec3("gridOrigin", position);
-
-            // Spacing between voxels
-            computeShader.setFloat("voxelSize", 1.0f); // adjust as needed
-
-            // Dimensions of voxel grid (CHUNK_SIZE x CHUNK_SIZE x CHUNK_SIZE)
-            computeShader.setVec3("voxelGridDim", glm::vec3(CHUNK_SIZE));
-
+        computeShader.setVec3("gridOrigin", position);
+        computeShader.setFloat("voxelSize", 1.0f);
+        // set as integers - shader expects ivec3; adjust your Shader helper if needed
+        computeShader.setVec3("voxelGridDim", glm::vec3(CHUNK_SIZE));
     }
+
     void Game::dispatchCompute()
     {
-        // Number of workgroups = (CHUNK_SIZE - 1 + local_size - 1) / local_size
         int groups = (CHUNK_SIZE - 1 + 7) / 8; // local_size = 8 in compute shader
 
-    // Bind SSBOs
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssboVoxels);
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ssboTriTable);
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ssboEdgeTable);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, ssboCounter);
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, ssboTriangles);
+        // Bind SSBOs to match compute shader bindings:
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssboVoxels);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ssboEdgeTable);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, ssboTriTable);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, ssboCounter);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, ssboTriangles);
 
-    // Dispatch compute shader
-            glDispatchCompute(groups, groups, groups);
+        glDispatchCompute(groups, groups, groups);
 
-    // Ensure compute writes are visible to rendering
-            glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT);
-
+        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT);
     }
-    void Game::drawTriangles(Shader voxelShader)
+
+    void Game::drawTriangles(Shader& voxelShader)
     {
-            GLuint vao;
-            glGenVertexArrays(1, &vao);
-            glBindVertexArray(vao);
+        GLuint vao;
+        glGenVertexArrays(1, &vao);
+        glBindVertexArray(vao);
 
-            // The output SSBO acts as a VBO
-            glBindBuffer(GL_ARRAY_BUFFER, ssboTriangles);
+        // Use output SSBO as VBO
+        glBindBuffer(GL_ARRAY_BUFFER, ssboTriangles);
 
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(OutVertex), (void*)0);                   // position
-            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(OutVertex), (void*)(sizeof(glm::vec4))); // normal
-            glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(OutVertex), (void*)(2 * sizeof(glm::vec4))); // color
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(OutVertex), (void*)0);                   // position
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(OutVertex), (void*)(sizeof(glm::vec4))); // normal
+        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(OutVertex), (void*)(2 * sizeof(glm::vec4))); // color
 
-            glEnableVertexAttribArray(0);
-            glEnableVertexAttribArray(1);
-            glEnableVertexAttribArray(2);
+        glEnableVertexAttribArray(0);
+        glEnableVertexAttribArray(1);
+        glEnableVertexAttribArray(2);
 
-            // Get vertex count from atomic counter
-            unsigned int vertexCount = 0;
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
-            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(unsigned int), &vertexCount);
+        unsigned int vertexCount = 0;
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(unsigned int), &vertexCount);
 
-            // Draw
-            voxelShader.use(); // your standard vertex/fragment shader for rendering
-            glBindVertexArray(vao);
-            glDrawArrays(GL_TRIANGLES, 0, vertexCount);
+        voxelShader.use();
+        glBindVertexArray(vao);
+        glDrawArrays(GL_TRIANGLES, 0, vertexCount);
 
+        glDeleteVertexArrays(1, &vao);
     }
 
 

@@ -39,14 +39,14 @@ namespace gl3 {
             glm::vec3 color;
         };
 
-        //TODO: New Methods
-        void uploadVoxelChunk(Chunk chunk);
+        // Updated signatures
+        void uploadVoxelChunk(const Chunk& chunk);
         void resetAtomicCounter();
-        void setComputeUniforms(glm::vec3 position, Shader computeShader);
+        void setComputeUniforms(const glm::vec3& position, Shader& computeShader);
         void dispatchCompute();
-        void drawTriangles(Shader voxelShader);
+        void drawTriangles(Shader& voxelShader);
 
-        void UpdateRotation(std::vector<Planet> planets);
+        void UpdateRotation(std::vector<Planet>& planets);
         void handleCameraInput();
         glm::vec3 getCameraFront() const;
         GLFWwindow *window = nullptr;
@@ -58,11 +58,8 @@ namespace gl3 {
         float accumulator = 0.f;
         glm::vec3 cameraPos = glm::vec3(0.0f, 0.0f, 50.0f);
         glm::vec2 cameraRotation = glm::vec2(-90.0f, 0.0f); // pitch, yaw
-        int windowWidth, windowHeight;
-        GLuint ssboVoxels, ssboEdgeTable, ssboTriTable , ssboCounter, ssboTriangles;
+        int windowWidth = 800, windowHeight = 600;
+        GLuint ssboVoxels = 0, ssboEdgeTable = 0, ssboTriTable = 0, ssboCounter = 0, ssboTriangles = 0;
 
     };
 }
-
-
-
