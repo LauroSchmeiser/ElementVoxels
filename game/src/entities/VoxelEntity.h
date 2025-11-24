@@ -16,8 +16,8 @@ namespace gl3 {
         {}
 
     void update(Game* game, float dt) override {
-            // Nothing yet — static voxel chunk
-        }
+
+    }
 
         void draw(Game *game) override;
 

@@ -182,7 +182,7 @@ namespace gl3 {
         const float rz = centerOffset * 0.55f;
         const float minRadius = std::min(std::min(rx, ry), rz);
 
-// base eps and noise
+        // base eps and noise
         const float noiseAmp = minRadius * 0.06f; // start small (6%)
         const uint32_t seed = 1337u;
         auto intNoise = [&](int xi, int yi, int zi)->float {
@@ -192,7 +192,7 @@ namespace gl3 {
             return (float)(h & 0xFFFFu) / float(0xFFFFu); // [0..1]
         };
 
-// optional extra lumps (offsets & scales) to break symmetry
+        // optional extra lumps (offsets & scales) to break symmetry
         struct Lump { float ox, oy, oz, sx, sy, sz; };
         std::vector<Lump> lumps = {
                 { 0.2f*rx,  -0.1f*ry, 0.05f*rz, 0.6f, 0.6f, 0.6f },
@@ -297,7 +297,7 @@ namespace gl3 {
         }
 
 
-        int sunsCount=2;
+        int sunsCount=3;
         for (int j = 0; j < sunsCount; ++j) {
             glm::vec3 pos;
             glm::vec3 scale;
@@ -305,7 +305,7 @@ namespace gl3 {
 
             // Try up to N times to find a valid non-overlapping position
             int attempts = 0;
-            const int maxAttempts = sunsCount*(50/sunsCount);
+            const int maxAttempts = sunsCount*25;
 
             const float VoxelRadius = (CHUNK_SIZE - 1) * 0.5f ;
 
@@ -332,7 +332,7 @@ namespace gl3 {
             CollisionEntities.push_back(s);
         }
 
-        int planetsCount=25;
+        int planetsCount=50;
         for (int i = 0; i < planetsCount; ++i) {
 
             glm::vec3 pos;
@@ -341,7 +341,7 @@ namespace gl3 {
 
             // Try up to N times to find a valid non-overlapping position
             int attempts = 0;
-            const int maxAttempts = planetsCount*(50/planetsCount);
+            const int maxAttempts = planetsCount*2;
 
             const float VoxelRadius = (CHUNK_SIZE - 1) * 0.5f ;
             do {
@@ -471,6 +471,7 @@ namespace gl3 {
 
         while (!glfwWindowShouldClose(window)) {
             update();
+
             updateDeltaTime();
             handleCameraInput();
 
@@ -550,6 +551,8 @@ namespace gl3 {
                 uploadVoxelChunk(baseChunk, &planet.color);
                 resetAtomicCounter();
                 setComputeUniforms(planet.position, planet.scale, computeShader);
+                float angleRad = glm::radians(planet.rotationAngle);
+                glm::mat3 rot = glm::mat3(glm::rotate(glm::mat4(1.0), angleRad, planet.rotationAxis));
                 dispatchCompute();
 
                 unsigned int vertexCount = 0;
@@ -587,6 +590,25 @@ namespace gl3 {
                           [](const LightEntry &a, const LightEntry &b) {
                               return a.intensity > b.intensity;
                           });
+
+
+                planet.orbitRadius*distAxis(rng);
+                planet.orbitSpeed*distAxis(rng);
+                planet.orbitInclination=90*distAxis(rng);
+                planet.orbitAngle += deltaTime * planet.orbitSpeed;
+
+                // Base orbit (around XZ plane)
+                glm::vec3 flatPos(
+                        cos(planet.orbitAngle) * planet.orbitRadius,
+                        0.0f,
+                        sin(planet.orbitAngle) * planet.orbitRadius
+                );
+
+                // Tilt the orbit around X-axis
+                glm::mat4 tilt = glm::rotate(glm::mat4(1.0f), planet.orbitInclination, glm::vec3(1,0,0));
+                glm::vec3 tilted = glm::vec3(tilt * glm::vec4(flatPos, 1.0f));
+
+                planet.position = candidates[0].pos + tilted;
 
                 // take top MAX_LIGHTS
                 int numLights = std::min<int>((int)candidates.size(), MAX_LIGHTS);
@@ -630,6 +652,7 @@ namespace gl3 {
         for(auto & planet : planets){
             planet.rotationAngle += deltaTime * planet.rotationSpeed;
             if (planet.rotationAngle > 360.0f) planet.rotationAngle -= 360.0f;
+
         }
     }
 
@@ -641,6 +664,7 @@ namespace gl3 {
 
         for(auto &entity: entities) {
             entity->update(this, deltaTime);
+
         }
     }
 

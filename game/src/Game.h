@@ -37,6 +37,10 @@ namespace gl3 {
             glm::vec3 rotationAxis;
             float rotationSpeed;
             glm::vec3 color;
+            float orbitAngle= 90.0f;
+            float orbitSpeed= 1.0f;
+            float orbitRadius= 100.0f+scale.length();
+            float orbitInclination;
         };
 
         // Updated signatures
@@ -64,5 +68,6 @@ namespace gl3 {
         glm::vec2 cameraRotation = glm::vec2(-90.0f, 0.0f); // pitch, yaw
         int windowWidth = 800, windowHeight = 600;
         GLuint ssboVoxels = 0, ssboEdgeTable = 0, ssboTriTable = 0, ssboCounter = 0, ssboTriangles = 0;
+
     };
 }
