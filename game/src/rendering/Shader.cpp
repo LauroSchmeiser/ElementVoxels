@@ -1,6 +1,7 @@
 #include "Shader.h"
 #include <fstream>
 #include <sstream>
+#include <iostream>
 #include "glm/gtc/type_ptr.hpp"
 #include "../Assets.h"
 
@@ -22,6 +23,17 @@ namespace gl3 {
         glDetachShader(shaderProgram, vertexShader);
         glDetachShader(shaderProgram, fragmentShader);
     }
+
+    Shader::Shader(const fs::path &computeShaderPath) {
+        vertexShader = 0;
+        fragmentShader = 0;
+        computeShader = loadAndCompileShader(GL_COMPUTE_SHADER, computeShaderPath);
+        shaderProgram = glCreateProgram();
+        glAttachShader(shaderProgram, computeShader);
+        glLinkProgram(shaderProgram);
+        glDetachShader(shaderProgram, computeShader);
+    }
+
 
     unsigned int Shader::loadAndCompileShader(GLuint shaderType, const fs::path &shaderPath) {
         auto shaderSource = readText(shaderPath);
@@ -72,7 +84,11 @@ namespace gl3 {
     }
     void Shader::setFloat(const std::string &uniformName, float value) const {
         auto uniformLocation = glGetUniformLocation(shaderProgram, uniformName.c_str());
-        glUniform1i(uniformLocation, value ? value : 0);
+        if(uniformLocation==-1)
+        {
+            std::cout<< "This doesnt work" << uniformName.c_str() ;
+        }
+        glUniform1f(uniformLocation, value);
     }
 
     void Shader::use() const {

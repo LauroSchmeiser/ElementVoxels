@@ -9,6 +9,8 @@
 #include <soloud_wav.h>
 #include <string>
 #include "entities//Entity.h"
+#include "rendering/VoxelRenderer.h"
+
 namespace gl3 {
     class Game {
     public:
@@ -25,6 +27,26 @@ namespace gl3 {
         void draw();
         void updateDeltaTime();
         void updatePhysics();
+
+
+        // --- Generate planet transforms ---
+        struct Planet {
+            glm::vec3 position;
+            glm::vec3 scale;
+            float rotationAngle;
+            glm::vec3 rotationAxis;
+            float rotationSpeed;
+            glm::vec3 color;
+        };
+
+        //TODO: New Methods
+        void uploadVoxelChunk(Chunk chunk);
+        void resetAtomicCounter();
+        void setComputeUniforms(glm::vec3 position, Shader computeShader);
+        void dispatchCompute();
+        void drawTriangles(Shader voxelShader);
+
+        void UpdateRotation(std::vector<Planet> planets);
         void handleCameraInput();
         glm::vec3 getCameraFront() const;
         GLFWwindow *window = nullptr;
@@ -37,7 +59,7 @@ namespace gl3 {
         glm::vec3 cameraPos = glm::vec3(0.0f, 0.0f, 50.0f);
         glm::vec2 cameraRotation = glm::vec2(-90.0f, 0.0f); // pitch, yaw
         int windowWidth, windowHeight;
-
+        GLuint ssboVoxels, ssboEdgeTable, ssboTriTable , ssboCounter, ssboTriangles;
 
     };
 }

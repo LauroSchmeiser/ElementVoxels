@@ -15,14 +15,14 @@ void main() {
     // simple diffuse lighting
     vec3 norm = normalize(normal);
     vec3 lightDir = normalize(lightPos - fragPos);
-    float diff = max(dot(norm, lightDir), lightIntensity);
+    float diff = max(dot(norm, lightDir), 0);
 
     vec3 diffuse = diff * vertexColor;
 
     // ambient
-    vec3 ambient = 0.2 * vertexColor;
+    vec3 ambient = lightIntensity * vertexColor;
 
-    vec3 color = ambient + diffuse + emission * vertexColor;
+    vec3 color =  ambient + diffuse + emission * vertexColor;
 
     FragColor = vec4(color, 1.0);
 }
