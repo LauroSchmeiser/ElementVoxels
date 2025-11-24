@@ -42,6 +42,7 @@ namespace gl3 {
             float orbitRadius;
             float orbitInclination;
             float orbitOffset;
+            Planet* parent = nullptr;  // <—— parent "sun"
         };
 
         // Updated signatures

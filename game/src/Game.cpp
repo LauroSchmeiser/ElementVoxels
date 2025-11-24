@@ -375,7 +375,15 @@ namespace gl3 {
             planet.orbitOffset      = distOrbit(rng) * glm::two_pi<float>();       // random 0–2π
             planet.orbitInclination = (distOrbit(rng) * 2.0f - 1.0f) * glm::radians(30.0f); // -30°..+30°
             planet.orbitRadius      = 75.0f + distOrbit(rng) * 150.0f;            // 50–200 units
-            planet.orbitSpeed       = 0.001f + distOrbit(rng) * 0.4f*1/planet.orbitOffset;           // 0.001–0.01 rad/sec (slow)
+            planet.orbitSpeed       = 0.001f + distOrbit(rng) * 0.4f*1/planet.orbitOffset*1/planet.scale.length();           // 0.001–0.01 rad/sec (slow)
+        }
+
+        for(auto &sun : suns)
+        {
+            sun.orbitOffset      = distOrbit(rng) * glm::two_pi<float>() * sun.scale.length()/2;       // random 0–2π
+            sun.orbitInclination = (distOrbit(rng) * 2.0f - 1.0f) * glm::radians(30.0f); // -30°..+30°
+            sun.orbitRadius      = 75.0f*sun.scale.length()/3 + distOrbit(rng) * 150.0f;            // 50–200 units
+            sun.orbitSpeed       = 0.001f + distOrbit(rng) * 0.4f*1/sun.orbitOffset *2/sun.scale.length();           // 0.001–0.01 rad/sec (slow)
         }
 
         // --- Camera setup ---
@@ -474,8 +482,61 @@ namespace gl3 {
         }
          */
 
+
         SunBillboard sunBillboards;
         sunBillboards.init(16);
+
+        for (int i = 0; i < suns.size(); i++)
+        {
+            Planet &p = suns[i];
+            float mySize = glm::length(p.scale);
+
+            float bestDist = std::numeric_limits<float>::max();
+            Planet* bestParent = nullptr;
+
+            for (int j = 0; j < suns.size(); j++)
+            {
+                if (i == j) continue;
+
+                float otherSize = glm::length(suns[j].scale);
+                if (otherSize <= mySize) continue;  // must be larger
+
+                float d = glm::distance(p.position, suns[j].position);
+                if (d < bestDist)
+                {
+                    bestDist = d;
+                    bestParent = &suns[j];
+                }
+            }
+
+            p.parent = bestParent; // NULL if no larger sun exists
+        }
+
+        for (int i = 0; i < planets.size(); i++)
+        {
+            Planet &p = planets[i];
+            float mySize = glm::length(p.scale);
+
+            float bestDist = std::numeric_limits<float>::max();
+            Planet* bestParent = nullptr;
+
+            for (int j = 0; j < suns.size(); j++)
+            {
+                if (i == j) continue;
+
+                float otherSize = glm::length(suns[j].scale);
+                if (otherSize <= mySize) continue;  // must be larger
+
+                float d = glm::distance(p.position, suns[j].position);
+                if (d < bestDist)
+                {
+                    bestDist = d;
+                    bestParent = &suns[j];
+                }
+            }
+
+            p.parent = bestParent; // NULL if no larger sun exists
+        }
 
         while (!glfwWindowShouldClose(window)) {
             update();
@@ -503,6 +564,8 @@ namespace gl3 {
             std::vector<SunInstance> instances;
             instances.reserve(suns.size());
 
+
+
             // For each sun: upload voxels, reset counter, set uniforms, dispatch compute, read vertex count, draw
             for (auto &sun : suns) {
                 uploadVoxelChunk(sunChunk, &sun.color);           // upload densities/colors, uses binding 0
@@ -519,6 +582,25 @@ namespace gl3 {
 
                 // --- Set voxel rendering shader uniforms for this sun BEFORE drawing ---
                 // render
+
+                if (sun.parent != nullptr)
+                {
+                    sun.orbitAngle += deltaTime * sun.orbitSpeed;
+
+                    glm::vec3 flat(
+                            cos(sun.orbitAngle + sun.orbitOffset) * sun.orbitRadius,
+                            0.0f,
+                            sin(sun.orbitAngle + sun.orbitOffset) * sun.orbitRadius
+                    );
+
+                    glm::mat4 tilt = glm::rotate(glm::mat4(1.0f), sun.orbitInclination, glm::vec3(1,0,0));
+                    glm::vec3 tilted = glm::vec3(tilt * glm::vec4(flat, 1.0f));
+
+                    sun.position = sun.parent->position + tilted;
+                }
+
+
+
                 voxelShader.use();
                 voxelShader.setMatrix("model", identityModel);  // IMPORTANT: identity
                 voxelShader.setMatrix("mvp", pv);               // PV only (positions are world-space)
@@ -593,10 +675,9 @@ namespace gl3 {
                     candidates.push_back({ s.position, s.color, intensity });
                 }
 
-                // sort by intensity descending
-                std::sort(candidates.begin(), candidates.end(),
-                          [](const LightEntry &a, const LightEntry &b) {
-                              return a.intensity > b.intensity;
+                std::sort(suns.begin(), suns.end(),
+                          [](const Planet &a, const Planet &b) {
+                              return glm::length(a.scale) > glm::length(b.scale);
                           });
 
 
@@ -611,9 +692,13 @@ namespace gl3 {
                 glm::mat4 tilt = glm::rotate(glm::mat4(1.0f), planet.orbitInclination, glm::vec3(1,0,0));
                 glm::vec3 tilted = glm::vec3(tilt * glm::vec4(flat, 1.0f));
 
-                planet.position = candidates[0].pos + tilted;
+                planet.position = planet.parent->position + tilted;
 
-
+                // sort by intensity descending
+                std::sort(candidates.begin(), candidates.end(),
+                          [](const LightEntry &a, const LightEntry &b) {
+                              return a.intensity > b.intensity;
+                          });
 
                 // take top MAX_LIGHTS
                 int numLights = std::min<int>((int)candidates.size(), MAX_LIGHTS);
