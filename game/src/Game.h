@@ -60,6 +60,5 @@ namespace gl3 {
         glm::vec2 cameraRotation = glm::vec2(-90.0f, 0.0f); // pitch, yaw
         int windowWidth = 800, windowHeight = 600;
         GLuint ssboVoxels = 0, ssboEdgeTable = 0, ssboTriTable = 0, ssboCounter = 0, ssboTriangles = 0;
-
     };
 }
