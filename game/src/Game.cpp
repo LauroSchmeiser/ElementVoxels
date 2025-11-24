@@ -8,7 +8,6 @@
 #include "rendering/TestChunk.h"
 #include "rendering/Shader.h"
 #include "entities/VoxelEntity.h"
-#include "rendering/smoothMesher.h"
 #include "rendering/marchingTables.h"
 #include "rendering/SunBillboard.h"
 
@@ -280,6 +279,7 @@ namespace gl3 {
 
         std::uniform_real_distribution<float> distColor(0.3f, 1.0f);
 
+
         for (int i = 0; i < 4; ++i) {
             glm::vec3 axis = glm::normalize(glm::vec3(distAxis(rng), distAxis(rng), distAxis(rng)));
             if (glm::length(axis) < 0.001f) axis = glm::vec3(0, 1, 0);
@@ -304,7 +304,7 @@ namespace gl3 {
                                        0.0f,
                                        axis,
                                        distSpeed(rng),
-                                       glm::vec3(1.0f,0.5f,0.0f)
+                                       glm::vec3(distColor(rng), distColor(rng), distColor(rng))  // << ONE color per planet
                                });
             }
         for (int i = 0; i < 20; ++i) {
@@ -469,7 +469,7 @@ namespace gl3 {
                 voxelShader.setVec3("lightPos", sun.position);
                 voxelShader.setFloat("lightIntensity", 40.0f);
                 voxelShader.setFloat("emission", 3.0f);
-                voxelShader.setVec3("emissionColor", glm::vec3(1.0f,0.5f,0));
+                voxelShader.setVec3("emissionColor", sun.color);
 
                 voxelShader.setVec3("uniformColor", sun.color);
 

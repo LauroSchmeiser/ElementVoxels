@@ -64,7 +64,7 @@ void main() {
     float alpha = clamp((intensity * 0.85) * circleMask, 0.0, 1.0);
 
     // tiny threshold to avoid drawing nearly-transparent fragments (and to avoid wasting fillrate)
-    if (alpha < 0.01) discard;
+    if (alpha < 0.001) discard;
 
     // output premultiplied-style color (helps additive blending)
     FragColor = vec4(col * alpha, alpha);
