@@ -281,6 +281,8 @@ namespace gl3 {
         std::uniform_real_distribution<float> distSpeed(5.0f, 10.0f);
 
         std::uniform_real_distribution<float> distColor(0.3f, 1.0f);
+        std::uniform_real_distribution<float> distOrbit(0.0f, 1.0f);
+
 
 
         for (int i = 0; i < 4; ++i) {
@@ -368,7 +370,13 @@ namespace gl3 {
 
         }
 
-
+        for(auto &planet : planets)
+        {
+            planet.orbitOffset      = distOrbit(rng) * glm::two_pi<float>();       // random 0–2π
+            planet.orbitInclination = (distOrbit(rng) * 2.0f - 1.0f) * glm::radians(30.0f); // -30°..+30°
+            planet.orbitRadius      = 75.0f + distOrbit(rng) * 150.0f;            // 50–200 units
+            planet.orbitSpeed       = 0.001f + distOrbit(rng) * 0.4f*1/planet.orbitOffset;           // 0.001–0.01 rad/sec (slow)
+        }
 
         // --- Camera setup ---
         cameraPos = glm::vec3(0.0f, 0.0f, 80.0f);
@@ -592,23 +600,20 @@ namespace gl3 {
                           });
 
 
-                planet.orbitRadius*distAxis(rng);
-                planet.orbitSpeed*distAxis(rng);
-                planet.orbitInclination=90*distAxis(rng);
-                planet.orbitAngle += deltaTime * planet.orbitSpeed;
+                planet.orbitAngle += deltaTime * planet.orbitSpeed; // deltaTime in seconds
 
-                // Base orbit (around XZ plane)
-                glm::vec3 flatPos(
-                        cos(planet.orbitAngle) * planet.orbitRadius,
+                glm::vec3 flat(
+                        cos(planet.orbitAngle + planet.orbitOffset) * planet.orbitRadius,
                         0.0f,
-                        sin(planet.orbitAngle) * planet.orbitRadius
+                        sin(planet.orbitAngle + planet.orbitOffset) * planet.orbitRadius
                 );
 
-                // Tilt the orbit around X-axis
                 glm::mat4 tilt = glm::rotate(glm::mat4(1.0f), planet.orbitInclination, glm::vec3(1,0,0));
-                glm::vec3 tilted = glm::vec3(tilt * glm::vec4(flatPos, 1.0f));
+                glm::vec3 tilted = glm::vec3(tilt * glm::vec4(flat, 1.0f));
 
                 planet.position = candidates[0].pos + tilted;
+
+
 
                 // take top MAX_LIGHTS
                 int numLights = std::min<int>((int)candidates.size(), MAX_LIGHTS);

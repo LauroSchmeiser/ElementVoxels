@@ -37,10 +37,11 @@ namespace gl3 {
             glm::vec3 rotationAxis;
             float rotationSpeed;
             glm::vec3 color;
-            float orbitAngle= 90.0f;
-            float orbitSpeed= 1.0f;
-            float orbitRadius= 100.0f+scale.length();
+            float orbitAngle;
+            float orbitSpeed;
+            float orbitRadius;
             float orbitInclination;
+            float orbitOffset;
         };
 
         // Updated signatures
