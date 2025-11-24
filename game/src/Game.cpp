@@ -270,6 +270,9 @@ namespace gl3 {
         std::vector<Planet> planets;
         std::vector<Planet> meteors;
 
+        std::vector<Planet> CollisionEntities;
+
+
 
         std::mt19937 rng(std::random_device{}());
         std::uniform_real_distribution<float> distPos(-100.0f, 100.0f);
@@ -281,47 +284,90 @@ namespace gl3 {
 
 
         for (int i = 0; i < 4; ++i) {
+            glm::vec3 pos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
+            glm::vec3 scale = glm::vec3(1.5f);
+            glm::vec3 color = glm::vec3(0.5f, 0.45f, 0.35f);
             glm::vec3 axis = glm::normalize(glm::vec3(distAxis(rng), distAxis(rng), distAxis(rng)));
-            if (glm::length(axis) < 0.001f) axis = glm::vec3(0, 1, 0);
+            float speed = distSpeed(rng);
 
-            meteors.push_back({
-                                      glm::vec3(distPos(rng), distPos(rng), distPos(rng)),
-                                      glm::vec3(1.5f),
-                                      0.0f,
-                                      axis,
-                                      distSpeed(rng),
-                                      glm::vec3(0.5f, 0.45f, 0.35f)
-                              });
+            Planet m = {pos, scale, 0.0f, axis, speed, color};
+
+            meteors.push_back(m);
+            CollisionEntities.push_back(m); // SAME object
         }
 
 
-        for (int j = 0; j < 2; ++j) {
-                glm::vec3 axis = glm::normalize(glm::vec3(distAxis(rng), distAxis(rng), distAxis(rng)));
-                if (glm::length(axis) < 0.001f) axis = glm::vec3(0, 1, 0);
+        int sunsCount=2;
+        for (int j = 0; j < sunsCount; ++j) {
+            glm::vec3 pos;
+            glm::vec3 scale;
+            float radius;
 
-                suns.push_back({
-                                       glm::vec3(distPos(rng), distPos(rng), distPos(rng)),
-                                       glm::vec3(3* distScale(rng)),
-                                       0.0f,
-                                       axis,
-                                       distSpeed(rng),
-                                       glm::vec3(distColor(rng), distColor(rng), 0)  // << ONE color per planet
-                               });
+            // Try up to N times to find a valid non-overlapping position
+            int attempts = 0;
+            const int maxAttempts = sunsCount*(50/sunsCount);
+
+            const float VoxelRadius = (CHUNK_SIZE - 1) * 0.5f ;
+
+            do {
+                pos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
+                scale = glm::vec3(distScale(rng)*5);
+                radius = getVoxelPlanetRadius(scale,VoxelRadius);
+                attempts++;
+            }
+            while (isOverlapping(pos, radius, CollisionEntities) && attempts < maxAttempts);
+
+            // If all attempts failed, skip this one
+            if (attempts >= maxAttempts)
+            {
+                std::cout<<"failed collision checks";
+                continue;
+
+            }
+            glm::vec3 color = glm::vec3(distColor(rng), distColor(rng) , 0.0f);
+            glm::vec3 axis = glm::normalize(glm::vec3(distAxis(rng), distAxis(rng), distAxis(rng)));
+            float speed = distSpeed(rng);
+            Planet s = {pos, scale, 0.0f, axis, speed, color};
+            suns.push_back(s);
+            CollisionEntities.push_back(s);
+        }
+
+        int planetsCount=25;
+        for (int i = 0; i < planetsCount; ++i) {
+
+            glm::vec3 pos;
+            glm::vec3 scale;
+            float radius;
+
+            // Try up to N times to find a valid non-overlapping position
+            int attempts = 0;
+            const int maxAttempts = planetsCount*(50/planetsCount);
+
+            const float VoxelRadius = (CHUNK_SIZE - 1) * 0.5f ;
+            do {
+                pos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
+                scale = glm::vec3(distScale(rng));
+                radius = getVoxelPlanetRadius(scale,VoxelRadius);
+                attempts++;
+            }
+            while (isOverlapping(pos, radius, CollisionEntities) && attempts < maxAttempts);
+
+            // If all attempts failed, skip this one
+            if (attempts >= maxAttempts)
+            {
+                std::cout<<"failed collision checks";
+                continue;
+
             }
 
-        for (int i = 0; i < 25; ++i) {
             glm::vec3 axis = glm::normalize(glm::vec3(distAxis(rng), distAxis(rng), distAxis(rng)));
-            if (glm::length(axis) < 0.001f) axis = glm::vec3(0, 1, 0);
+            Planet p = { pos, scale, 0.0f, axis, distSpeed(rng), glm::vec3(distColor(rng),distColor(rng),distColor(rng)) };
 
-            planets.push_back({
-                                      glm::vec3(distPos(rng), distPos(rng), distPos(rng)),
-                                      glm::vec3(distScale(rng)),
-                                      0.0f,
-                                      axis,
-                                      distSpeed(rng),
-                                      glm::vec3(distColor(rng), distColor(rng), distColor(rng))  // << ONE color per planet
-                              });
+            planets.push_back(p);
+            CollisionEntities.push_back(p);
+
         }
+
 
 
         // --- Camera setup ---
@@ -488,7 +534,7 @@ namespace gl3 {
                 float scaleAvg = (sun.scale.x + sun.scale.y + sun.scale.z) / 2.5f;
                 float sphereRadiusWorld = ((CHUNK_SIZE - 1) * 0.5f) * (baseVoxelSize * scaleAvg) *1.0f;
 
-// billboard scale = diameter (world units). small padding avoids clipping.
+                // billboard scale = diameter (world units). small padding avoids clipping.
                 inst.scale = sphereRadiusWorld * 2.0f*1.05f;
                 inst.color = sun.color; // use sun.color (set when creating suns)
                 instances.push_back(inst);
@@ -790,5 +836,23 @@ namespace gl3 {
 
         glDeleteVertexArrays(1, &vao);
     }
+
+    float Game::getVoxelPlanetRadius(const glm::vec3& scale, float baseChunkRadius) {
+        return baseChunkRadius * std::max(scale.x, std::max(scale.y, scale.z));
+    }
+
+
+    bool Game::isOverlapping(const glm::vec3 &pos, float rad, const std::vector<gl3::Game::Planet> &others) {
+        for (const Planet& p : others) {
+            float r = getVoxelPlanetRadius(p.scale,(CHUNK_SIZE - 1) * 0.5f );
+            float dist = glm::distance(pos, p.position);
+
+            if (dist < (rad + r)) {
+                return true;  // collision
+            }
+        }
+        return false;
+    }
+
 
 }

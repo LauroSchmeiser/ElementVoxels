@@ -48,6 +48,10 @@ namespace gl3 {
 
         void UpdateRotation(std::vector<Planet>& planets);
         void handleCameraInput();
+        float getVoxelPlanetRadius(const glm::vec3& scale, float baseChunkRadius);
+
+        bool isOverlapping(const glm::vec3& pos, float rad, const std::vector<Planet>& others);
+
         glm::vec3 getCameraFront() const;
         GLFWwindow *window = nullptr;
         std::vector<std::unique_ptr<Entity>> entities;
