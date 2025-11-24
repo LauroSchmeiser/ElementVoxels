@@ -10,6 +10,7 @@
 #include "entities/VoxelEntity.h"
 #include "rendering/smoothMesher.h"
 #include "rendering/marchingTables.h"
+#include "rendering/SunBillboard.h"
 
 namespace gl3 {
     // CPU-side voxel format that matches the compute shader's Voxel { float density; vec4 color; }
@@ -303,7 +304,7 @@ namespace gl3 {
                                        0.0f,
                                        axis,
                                        distSpeed(rng),
-                                       glm::vec3(1.0f, 0.6f, 0)
+                                       glm::vec3(1.0f,0.5f,0.0f)
                                });
             }
         for (int i = 0; i < 20; ++i) {
@@ -417,6 +418,9 @@ namespace gl3 {
         }
          */
 
+        SunBillboard sunBillboards;
+        sunBillboards.init(16);
+
         while (!glfwWindowShouldClose(window)) {
             update();
             updateDeltaTime();
@@ -438,6 +442,9 @@ namespace gl3 {
             glm::mat4 pv = projection * view;
             glm::mat4 identityModel = glm::mat4(1.0f);
 
+            // build instances
+            std::vector<SunInstance> instances;
+            instances.reserve(suns.size());
 
             // For each sun: upload voxels, reset counter, set uniforms, dispatch compute, read vertex count, draw
             for (auto &sun : suns) {
@@ -462,13 +469,32 @@ namespace gl3 {
                 voxelShader.setVec3("lightPos", sun.position);
                 voxelShader.setFloat("lightIntensity", 40.0f);
                 voxelShader.setFloat("emission", 3.0f);
-                voxelShader.setVec3("emissionColor", glm::vec3(1.0f,0.7f,0));
+                voxelShader.setVec3("emissionColor", glm::vec3(1.0f,0.5f,0));
 
                 voxelShader.setVec3("uniformColor", sun.color);
 
                 // draw the vertices produced by the compute shader
                 drawTriangles(voxelShader);
+
+                //render Billboards
+                SunInstance inst;
+                inst.position = sun.position+((cameraPos-sun.position)/glm::vec3(3));
+                // choose scale for billboard so it visually surrounds voxel core; tweak as you like
+                inst.scale = glm::length(sun.scale) * 3.14f;
+                // compute sphere radius in world units used by your marching-cubes mesh
+                const float baseVoxelSize = 1.0f;
+                float scaleAvg = (sun.scale.x + sun.scale.y + sun.scale.z) / 2.5f;
+                float sphereRadiusWorld = ((CHUNK_SIZE - 1) * 0.5f) * (baseVoxelSize * scaleAvg) *1.0f;
+
+// billboard scale = diameter (world units). small padding avoids clipping.
+                inst.scale = sphereRadiusWorld * 2.0f * 1.05f;
+                inst.color = sun.color; // use sun.color (set when creating suns)
+                instances.push_back(inst);
+
             }
+
+            // render billboards (time: use glfwGetTime or your time accumulator)
+            sunBillboards.render(instances, view, projection, (float)glfwGetTime());
 
 
             // Render planets
@@ -484,35 +510,62 @@ namespace gl3 {
                 //Vertex-Count Debug
                 //std::cout << "[compute] planet vertexCount = " << vertexCount << std::endl;
 
+
+                // --------------------------------------------------------------
+                // Compute multi-sun lighting color (distance weighted)
+                // --------------------------------------------------------------
+                glm::vec3 totalLightColor(0.0f);
+                glm::vec3 weightedLightPos(0.0f);
+                float totalIntensity = 0.0f;
+
+                for (auto &s : suns) {
+
+                    float distance = glm::distance(planet.position, s.position);
+                    float invSq = 1.0f / (distance * distance + 1e-5f);
+
+                    // Sun emission strength (use your own value — or scale s.color length)
+                    float sunBrightness = glm::length(s.scale)*1000.0f; // or: s.brightness if you store one
+
+                    float intensity = sunBrightness * invSq;
+
+                    // Add to color sum
+                    totalLightColor += s.color * intensity;
+
+                    // Weighted average light position (optional)
+                    weightedLightPos += s.position * intensity;
+                    totalIntensity += intensity;
+                }
+
+                // Normalize light color (prevents insane HDR blowout)
+                if (glm::length(totalLightColor) > 1.0f)
+                    totalLightColor = glm::normalize(totalLightColor);
+
+                // Ensure minimum brightness
+                totalLightColor = glm::max(totalLightColor, glm::vec3(0.15f));
+
+                // Compute primary light position (weighted by intensity)
+                glm::vec3 finalLightPos = (totalIntensity > 0.0f)
+                                          ? (weightedLightPos / totalIntensity)
+                                          : glm::vec3(20.0f,20.0f,20.0f);
+
+                // --------------------------------------------------------------
+                // Send to shader
+                // --------------------------------------------------------------
                 voxelShader.use();
                 voxelShader.setMatrix("model", identityModel);
                 voxelShader.setMatrix("mvp", pv);
                 voxelShader.setVec3("viewPos", cameraPos);
 
-                // Choose a real world-space light position for illumination.
-                // Use the first sun as the light (or compute a weighted average if you want multi-sun)
-                glm::vec3 primaryLightPos = suns.empty() ? glm::vec3(20.0f, 20.0f, 20.0f) : suns[0].position;
+                voxelShader.setVec3("lightPos", finalLightPos);
+                voxelShader.setFloat("lightIntensity", 1.0f); // intensity now in lightColor
+                voxelShader.setVec3("lightColor", totalLightColor);
 
-                // Basic inverse-square brightness (you already computed combinedLight — clamp it and ensure a minimum)
-                float combinedLight = 0.0f;
-                for (auto &s : suns) {
-                    float d = glm::distance(planet.position, s.position);
-                    combinedLight += 100.0f / (d * d + 1e-6f);
-                    // basic inverse-square attenuation
-                }
-                if(combinedLight<1.0f)
-                {
-                    combinedLight=1.0f;
-                }
-                float intensity = glm::clamp(combinedLight, 0.2f, 100.0f); // ensure at least 0.2 ambient-like lighting
-                voxelShader.setVec3("lightPos", primaryLightPos);
-                voxelShader.setFloat("lightIntensity", intensity);
                 voxelShader.setFloat("emission", 0.0f);
-                voxelShader.setVec3("emissionColor", glm::vec3(0,0,0));
-
+                voxelShader.setVec3("emissionColor", glm::vec3(0));
                 voxelShader.setVec3("uniformColor", planet.color);
-                // draw the vertices produced by the compute shader
+
                 drawTriangles(voxelShader);
+
             }
 
             for (auto &meteor : meteors) {

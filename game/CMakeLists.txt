@@ -24,7 +24,9 @@ add_executable(${EXE_FILE} ${SOURCE_FILES}
         src/entities/VoxelEntity.h
         src/rendering/smoothMesher.h
         src/rendering/smoothMesher.cpp
-        src/rendering/marchingTables.h)
+        src/rendering/marchingTables.h
+        src/rendering/SunBillboard.cpp
+        src/rendering/SunBillboard.h)
 
 
 
