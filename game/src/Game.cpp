@@ -487,14 +487,14 @@ namespace gl3 {
 
                 suns.push_back({
                                        glm::vec3(distPos(rng), distPos(rng), distPos(rng)),
-                                       glm::vec3(5 * distScale(rng)),
+                                       glm::vec3(3* distScale(rng)),
                                        0.0f,
                                        axis,
                                        distSpeed(rng),
                                        glm::vec3(1.0f, 1.0f, 0)
                                });
             }
-        for (int i = 0; i < 100; ++i) {
+        for (int i = 0; i < 10; ++i) {
             glm::vec3 axis = glm::normalize(glm::vec3(distAxis(rng), distAxis(rng), distAxis(rng)));
             if (glm::length(axis) < 0.001f) axis = glm::vec3(0, 1, 0);
 
@@ -619,11 +619,19 @@ namespace gl3 {
 
             computeShader.use(); // use your marching cubes compute shader
 
+            // compute PV once per frame (do this outside the loops)
+            float aspect = (windowHeight == 0) ? (float)windowWidth / 1.0f : (float)windowWidth / (float)windowHeight;
+            glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
+            glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), glm::vec3(0.0f, 1.0f, 0.0f));
+            glm::mat4 pv = projection * view;
+            glm::mat4 identityModel = glm::mat4(1.0f);
+
+
             // For each sun: upload voxels, reset counter, set uniforms, dispatch compute, read vertex count, draw
             for (auto &sun : suns) {
-                uploadVoxelChunk(sunChunk);               // upload densities/colors, uses binding 0
+                uploadVoxelChunk(sunChunk, &sun.color);           // upload densities/colors, uses binding 0
                 resetAtomicCounter();                     // zero counter in binding 3
-                setComputeUniforms(sun.position, computeShader);
+                setComputeUniforms(sun.position, sun.scale, computeShader);
                 dispatchCompute();
 
                 // read debug vertex count
@@ -632,15 +640,27 @@ namespace gl3 {
                 glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(unsigned int), &vertexCount);
                 std::cout << "[compute] sun vertexCount = " << vertexCount << std::endl;
 
+                // --- Set voxel rendering shader uniforms for this sun BEFORE drawing ---
+                // render
+                voxelShader.use();
+                voxelShader.setMatrix("model", identityModel);  // IMPORTANT: identity
+                voxelShader.setMatrix("mvp", pv);               // PV only (positions are world-space)
+                voxelShader.setVec3("viewPos", cameraPos);
+                voxelShader.setVec3("lightPos", sun.position);
+                voxelShader.setFloat("lightIntensity", 20.0f);
+                voxelShader.setFloat("emission", 3.0f);
+                voxelShader.setVec3("uniformColor", sun.color);
+
+                // draw the vertices produced by the compute shader
                 drawTriangles(voxelShader);
             }
 
 
             // Render planets
             for (auto &planet : planets) {
-                uploadVoxelChunk(baseChunk);
+                uploadVoxelChunk(baseChunk, &planet.color);
                 resetAtomicCounter();
-                setComputeUniforms(planet.position, computeShader);
+                setComputeUniforms(planet.position, planet.scale, computeShader);
                 dispatchCompute();
 
                 unsigned int vertexCount = 0;
@@ -648,6 +668,32 @@ namespace gl3 {
                 glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(unsigned int), &vertexCount);
                 std::cout << "[compute] planet vertexCount = " << vertexCount << std::endl;
 
+                voxelShader.use();
+                voxelShader.setMatrix("model", identityModel);
+                voxelShader.setMatrix("mvp", pv);
+                voxelShader.setVec3("viewPos", cameraPos);
+
+                // Choose a real world-space light position for illumination.
+                // Use the first sun as the light (or compute a weighted average if you want multi-sun)
+                glm::vec3 primaryLightPos = suns.empty() ? glm::vec3(20.0f, 20.0f, 20.0f) : suns[0].position;
+
+                // Basic inverse-square brightness (you already computed combinedLight — clamp it and ensure a minimum)
+                float combinedLight = 0.0f;
+                for (auto &s : suns) {
+                    float d = glm::distance(planet.position, s.position);
+                    combinedLight += 100.0f / (d * d + 1e-6f);
+                    // basic inverse-square attenuation
+                }
+                if(combinedLight<1.0f)
+                {
+                    combinedLight=1.0f;
+                }
+                float intensity = glm::clamp(combinedLight, 0.2f, 100.0f); // ensure at least 0.2 ambient-like lighting
+                voxelShader.setVec3("lightPos", primaryLightPos);
+                voxelShader.setFloat("lightIntensity", intensity);
+                voxelShader.setFloat("emission", 0.0f);
+                voxelShader.setVec3("uniformColor", planet.color);
+                // draw the vertices produced by the compute shader
                 drawTriangles(voxelShader);
             }
 
@@ -747,29 +793,37 @@ namespace gl3 {
     }
 
 
-    void Game::uploadVoxelChunk(const Chunk& chunk)
+    void Game::uploadVoxelChunk(const Chunk& chunk, const glm::vec3* overrideColor)
     {
-        // CPU-side struct must match shader's Voxel (density + vec4 color)
         struct CpuVoxel { float density; glm::vec4 color; };
-
         size_t voxelCount = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
         std::vector<CpuVoxel> voxels(voxelCount);
 
-        for(int x=0;x<CHUNK_SIZE;x++)
-            for(int y=0;y<CHUNK_SIZE;y++)
-                for(int z=0;z<CHUNK_SIZE;z++)
-                {
+        for(int x=0;x<CHUNK_SIZE;x++) {
+            for(int y=0;y<CHUNK_SIZE;y++) {
+                for(int z=0;z<CHUNK_SIZE;z++) {
                     auto &v = chunk.voxels[x][y][z];
                     int idx = x + y*CHUNK_SIZE + z*CHUNK_SIZE*CHUNK_SIZE;
+
                     voxels[idx].density = v.type ? v.density : -1.0f;
-                    // pack color into vec4 (alpha unused)
-                    voxels[idx].color = glm::vec4(v.color, 1.0f);
+
+                    if (overrideColor) {
+                        voxels[idx].color = glm::vec4(*overrideColor, 1.0f); // use uniform color
+                    } else {
+                        voxels[idx].color = glm::vec4(v.color, 1.0f);        // per-voxel color as before
+                    }
                 }
+            }
+        }
 
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboVoxels);
         glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, voxels.size()*sizeof(CpuVoxel), voxels.data());
-    }
 
+        // Debug (optional): print first and center voxel colors/density
+        // int centerIdx = (CHUNK_SIZE/2) + (CHUNK_SIZE/2)*CHUNK_SIZE + (CHUNK_SIZE/2)*CHUNK_SIZE*CHUNK_SIZE;
+        // std::cout << "uploadVoxelChunk: color0=" << voxels[0].color.r << ","<<voxels[0].color.g<<","<<voxels[0].color.b
+        //           << " centerDensity=" << voxels[centerIdx].density << "\n";
+    }
 
     void Game::resetAtomicCounter()
     {
@@ -779,16 +833,29 @@ namespace gl3 {
 
     }
 
-    void Game::setComputeUniforms(const glm::vec3& position, Shader& computeShader)
+    void Game::setComputeUniforms(const glm::vec3& position, const glm::vec3& objectScale, Shader& computeShader)
     {
         computeShader.use();
 
-        computeShader.setVec3("gridOrigin", position);
-        computeShader.setFloat("voxelSize", 1.0f);
-        // set as integers - shader expects ivec3; adjust your Shader helper if needed
-        computeShader.setVec3("voxelGridDim", glm::vec3(CHUNK_SIZE));
-    }
+        // base voxel size (world units per voxel) you used previously
+        const float baseVoxelSize = 1.0f;
 
+        // If the object has a uniform scale, apply it by scaling voxelSize.
+        // If objectScale is vec3, you can pick x (uniform scale) or average.
+        float scale = (objectScale.x + objectScale.y + objectScale.z) / 3.0f;
+        float effectiveVoxelSize = baseVoxelSize * scale;
+
+        // We want the chunk centered at 'position'. The compute shader expects gridOrigin
+        // to be the world position of voxel (0,0,0). So offset by half the grid extents:
+        glm::vec3 halfExtents = (glm::vec3(CHUNK_SIZE) * 0.5f) * effectiveVoxelSize;
+        glm::vec3 gridOrigin = position - halfExtents;
+
+        // upload uniforms
+        computeShader.setVec3("gridOrigin", gridOrigin);
+        computeShader.setFloat("voxelSize", effectiveVoxelSize);
+        // shader expects ivec3 voxelGridDim
+        computeShader.setIVec3("voxelGridDim", glm::ivec3(CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE));
+    }
     void Game::dispatchCompute()
     {
         int groups = (CHUNK_SIZE - 1 + 7) / 8; // local_size = 8 in compute shader
@@ -827,6 +894,7 @@ namespace gl3 {
         glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(unsigned int), &vertexCount);
 
         voxelShader.use();
+
         glBindVertexArray(vao);
         glDrawArrays(GL_TRIANGLES, 0, vertexCount);
 

@@ -40,9 +40,9 @@ namespace gl3 {
         };
 
         // Updated signatures
-        void uploadVoxelChunk(const Chunk& chunk);
+        void uploadVoxelChunk(const Chunk& chunk, const glm::vec3* overrideColor = nullptr);
         void resetAtomicCounter();
-        void setComputeUniforms(const glm::vec3& position, Shader& computeShader);
+        void setComputeUniforms(const glm::vec3& position, const glm::vec3& objectScale, Shader& computeShader);
         void dispatchCompute();
         void drawTriangles(Shader& voxelShader);
 
