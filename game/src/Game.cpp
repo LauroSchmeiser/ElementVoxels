@@ -36,9 +36,11 @@ namespace gl3 {
     }
 
 
-    Game::Game(int width, int height, const std::string &title) {
-        windowWidth=width;
-        windowHeight=height;
+    Game::Game(int width, int height, const std::string &title)
+    {
+        windowWidth = width;
+        windowHeight = height;
+
         if(!glfwInit()) {
             throw std::runtime_error("Failed to initialize glfw");
         }
@@ -55,18 +57,18 @@ namespace gl3 {
 
         glfwMakeContextCurrent(window);
 
+        gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
+
         glfwSetWindowUserPointer(window, this);
         glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
 
-        gladLoadGLLoader((GLADloadproc) glfwGetProcAddress);
-        if(glGetError() != GL_NO_ERROR) {
-            throw std::runtime_error("gl error");
-        }
+        voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel.frag");
+        computeShader = std::make_unique<Shader>("shaders/marching_cubes.comp");
 
         audio.init();
         audio.setGlobalVolume(0.1f);
-
     }
+
 
     Game::~Game() {
         glfwTerminate();
@@ -92,9 +94,46 @@ namespace gl3 {
 
 
     void Game::run() {
+        //Initialization-Steps
+        setupSSBOsAndTables();
+        setupCamera();
+        generateChunks();
+        fillChunks();
+        setSimulationVariables();
+        findBestParent();
+        setupVEffects();
+
+
+        while (!glfwWindowShouldClose(window)) {
+            glEnable(GL_DEPTH_TEST);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+            //Simulation Steps
+            updateDeltaTime();
+            UpdateRotation(suns);
+            UpdateRotation(planets);
+
+            //Input-Steps
+            handleCameraInput();
+            glfwPollEvents();
+            update();
+
+
+            //Post-Prod Steps?
+
+            //Rendering Steps
+            computeShader->use();
+            renderSuns();
+            renderPlanets();
+
+            glfwSwapBuffers(window);
+        }
+
+    }
+
+    void Game::setupSSBOsAndTables()
+    {
         // Prepare SSBOs and static tables
-        size_t voxelCount = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
-        size_t maxVerts = CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE * 5 * 3;
 
         // 0: voxels SSBO
         glGenBuffers(1, &ssboVoxels);
@@ -126,14 +165,17 @@ namespace gl3 {
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboTriangles);
         glBufferData(GL_SHADER_STORAGE_BUFFER, maxVerts * sizeof(OutVertex), nullptr, GL_DYNAMIC_DRAW);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, ssboTriangles);
+    }
 
-        // --- Setup shaders ---
-        Shader voxelShader("shaders/voxel.vert", "shaders/voxel.frag");
-        Shader computeShader("shaders/marching_cubes.comp");
-        // Create chunks and set densities properly (density = radius - dist)
-        Chunk baseChunk;
-        Chunk sunChunk;
-        // inside run(), replace the chunk population loops with this:
+    void Game::setupCamera()
+    {
+        // --- Camera setup ---
+        cameraPos = glm::vec3(0.0f, 0.0f, 80.0f);
+        cameraRotation = glm::vec2(0.0f, -90.0f);
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    }
+
+    void Game::generateChunks() {
 
         const float centerOffset = (CHUNK_SIZE - 1) * 0.5f;
         const float radius = centerOffset; // radius in voxel units to roughly touch inside
@@ -175,7 +217,6 @@ namespace gl3 {
             }
         }
 
-        Chunk meteorChunk;
         // robust lumpy meteor generator (drop-in)
         const float rx = centerOffset * 0.75f; // ensure meteor fits inside chunk
         const float ry = centerOffset * 0.55f;
@@ -249,31 +290,10 @@ namespace gl3 {
                 }
             }
         }
+    }
 
-        //Debugging for Density
-        /*
-        std::cout << "meteor SDF min=" << minD << " max=" << maxD
-                  << " center=" << meteorChunk.voxels[cx][cy][cz].density << std::endl;
-
-// Print density along x-axis through center (y=cy,z=cz)
-        std::cout << "center-line densities: ";
-        for (int x=0;x<CHUNK_SIZE;++x) {
-            std::cout << meteorChunk.voxels[x][cy][cz].density << (x+1<CHUNK_SIZE? ",":"\n");
-        }
-*/
-
-        // --- Generate mesh from voxel chunk ---
-        //Mesh planetMesh = generateVoxelChunkMesh(baseChunk);
-        //Mesh sunMesh = generateVoxelChunkMesh(sunChunk);
-
-        std::vector<Planet> suns;
-        std::vector<Planet> planets;
-        std::vector<Planet> meteors;
-
-        std::vector<Planet> CollisionEntities;
-
-
-
+    void Game::fillChunks()
+    {
         std::mt19937 rng(std::random_device{}());
         std::uniform_real_distribution<float> distPos(-100.0f, 100.0f);
         std::uniform_real_distribution<float> distScale(0.5f, 3.0f);
@@ -281,10 +301,11 @@ namespace gl3 {
         std::uniform_real_distribution<float> distSpeed(5.0f, 10.0f);
 
         std::uniform_real_distribution<float> distColor(0.3f, 1.0f);
-        std::uniform_real_distribution<float> distOrbit(0.0f, 1.0f);
+        std::uniform_real_distribution<float> distColor2(0.66f, 1.0f);
 
 
 
+        // --- Generate mesh from voxel chunk ---
         for (int i = 0; i < 4; ++i) {
             glm::vec3 pos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
             glm::vec3 scale = glm::vec3(1.5f);
@@ -326,7 +347,7 @@ namespace gl3 {
                 continue;
 
             }
-            glm::vec3 color = glm::vec3(distColor(rng), distColor(rng) , 0.0f);
+            glm::vec3 color = glm::vec3(distColor2(rng), distColor(rng) , 0.0f);
             glm::vec3 axis = glm::normalize(glm::vec3(distAxis(rng), distAxis(rng), distAxis(rng)));
             float speed = distSpeed(rng);
             Planet s = {pos, scale, 0.0f, axis, speed, color};
@@ -370,6 +391,12 @@ namespace gl3 {
 
         }
 
+    }
+
+    void Game::setSimulationVariables()
+    {
+        std::mt19937 rng(std::random_device{}());
+        std::uniform_real_distribution<float> distOrbit(0.0f, 1.0f);
         for(auto &planet : planets)
         {
             planet.orbitOffset      = distOrbit(rng) * glm::two_pi<float>();       // random 0–2π
@@ -383,359 +410,376 @@ namespace gl3 {
             sun.orbitOffset      = distOrbit(rng) * glm::two_pi<float>() * sun.scale.length()/2;       // random 0–2π
             sun.orbitInclination = (distOrbit(rng) * 2.0f - 1.0f) * glm::radians(30.0f); // -30°..+30°
             sun.orbitRadius      = 75.0f*sun.scale.length()/3 + distOrbit(rng) * 150.0f;            // 50–200 units
-            sun.orbitSpeed       = 0.001f + distOrbit(rng) * 0.4f*1/sun.orbitOffset *2/sun.scale.length();           // 0.001–0.01 rad/sec (slow)
+            sun.orbitSpeed       = 0.001f + distOrbit(rng) * 0.4f*1/sun.orbitOffset *1/sun.scale.length();           // 0.001–0.01 rad/sec (slow)
         }
+    }
 
-        // --- Camera setup ---
-        cameraPos = glm::vec3(0.0f, 0.0f, 80.0f);
-        cameraRotation = glm::vec2(0.0f, -90.0f);
-        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-
-
-        /*
-        // --- Main loop ---
-        while (!glfwWindowShouldClose(window)) {
-            update();
-            updateDeltaTime();
-            handleCameraInput();
-
-            glEnable(GL_DEPTH_TEST);
-            glClearColor(0.0f, 0.0f, 0.2f, 1.0f);
-            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-            voxelShader.use();
-
-            for(auto & sun : suns){
-                // Each planet spins around its own random axis
-                sun.rotationAngle += deltaTime * sun.rotationSpeed;
-                if (sun.rotationAngle > 360.0f) sun.rotationAngle -= 360.0f;
-
-                glm::mat4 model = glm::mat4(1.0f);
-                model = glm::translate(model, sun.position);
-                model = glm::rotate(model, glm::radians(sun.rotationAngle), sun.rotationAxis);
-                model = glm::scale(model, sun.scale);
-
-                glm::mat4 mvp = calculateMvpMatrix(sun.position, sun.rotationAngle, sun.scale);
-
-                voxelShader.setVec3("uniformColor", sun.color);
-                float combinedLight=1.0f;
-                glm::vec3 combinedDir= glm::vec3(0,0,0);
-                combinedLight= 1.0f;
-                combinedDir=glm::vec3(0,0,0);
-                voxelShader.setFloat("emission", 1.0f);
-                voxelShader.setFloat("lightIntensity",combinedLight);
-                voxelShader.setMatrix("model", model);
-                voxelShader.setVec3("lightPos",combinedDir);
-                voxelShader.setMatrix("mvp", mvp);
-                sunMesh.draw();
-            }
-
-            for (auto &planet : planets) {
-                // Each planet spins around its own random axis
-                planet.rotationAngle += deltaTime * planet.rotationSpeed;
-                if (planet.rotationAngle > 360.0f) planet.rotationAngle -= 360.0f;
-
-                glm::mat4 model = glm::mat4(1.0f);
-                model = glm::translate(model, planet.position);
-                model = glm::rotate(model, glm::radians(planet.rotationAngle), planet.rotationAxis);
-                model = glm::scale(model, planet.scale);
-
-                glm::mat4 mvp = calculateMvpMatrix(planet.position, planet.rotationAngle, planet.scale);
-
-                voxelShader.setVec3("uniformColor", planet.color);
-                float combinedLight = 0.0f;
-                glm::vec3 lightDir = glm::vec3(0);
-
-                for (auto &sun : suns) {
-                    float dist = glm::distance(planet.position, sun.position);
-
-                    combinedLight += 100 / (dist * dist);
-                    lightDir += glm::normalize(sun.position - planet.position);
-                }
-
-                lightDir = glm::normalize(lightDir);
-
-                voxelShader.setFloat("emission", 0.0f);
-                voxelShader.setFloat("lightIntensity",combinedLight);
-                voxelShader.setMatrix("model", model);
-                voxelShader.setVec3("lightPos",lightDir);
-                voxelShader.setMatrix("mvp", mvp);
-                planetMesh.draw();
-            }
-
-            //TODO new code
-            mcShader.use(); // use your marching cubes compute shader
-
-            // --- Render Suns ---
-            for (auto &sun : suns) {
-                uploadVoxelChunk(sunChunk);       // step 3
-                resetAtomicCounter();              // step 4
-                setComputeUniforms(sun.position); // step 5a
-                dispatchCompute();                 // step 5b
-                drawTriangles();                   // step 5c
-            }
-
-
-
-            glfwSwapBuffers(window);
-            glfwPollEvents();
-        }
-         */
-
-
-        SunBillboard sunBillboards;
+    void Game::setupVEffects() {
         sunBillboards.init(16);
 
-        for (int i = 0; i < suns.size(); i++)
-        {
-            Planet &p = suns[i];
-            float mySize = glm::length(p.scale);
+    }
 
-            float bestDist = std::numeric_limits<float>::max();
-            Planet* bestParent = nullptr;
+    void Game::renderSuns()
+    {
 
-            for (int j = 0; j < suns.size(); j++)
+        //build instances
+        std::vector<SunInstance> instances;
+        instances.reserve(suns.size());
+
+        // compute PV once per frame (do this outside the loops)
+        float aspect = (windowHeight == 0) ? (float)windowWidth / 1.0f : (float)windowWidth / (float)windowHeight;
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
+        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), glm::vec3(0.0f, 1.0f, 0.0f));
+        glm::mat4 pv = projection * view;
+        glm::mat4 identityModel = glm::mat4(1.0f);
+
+
+        // For each sun: upload voxels, reset counter, set uniforms, dispatch compute, read vertex count, draw
+        for (auto &sun : suns) {
+            uploadVoxelChunk(sunChunk, &sun.color);           // upload densities/colors, uses binding 0
+            resetAtomicCounter();                     // zero counter in binding 3
+            setComputeUniforms(sun.position, sun.scale, *computeShader);
+            dispatchCompute();
+
+            // read debug vertex count
+            unsigned int vertexCount = 0;
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
+            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(unsigned int), &vertexCount);
+            //Vertex-Count Debug
+            //std::cout << "[compute] sun vertexCount = " << vertexCount << std::endl;
+
+            // --- Set voxel rendering shader uniforms for this sun BEFORE drawing ---
+            // render
+
+            if (sun.parent != nullptr)
             {
-                if (i == j) continue;
-
-                float otherSize = glm::length(suns[j].scale);
-                if (otherSize <= mySize) continue;  // must be larger
-
-                float d = glm::distance(p.position, suns[j].position);
-                if (d < bestDist)
-                {
-                    bestDist = d;
-                    bestParent = &suns[j];
-                }
-            }
-
-            p.parent = bestParent; // NULL if no larger sun exists
-        }
-
-        for (int i = 0; i < planets.size(); i++)
-        {
-            Planet &p = planets[i];
-            float mySize = glm::length(p.scale);
-
-            float bestDist = std::numeric_limits<float>::max();
-            Planet* bestParent = nullptr;
-
-            for (int j = 0; j < suns.size(); j++)
-            {
-                if (i == j) continue;
-
-                float otherSize = glm::length(suns[j].scale);
-                if (otherSize <= mySize) continue;  // must be larger
-
-                float d = glm::distance(p.position, suns[j].position);
-                if (d < bestDist)
-                {
-                    bestDist = d;
-                    bestParent = &suns[j];
-                }
-            }
-
-            p.parent = bestParent; // NULL if no larger sun exists
-        }
-
-        while (!glfwWindowShouldClose(window)) {
-            update();
-
-            updateDeltaTime();
-            handleCameraInput();
-
-            glEnable(GL_DEPTH_TEST);
-            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-            // --- Rotate suns and planets ---
-            UpdateRotation(suns);
-            UpdateRotation(planets);
-
-            computeShader.use(); // use your marching cubes compute shader
-
-            // compute PV once per frame (do this outside the loops)
-            float aspect = (windowHeight == 0) ? (float)windowWidth / 1.0f : (float)windowWidth / (float)windowHeight;
-            glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
-            glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), glm::vec3(0.0f, 1.0f, 0.0f));
-            glm::mat4 pv = projection * view;
-            glm::mat4 identityModel = glm::mat4(1.0f);
-
-            // build instances
-            std::vector<SunInstance> instances;
-            instances.reserve(suns.size());
-
-
-
-            // For each sun: upload voxels, reset counter, set uniforms, dispatch compute, read vertex count, draw
-            for (auto &sun : suns) {
-                uploadVoxelChunk(sunChunk, &sun.color);           // upload densities/colors, uses binding 0
-                resetAtomicCounter();                     // zero counter in binding 3
-                setComputeUniforms(sun.position, sun.scale, computeShader);
-                dispatchCompute();
-
-                // read debug vertex count
-                unsigned int vertexCount = 0;
-                glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
-                glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(unsigned int), &vertexCount);
-                //Vertex-Count Debug
-                //std::cout << "[compute] sun vertexCount = " << vertexCount << std::endl;
-
-                // --- Set voxel rendering shader uniforms for this sun BEFORE drawing ---
-                // render
-
-                if (sun.parent != nullptr)
-                {
-                    sun.orbitAngle += deltaTime * sun.orbitSpeed;
-
-                    glm::vec3 flat(
-                            cos(sun.orbitAngle + sun.orbitOffset) * sun.orbitRadius,
-                            0.0f,
-                            sin(sun.orbitAngle + sun.orbitOffset) * sun.orbitRadius
-                    );
-
-                    glm::mat4 tilt = glm::rotate(glm::mat4(1.0f), sun.orbitInclination, glm::vec3(1,0,0));
-                    glm::vec3 tilted = glm::vec3(tilt * glm::vec4(flat, 1.0f));
-
-                    sun.position = sun.parent->position + tilted;
-                }
-
-
-
-                voxelShader.use();
-                voxelShader.setMatrix("model", identityModel);  // IMPORTANT: identity
-                voxelShader.setMatrix("mvp", pv);               // PV only (positions are world-space)
-                voxelShader.setVec3("viewPos", cameraPos);
-                voxelShader.setVec3("lightPos", sun.position);
-                voxelShader.setFloat("lightIntensity", 40.0f);
-                voxelShader.setFloat("emission", 3.0f);
-                voxelShader.setVec3("emissionColor", sun.color);
-
-                voxelShader.setVec3("uniformColor", sun.color);
-
-                // draw the vertices produced by the compute shader
-                drawTriangles(voxelShader);
-
-                //render Billboards
-                SunInstance inst;
-                inst.position = sun.position+((cameraPos-sun.position)/glm::vec3(3));
-                // choose scale for billboard so it visually surrounds voxel core; tweak as you like
-                inst.scale = glm::length(sun.scale) * 3.14f;
-                // compute sphere radius in world units used by your marching-cubes mesh
-                const float baseVoxelSize = 1.0f;
-                float scaleAvg = (sun.scale.x + sun.scale.y + sun.scale.z) / 2.5f;
-                float sphereRadiusWorld = ((CHUNK_SIZE - 1) * 0.5f) * (baseVoxelSize * scaleAvg) *1.0f;
-
-                // billboard scale = diameter (world units). small padding avoids clipping.
-                inst.scale = sphereRadiusWorld * 2.0f*1.05f;
-                inst.color = sun.color; // use sun.color (set when creating suns)
-                instances.push_back(inst);
-
-            }
-
-            // render billboards (time: use glfwGetTime or your time accumulator)
-            sunBillboards.render(instances, view, projection, (float)glfwGetTime());
-
-
-            // Render planets
-            for (auto &planet : planets) {
-                uploadVoxelChunk(baseChunk, &planet.color);
-                resetAtomicCounter();
-                setComputeUniforms(planet.position, planet.scale, computeShader);
-                float angleRad = glm::radians(planet.rotationAngle);
-                glm::mat3 rot = glm::mat3(glm::rotate(glm::mat4(1.0), angleRad, planet.rotationAxis));
-                dispatchCompute();
-
-                unsigned int vertexCount = 0;
-                glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
-                glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(unsigned int), &vertexCount);
-                //Vertex-Count Debug
-                //std::cout << "[compute] planet vertexCount = " << vertexCount << std::endl;
-
-                // choose top-N lights to send to shader
-                constexpr int MAX_LIGHTS = 4;
-                struct LightEntry {
-                    glm::vec3 pos;
-                    glm::vec3 color;
-                    float intensity; // scaled brightness including inverse-square
-                };
-
-                // build list of candidate lights (with computed intensity)
-                std::vector<LightEntry> candidates;
-                candidates.reserve(suns.size());
-
-                const float EPS = 1e-5f;
-                for (auto &s : suns) {
-                    float dist = glm::distance(planet.position, s.position);
-                    float invSq = 2.0f / (dist * dist + EPS);
-
-                    // sunBrightness: tune to your scene. using scale length as proxy
-                    float sunBase = glm::length(s.scale)* glm::length(s.scale) * (125.0f); // tweak multiplier
-                    float intensity = sunBase * invSq;
-
-                    candidates.push_back({ s.position, s.color, intensity });
-                }
-
-                std::sort(suns.begin(), suns.end(),
-                          [](const Planet &a, const Planet &b) {
-                              return glm::length(a.scale) > glm::length(b.scale);
-                          });
-
-
-                planet.orbitAngle += deltaTime * planet.orbitSpeed; // deltaTime in seconds
+                sun.orbitAngle += deltaTime * sun.orbitSpeed;
 
                 glm::vec3 flat(
-                        cos(planet.orbitAngle + planet.orbitOffset) * planet.orbitRadius,
+                        cos(sun.orbitAngle + sun.orbitOffset) * sun.orbitRadius,
                         0.0f,
-                        sin(planet.orbitAngle + planet.orbitOffset) * planet.orbitRadius
+                        sin(sun.orbitAngle + sun.orbitOffset) * sun.orbitRadius
                 );
 
-                glm::mat4 tilt = glm::rotate(glm::mat4(1.0f), planet.orbitInclination, glm::vec3(1,0,0));
+                glm::mat4 tilt = glm::rotate(glm::mat4(1.0f), sun.orbitInclination, glm::vec3(1,0,0));
                 glm::vec3 tilted = glm::vec3(tilt * glm::vec4(flat, 1.0f));
 
-                planet.position = planet.parent->position + tilted;
-
-                // sort by intensity descending
-                std::sort(candidates.begin(), candidates.end(),
-                          [](const LightEntry &a, const LightEntry &b) {
-                              return a.intensity > b.intensity;
-                          });
-
-                // take top MAX_LIGHTS
-                int numLights = std::min<int>((int)candidates.size(), MAX_LIGHTS);
-
-                // optional: if all intensities tiny, you can set numLights = 0
-
-                // send uniforms
-                voxelShader.use();
-                voxelShader.setInt("numLights", numLights);
-
-                for (int i = 0; i < numLights; ++i) {
-                    std::string idx = std::to_string(i);
-                    voxelShader.setVec3(("lightPos[" + idx + "]").c_str(), candidates[i].pos);
-                    voxelShader.setVec3(("lightColor[" + idx + "]").c_str(), candidates[i].color);
-                    voxelShader.setFloat(("lightIntensity[" + idx + "]").c_str(), candidates[i].intensity);
-                }
-
-                // fallback ambient if desired
-                voxelShader.setVec3("ambientColor", glm::vec3(0.001f)); // very small ambient term
-
-                // other per-object uniforms
-                voxelShader.setMatrix("model", identityModel);
-                voxelShader.setMatrix("mvp", pv);
-                voxelShader.setVec3("viewPos", cameraPos);
-                voxelShader.setFloat("emission", 0.0f);
-                voxelShader.setVec3("emissionColor", glm::vec3(0.0f));
-                voxelShader.setVec3("uniformColor", planet.color); // albedo
-
-
-                drawTriangles(voxelShader);
+                sun.position = sun.parent->position + tilted;
             }
 
-            glfwSwapBuffers(window);
-            glfwPollEvents();
+
+
+            voxelShader->use();
+            voxelShader->setMatrix("model", identityModel);  // IMPORTANT: identity
+            voxelShader->setMatrix("mvp", pv);               // PV only (positions are world-space)
+            voxelShader->setVec3("viewPos", cameraPos);
+            voxelShader->setVec3("lightPos", sun.position);
+            voxelShader->setFloat("lightIntensity", 40.0f);
+            voxelShader->setFloat("emission", 3.0f);
+            voxelShader->setVec3("emissionColor", sun.color);
+
+            voxelShader->setVec3("uniformColor", sun.color);
+
+            // draw the vertices produced by the compute shader
+            drawTriangles(*voxelShader);
+
+            //render Billboards
+            SunInstance inst;
+            inst.position = sun.position+((cameraPos-sun.position)/glm::vec3(3));
+            // choose scale for billboard so it visually surrounds voxel core; tweak as you like
+            inst.scale = glm::length(sun.scale) * 3.14f;
+            // compute sphere radius in world units used by your marching-cubes mesh
+            const float baseVoxelSize = 1.0f;
+            float scaleAvg = (sun.scale.x + sun.scale.y + sun.scale.z) / 2.5f;
+            float sphereRadiusWorld = ((CHUNK_SIZE - 1) * 0.5f) * (baseVoxelSize * scaleAvg) *1.0f;
+
+            // billboard scale = diameter (world units). small padding avoids clipping.
+            inst.scale = sphereRadiusWorld * 2.0f*1.05f;
+            inst.color = sun.color; // use sun.color (set when creating suns)
+            instances.push_back(inst);
+
         }
 
+        // render billboards (time: use glfwGetTime or your time accumulator)
+        sunBillboards.render(instances, view, projection, (float)glfwGetTime());
+
     }
+
+    void Game::renderPlanets() {
+        // compute PV once per frame (do this outside the loops)
+        float aspect = (windowHeight == 0) ? (float)windowWidth / 1.0f : (float)windowWidth / (float)windowHeight;
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
+        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), glm::vec3(0.0f, 1.0f, 0.0f));
+        glm::mat4 pv = projection * view;
+        glm::mat4 identityModel = glm::mat4(1.0f);
+
+
+        // Render planets
+        for (auto &planet : planets) {
+            uploadVoxelChunk(baseChunk, &planet.color);
+            resetAtomicCounter();
+            setComputeUniforms(planet.position, planet.scale, *computeShader);
+            float angleRad = glm::radians(planet.rotationAngle);
+            glm::mat3 rot = glm::mat3(glm::rotate(glm::mat4(1.0), angleRad, planet.rotationAxis));
+            dispatchCompute();
+
+            unsigned int vertexCount = 0;
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
+            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(unsigned int), &vertexCount);
+            //Vertex-Count Debug
+            //std::cout << "[compute] planet vertexCount = " << vertexCount << std::endl;
+
+            // choose top-N lights to send to shader
+            constexpr int MAX_LIGHTS = 4;
+            struct LightEntry {
+                glm::vec3 pos;
+                glm::vec3 color;
+                float intensity; // scaled brightness including inverse-square
+            };
+
+            // build list of candidate lights (with computed intensity)
+            std::vector<LightEntry> candidates;
+            candidates.reserve(suns.size());
+
+            const float EPS = 1e-5f;
+            for (auto &s : suns) {
+                float dist = glm::distance(planet.position, s.position);
+                float invSq = 2.0f / (dist * dist + EPS);
+
+                // sunBrightness: tune to your scene. using scale length as proxy
+                float sunBase = glm::length(s.scale)* glm::length(s.scale) * (125.0f); // tweak multiplier
+                float intensity = sunBase * invSq;
+
+                candidates.push_back({ s.position, s.color, intensity });
+            }
+
+            std::sort(suns.begin(), suns.end(),
+                      [](const Planet &a, const Planet &b) {
+                          return glm::length(a.scale) > glm::length(b.scale);
+                      });
+
+
+            planet.orbitAngle += deltaTime * planet.orbitSpeed; // deltaTime in seconds
+
+            glm::vec3 flat(
+                    cos(planet.orbitAngle + planet.orbitOffset) * planet.orbitRadius,
+                    0.0f,
+                    sin(planet.orbitAngle + planet.orbitOffset) * planet.orbitRadius
+            );
+
+            glm::mat4 tilt = glm::rotate(glm::mat4(1.0f), planet.orbitInclination, glm::vec3(1,0,0));
+            glm::vec3 tilted = glm::vec3(tilt * glm::vec4(flat, 1.0f));
+
+            planet.position = planet.parent->position + tilted;
+
+            // sort by intensity descending
+            std::sort(candidates.begin(), candidates.end(),
+                      [](const LightEntry &a, const LightEntry &b) {
+                          return a.intensity > b.intensity;
+                      });
+
+            // take top MAX_LIGHTS
+            int numLights = std::min<int>((int)candidates.size(), MAX_LIGHTS);
+
+            // optional: if all intensities tiny, you can set numLights = 0
+
+            // send uniforms
+            voxelShader->use();
+            voxelShader->setInt("numLights", numLights);
+
+            for (int i = 0; i < numLights; ++i) {
+                std::string idx = std::to_string(i);
+                voxelShader->setVec3(("lightPos[" + idx + "]").c_str(), candidates[i].pos);
+                voxelShader->setVec3(("lightColor[" + idx + "]").c_str(), candidates[i].color);
+                voxelShader->setFloat(("lightIntensity[" + idx + "]").c_str(), candidates[i].intensity);
+            }
+
+            // fallback ambient if desired
+            voxelShader->setVec3("ambientColor", glm::vec3(0.001f)); // very small ambient term
+
+            // other per-object uniforms
+            voxelShader->setMatrix("model", identityModel);
+            voxelShader->setMatrix("mvp", pv);
+            voxelShader->setVec3("viewPos", cameraPos);
+            voxelShader->setFloat("emission", 0.0f);
+            voxelShader->setVec3("emissionColor", glm::vec3(0.0f));
+            voxelShader->setVec3("uniformColor", planet.color); // albedo
+
+
+            drawTriangles(*voxelShader);
+        }
+    }
+
+    /*
+    void Game::renderFluidPlanets() {
+        // Constants
+        const int GRID_X = 128;
+        const int GRID_Y = 128;
+        const int GRID_Z = 128;
+        const size_t FIELD_COUNT = size_t(GRID_X) * GRID_Y * GRID_Z;
+
+// 1) Create SSBO for particles
+        GLuint particleSSBO;
+        glGenBuffers(1, &particleSSBO);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBO);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, maxParticles * sizeof(Particle), nullptr, GL_DYNAMIC_DRAW);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, particleSSBO);
+
+// 2) Create SSBO for field bits (uint)
+        GLuint fieldBitsSSBO;
+        glGenBuffers(1, &fieldBitsSSBO);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, fieldBitsSSBO);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, FIELD_COUNT * sizeof(uint32_t), nullptr, GL_DYNAMIC_COPY);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, fieldBitsSSBO);
+
+// Optional: create a float-view buffer on CPU if you want to read field.
+// But marching cubes compute shader can read uints and convert to float.
+
+
+// 3) Initialize fieldBits to zeros (use glClearBufferData or a compute shader)
+        {
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, fieldBitsSSBO);
+            // Zero it
+            void* ptr = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, FIELD_COUNT * sizeof(uint32_t), GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
+            memset(ptr, 0, FIELD_COUNT * sizeof(uint32_t));
+            glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+        }
+
+// 4) Upload initial particles (planets)
+        std::vector<Particle> particles;
+        particles.reserve(maxParticles);
+
+// Utility: seed sphere
+        void spawnPlanetAt(const glm::vec3& center, float radius, int numParticles) {
+            for (int i=0;i<numParticles;i++){
+                // sample point inside sphere (rejection or spherical coordinates with random radius^1/3)
+                float u = randf(); // 0..1
+                float v = randf();
+                float w = randf();
+                float theta = 2.0f * M_PI * u;
+                float phi = acos(2.0f*v - 1.0f);
+                float r = radius * cbrt(w); // distribution uniform in volume
+
+                glm::vec3 dir = glm::vec3(
+                        sin(phi)*cos(theta),
+                        sin(phi)*sin(theta),
+                        cos(phi)
+                );
+                Particle p;
+                p.position = center + dir * r;
+                p.velocity = glm::vec3(0.0f); // static initial
+                p.lifetime = 10000.0f;
+                p.radius = radius * 0.07f; // influence radius per particle (tweak)
+                p.type = 0u;
+                particles.push_back(p);
+            }
+        }
+
+// spawn a few planets
+        spawnPlanetAt(glm::vec3(-2.0f, 0.0f, -5.0f), 1.2f, 1600);
+        spawnPlanetAt(glm::vec3(2.5f, 0.5f, -3.0f), 0.9f, 1200);
+
+// upload particle array to GPU
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBO);
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, particles.size() * sizeof(Particle), particles.data());
+
+// 5) Dispatch simulation
+        glUseProgram(particleSimProgram);
+        glUniform1f(dtLoc, dt);
+// set push constants/UBOs as needed (GL doesn't have push constants, use UBO or uniforms)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, particleSSBO);
+        glDispatchCompute((particles.size() + 255) / 256, 1, 1);
+        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+// 6) Clear fieldBits (either glClearBufferData or dispatch clear_field)
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, fieldBitsSSBO);
+        void* zptr = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, FIELD_COUNT * sizeof(uint32_t),
+                                      GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
+        memset(zptr, 0, FIELD_COUNT * sizeof(uint32_t));
+        glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+// OR dispatch the clear_field compute shader
+
+// 7) Dispatch metaball splat shader
+        glUseProgram(metaballSplatProgram);
+// set uniforms: gridOrigin, cellSize, gridX/Y/Z, particleCount, etc.
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, particleSSBO);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, fieldBitsSSBO);
+        glDispatchCompute((particles.size() + 127) / 128, 1, 1);
+        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+        computeShader->use();
+        for (auto &planet : fluidPlanets) {
+            uploadVoxelChunk(baseChunk, &planet.color);
+            resetAtomicCounter();
+            setComputeUniforms(planet.position, planet.scale, *computeShader);
+            dispatchCompute();
+
+            unsigned int vertexCount = 0;
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
+            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(unsigned int), &vertexCount);
+            constexpr int MAX_LIGHTS = 4;
+            struct LightEntry {
+                glm::vec3 pos;
+                glm::vec3 color;
+                float intensity; // scaled brightness including inverse-square
+            };
+
+            // build list of candidate lights (with computed intensity)
+            std::vector<LightEntry> candidates;
+            candidates.reserve(suns.size());
+
+            const float EPS = 1e-5f;
+            for (auto &s : suns) {
+                float dist = glm::distance(planet.position, s.position);
+                float invSq = 2.0f / (dist * dist + EPS);
+
+                // sunBrightness: tune to your scene. using scale length as proxy
+                float sunBase = glm::length(s.scale)* glm::length(s.scale) * (125.0f); // tweak multiplier
+                float intensity = sunBase * invSq;
+
+                candidates.push_back({ s.position, s.color, intensity });
+            }
+            // sort by intensity descending
+            std::sort(candidates.begin(), candidates.end(),
+                      [](const LightEntry &a, const LightEntry &b) {
+                          return a.intensity > b.intensity;
+                      });
+
+            // take top MAX_LIGHTS
+            int numLights = std::min<int>((int)candidates.size(), MAX_LIGHTS);
+            // send uniforms
+            voxelShader->use();
+            voxelShader->setInt("numLights", numLights);
+
+            for (int i = 0; i < numLights; ++i) {
+                std::string idx = std::to_string(i);
+                voxelShader->setVec3(("lightPos[" + idx + "]").c_str(), candidates[i].pos);
+                voxelShader->setVec3(("lightColor[" + idx + "]").c_str(), candidates[i].color);
+                voxelShader->setFloat(("lightIntensity[" + idx + "]").c_str(), candidates[i].intensity);
+            }
+
+            // fallback ambient if desired
+            voxelShader->setVec3("ambientColor", glm::vec3(0.001f)); // very small ambient term
+
+            // other per-object uniforms
+            voxelShader->setMatrix("model", identityModel);
+            voxelShader->setMatrix("mvp", pv);
+            voxelShader->setVec3("viewPos", cameraPos);
+            voxelShader->setFloat("emission", 0.0f);
+            voxelShader->setVec3("emissionColor", glm::vec3(0.0f));
+            voxelShader->setVec3("uniformColor", planet.color); // albedo
+
+            drawTriangles(*voxelShader);
+        }
+        //
+
+        // 8) Now run your marching cubes compute shader which reads fieldBits SSBO (convert to float with uintBitsToFloat inside shader).
+        // The marching cubes shader should read the field via the same binding 2 and do float f = uintBitsToFloat(fieldBits[idx]);
+
+        // 9) After marching cubes writes mesh VB/IB, memory barrier and draw as usual.
+
+    }
+     */
 
     void Game::UpdateRotation(std::vector<Planet>& planets)
     {
@@ -968,5 +1012,79 @@ namespace gl3 {
         return false;
     }
 
+    void debugDensity()
+    {
+        //Debugging for Density
+        /*
+        std::cout << "meteor SDF min=" << minD << " max=" << maxD
+                  << " center=" << meteorChunk.voxels[cx][cy][cz].density << std::endl;
+
+        // Print density along x-axis through center (y=cy,z=cz)
+        std::cout << "center-line densities: ";
+        for (int x=0;x<CHUNK_SIZE;++x) {
+            std::cout << meteorChunk.voxels[x][cy][cz].density << (x+1<CHUNK_SIZE? ",":"\n");
+        }
+*/
+    }
+
+    void Game::findBestParent()
+    {
+        for (int i = 0; i < suns.size(); i++)
+        {
+            Planet &p = suns[i];
+            float mySize = glm::length(p.scale);
+
+            float bestDist = std::numeric_limits<float>::max();
+            Planet* bestParent = nullptr;
+
+            for (int j = 0; j < suns.size(); j++)
+            {
+                if (i == j) continue;
+
+                float otherSize = glm::length(suns[j].scale);
+                if (otherSize <= mySize) continue;  // must be larger
+
+                float d = glm::distance(p.position, suns[j].position);
+                if (d < bestDist)
+                {
+                    bestDist = d;
+                    bestParent = &suns[j];
+                }
+            }
+
+            p.parent = bestParent; // NULL if no larger sun exists
+        }
+
+        for (int i = 0; i < planets.size(); i++)
+        {
+            Planet &p = planets[i];
+            float mySize = glm::length(p.scale);
+
+            float bestDist = std::numeric_limits<float>::max();
+            Planet* bestParent = nullptr;
+
+            for (int j = 0; j < suns.size(); j++)
+            {
+                if (i == j) continue;
+
+                float otherSize = glm::length(suns[j].scale);
+                if (otherSize <= mySize) continue;  // must be larger
+
+                float d = glm::distance(p.position, suns[j].position);
+                if (d < bestDist)
+                {
+                    bestDist = d;
+                    bestParent = &suns[j];
+                }
+            }
+
+            p.parent = bestParent; // NULL if no larger sun exists
+        }
+    }
+
+    void Game::simulatePhysics(const std::vector<gl3::Game::Planet> &others)
+    {
+
+    }
 
 }

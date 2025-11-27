@@ -10,12 +10,12 @@
 #include <string>
 #include "entities//Entity.h"
 #include "rendering/VoxelRenderer.h"
+#include "rendering/SunBillboard.h"
 
 namespace gl3 {
     class Game {
     public:
         Game(int width, int height, const std::string &title);
-
         virtual ~Game();
         void run();
         glm::mat4 calculateMvpMatrix(glm::vec3 position, float zRotationInDegrees, glm::vec3 scale);
@@ -45,6 +45,8 @@ namespace gl3 {
             Planet* parent = nullptr;  // <—— parent "sun"
         };
 
+        void simulatePhysics(const std::vector<gl3::Game::Planet> &others);
+
         // Updated signatures
         void uploadVoxelChunk(const Chunk& chunk, const glm::vec3* overrideColor = nullptr);
         void resetAtomicCounter();
@@ -56,7 +58,27 @@ namespace gl3 {
         void handleCameraInput();
         float getVoxelPlanetRadius(const glm::vec3& scale, float baseChunkRadius);
 
+
+        //Initialization-Steps
+        void setupSSBOsAndTables();
+        void setupCamera();
+        void generateChunks();
+        void fillChunks();
+        void setSimulationVariables();
+        void setupVEffects();
+        void findBestParent();
+
+        //Simulation-Steps
         bool isOverlapping(const glm::vec3& pos, float rad, const std::vector<Planet>& others);
+
+        //Input-Steps
+
+        //Post-Prod Steps?
+
+        //Rendering-Steps
+        void renderSuns();
+        void renderPlanets();
+        void renderFluidPlanets();
 
         glm::vec3 getCameraFront() const;
         GLFWwindow *window = nullptr;
@@ -69,7 +91,44 @@ namespace gl3 {
         glm::vec3 cameraPos = glm::vec3(0.0f, 0.0f, 50.0f);
         glm::vec2 cameraRotation = glm::vec2(-90.0f, 0.0f); // pitch, yaw
         int windowWidth = 800, windowHeight = 600;
+        size_t voxelCount = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
+        size_t maxVerts = CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE * 5 * 3;
+
+        //SSBOs for marching cubes
         GLuint ssboVoxels = 0, ssboEdgeTable = 0, ssboTriTable = 0, ssboCounter = 0, ssboTriangles = 0;
+
+
+
+        //Chunks:
+        Chunk meteorChunk;
+        Chunk baseChunk;
+        Chunk sunChunk;
+        Chunk fluidPlanetChunk;
+
+        std::vector<Planet> suns;
+        std::vector<Planet> planets;
+        std::vector<Planet> meteors;
+        std::vector<Planet> fluidPlanets;
+
+        std::vector<Planet> CollisionEntities;
+
+
+        //vEffects
+        SunBillboard sunBillboards;
+
+
+        std::unique_ptr<Shader> voxelShader;
+        std::unique_ptr<Shader> computeShader;
+
+
+        struct Particle {
+            glm::vec3 position;
+            glm::vec3 velocity;
+            float lifetime;
+            float radius;     // metaball influence
+            unsigned int  type;       // 0=water,1=fire,2=smoke...
+        };
+
 
     };
 }
