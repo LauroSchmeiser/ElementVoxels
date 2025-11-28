@@ -1,16 +1,14 @@
-#version 450
-layout(local_size_x = 256) in;
+#version 450 core
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
-layout(std430, binding = 7) buffer Field {
-    float field[]; // linear array of GRID_X*GRID_Y*GRID_Z floats
+layout(std430, binding = 6) buffer FieldBits {
+    uint fieldBits[];
 };
 
-layout(push_constant) uniform FieldParams {
-    uint fieldSize; // element count
-} params;
+uniform uint fieldSize;
 
 void main() {
     uint idx = gl_GlobalInvocationID.x;
-    if (idx >= params.fieldSize) return;
-    field[idx] = 0.0;
+    if (idx >= fieldSize) return;
+    fieldBits[idx] = 0u;
 }

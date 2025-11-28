@@ -1,50 +1,42 @@
-#version 450
-
+#version 450 core
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
 struct Particle {
     vec3 position;
     vec3 velocity;
     float lifetime;
-    float radius; // influence radius
+    float radius;
     uint type;
-    float padding; // pad to 32 bytes boundary if needed
+    float padding;
 };
 
 layout(std430, binding = 5) buffer Particles {
     Particle particles[];
 };
 
-layout(push_constant) uniform SimParams {
-    float dt;
-    vec3 gravity;
-    uint particleCount;
-} params;
+uniform float dt;
+uniform vec3 gravity;
+uniform uint particleCount;
 
 void main() {
     uint id = gl_GlobalInvocationID.x;
-    if (id >= params.particleCount) return;
+    if (id >= particleCount) return;
 
     Particle p = particles[id];
 
     if (p.lifetime <= 0.0) {
-        // dead particle — do nothing (or respawn on CPU)
         return;
     }
 
-    // Simple integrator (semi-implicit Euler)
-    p.velocity += params.gravity * params.dt;
-    p.position += p.velocity * params.dt;
+    p.velocity += gravity * dt;
+    p.position += p.velocity * dt;
 
-    // Ground bounce (optional simple plane y=0) -- tune/off for planets
-    if (p.position.y < -1000.0) {
-        // safety clamp for escaped particles - kill
+    // simple kill if far away
+    if (p.position.y < -10000.0) {
         p.lifetime = 0.0;
     }
 
-    // Dampen
     p.velocity *= 0.995;
-
-    p.lifetime -= params.dt;
+    p.lifetime -= dt;
     particles[id] = p;
 }

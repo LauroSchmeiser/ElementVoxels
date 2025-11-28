@@ -58,14 +58,29 @@ namespace gl3 {
         glfwMakeContextCurrent(window);
 
         gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
+        std::cout << "GL_VERSION: " << (const char*)glGetString(GL_VERSION) << std::endl;
+        std::cout << "GLSL_VERSION: " << (const char*)glGetString(GL_SHADING_LANGUAGE_VERSION) << std::endl;
+
 
         glfwSetWindowUserPointer(window, this);
         glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
 
         voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel.frag");
         marchingCubesShader = std::make_unique<Shader>("shaders/marching_cubes.comp");
-        metaballSplatShader= std::make_unique<Shader>("shaders/metaball_splat.comp");
-        particleSimShader= std::make_unique<Shader>("shaders/particle_sim.comp");
+
+
+        try {
+            metaballSplatShader= std::make_unique<Shader>("shaders/metaball_splat.comp");
+        } catch (std::exception &e) {
+            std::cerr << "Failed to create metaballSplatShader: " << e.what() << std::endl;
+            // optionally abort here
+        }
+        try {
+            particleSimShader= std::make_unique<Shader>("shaders/particle_sim.comp");
+        } catch (std::exception &e) {
+            std::cerr << "Failed to create particleSimShader: " << e.what() << std::endl;
+            // optionally abort here
+        }
 
 
         audio.init();
@@ -128,6 +143,7 @@ namespace gl3 {
             marchingCubesShader->use();
             renderSuns();
             renderPlanets();
+            renderFluidPlanets();
 
             glfwSwapBuffers(window);
         }
@@ -622,159 +638,84 @@ namespace gl3 {
 
 
     void Game::renderFluidPlanets() {
-        // Constants
+
         const int GRID_X = 128;
         const int GRID_Y = 128;
         const int GRID_Z = 128;
         const size_t FIELD_COUNT = size_t(GRID_X) * GRID_Y * GRID_Z;
 
-        // 1) Create SSBO for particles
+        // ==== PARTICLE SSBO (binding = 5)
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBO);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, maxParticles * sizeof(Particle), nullptr, GL_DYNAMIC_DRAW);
+        glBufferData(GL_SHADER_STORAGE_BUFFER,
+                     maxParticles * sizeof(Particle),
+                     nullptr,
+                     GL_DYNAMIC_DRAW);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, particleSSBO);
 
-        // 2) Create SSBO for field bits (uint)
+        // ==== FIELD SSBO (uint-array) binding = 6
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, fieldBitsSSBO);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, FIELD_COUNT * sizeof(uint32_t), nullptr, GL_DYNAMIC_COPY);
+        glBufferData(GL_SHADER_STORAGE_BUFFER,
+                     FIELD_COUNT * sizeof(uint32_t),
+                     nullptr,
+                     GL_DYNAMIC_COPY);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, fieldBitsSSBO);
 
-        // Optional: create a float-view buffer on CPU if you want to read field.
-        // But marching cubes compute shader can read uints and convert to float.
-
-
-        // 3) Initialize fieldBits to zeros (use glClearBufferData or a compute shader)
+        // Clear field
         {
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, fieldBitsSSBO);
-            // Zero it
-            void* ptr = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, FIELD_COUNT * sizeof(uint32_t), GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
+            void* ptr = glMapBufferRange(GL_SHADER_STORAGE_BUFFER,
+                                         0,
+                                         FIELD_COUNT * sizeof(uint32_t),
+                                         GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
             memset(ptr, 0, FIELD_COUNT * sizeof(uint32_t));
             glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
         }
 
-        // 4) Upload initial particles (planets)
-        particles.reserve(maxParticles);
+        // ==== spawn test planets ====
+        particles.clear();
+        particles.push_back(Particle{
+                                    glm::vec3(0,0,0), glm::vec3(0),
+                                    1000.0f,  // lifetime
+                                    10.0f,    // radius
+                                    0
+                            });
 
-// spawn a few planets
-
-
-// upload particle array to GPU
+        // upload particles
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBO);
-        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 6, particles.size() * sizeof(Particle), particles.data());
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                        particles.size() * sizeof(Particle),
+                        particles.data());
 
-// 5) Dispatch simulation
+        // ==== PARTICLE SIM ====
         particleSimShader->use();
         particleSimShader->setFloat("dt", deltaTime);
-
-// bind SSBOs
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, particleSSBO);
+        particleSimShader->setUInt("particleCount", particles.size());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, particleSSBO);
 
         glDispatchCompute((particles.size() + 255) / 256, 1, 1);
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
-// 6) Clear fieldBits (either glClearBufferData or dispatch clear_field)
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, fieldBitsSSBO);
-        void* zptr = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, FIELD_COUNT * sizeof(uint32_t),
-                                      GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
-        memset(zptr, 0, FIELD_COUNT * sizeof(uint32_t));
-        glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
-// OR dispatch the clear_field compute shader
+        // ==== CLEAR FIELD ====
+        // already done above
 
-// 7) Dispatch metaball splat shader
+        // ==== METABALL SPLAT ====
         metaballSplatShader->use();
-        metaballSplatShader->setVec3("gridOrigin", glm::vec3(0,0,0));
-        metaballSplatShader->setFloat("cellSize", 1);
+        metaballSplatShader->setVec3("gridOrigin", glm::vec3(0));
+        metaballSplatShader->setFloat("cellSize", 1.0f);
         metaballSplatShader->setInt("gridX", GRID_X);
         metaballSplatShader->setInt("gridY", GRID_Y);
         metaballSplatShader->setInt("gridZ", GRID_Z);
+        metaballSplatShader->setUInt("particleCount", particles.size());
 
-        // set uniforms: gridOrigin, cellSize, gridX/Y/Z, particleCount, etc.
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, particleSSBO);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, fieldBitsSSBO);
 
-        glDispatchCompute((particles.size()+127)/128, 1, 1);
+        glDispatchCompute((particles.size() + 127) / 128, 1, 1);
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
-        marchingCubesShader->use();
-
-        // compute PV once per frame (do this outside the loops)
-        float aspect = (windowHeight == 0) ? (float)windowWidth / 1.0f : (float)windowWidth / (float)windowHeight;
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
-        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), glm::vec3(0.0f, 1.0f, 0.0f));
-        glm::mat4 pv = projection * view;
-        glm::mat4 identityModel = glm::mat4(1.0f);
-
-
-        for (auto &planet : fluidPlanets) {
-            uploadVoxelChunk(baseChunk, &planet.color);
-            resetAtomicCounter();
-            setComputeUniforms(planet.position, planet.scale, *marchingCubesShader);
-            dispatchCompute();
-
-            unsigned int vertexCount = 0;
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
-            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(unsigned int), &vertexCount);
-            constexpr int MAX_LIGHTS = 4;
-            struct LightEntry {
-                glm::vec3 pos;
-                glm::vec3 color;
-                float intensity; // scaled brightness including inverse-square
-            };
-
-            // build list of candidate lights (with computed intensity)
-            std::vector<LightEntry> candidates;
-            candidates.reserve(suns.size());
-
-            const float EPS = 1e-5f;
-            for (auto &s : suns) {
-                float dist = glm::distance(planet.position, s.position);
-                float invSq = 2.0f / (dist * dist + EPS);
-
-                // sunBrightness: tune to your scene. using scale length as proxy
-                float sunBase = glm::length(s.scale)* glm::length(s.scale) * (125.0f); // tweak multiplier
-                float intensity = sunBase * invSq;
-
-                candidates.push_back({ s.position, s.color, intensity });
-            }
-            // sort by intensity descending
-            std::sort(candidates.begin(), candidates.end(),
-                      [](const LightEntry &a, const LightEntry &b) {
-                          return a.intensity > b.intensity;
-                      });
-
-            // take top MAX_LIGHTS
-            int numLights = std::min<int>((int)candidates.size(), MAX_LIGHTS);
-            // send uniforms
-            voxelShader->use();
-            voxelShader->setInt("numLights", numLights);
-
-            for (int i = 0; i < numLights; ++i) {
-                std::string idx = std::to_string(i);
-                voxelShader->setVec3(("lightPos[" + idx + "]").c_str(), candidates[i].pos);
-                voxelShader->setVec3(("lightColor[" + idx + "]").c_str(), candidates[i].color);
-                voxelShader->setFloat(("lightIntensity[" + idx + "]").c_str(), candidates[i].intensity);
-            }
-
-            // fallback ambient if desired
-            voxelShader->setVec3("ambientColor", glm::vec3(0.001f)); // very small ambient term
-
-            // other per-object uniforms
-            voxelShader->setMatrix("model", identityModel);
-            voxelShader->setMatrix("mvp", pv);
-            voxelShader->setVec3("viewPos", cameraPos);
-            voxelShader->setFloat("emission", 0.0f);
-            voxelShader->setVec3("emissionColor", glm::vec3(0.0f));
-            voxelShader->setVec3("uniformColor", planet.color); // albedo
-
-            drawTriangles(*voxelShader);
-        }
-        //
-
-        // 8) Now run your marching cubes compute shader which reads fieldBits SSBO (convert to float with uintBitsToFloat inside shader).
-        // The marching cubes shader should read the field via the same binding 2 and do float f = uintBitsToFloat(fieldBits[idx]);
-
-        // 9) After marching cubes writes mesh VB/IB, memory barrier and draw as usual.
-
+        // marching cubes will now read fieldBits (binding=4 is MC output, so modify MC shader)
     }
+
 
     // Utility: seed sphere
     void Game::spawnPlanetAt(const glm::vec3& center, float radius, int numParticles) {

@@ -1,111 +1,83 @@
-#version 450
+#version 450 core
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
 
-layout(local_size_x = 128) in;
+
+
+// simple uniforms (no push_constant)
+uniform vec3 gridOrigin;
+uniform float cellSize;
+uniform int gridX;
+uniform int gridY;
+uniform int gridZ;
+uniform uint particleCount;
 
 struct Particle {
     vec3 position;
     vec3 velocity;
     float lifetime;
-    float radius; // influence radius
+    float radius;
     uint type;
     float padding;
 };
 
-layout(std430, binding = 5) readonly buffer Particles { Particle particles[]; };
-layout(std430, binding = 6) writeonly buffer FieldBits { uint fieldBits[]; };
-
-
-// push constants / uniforms
-layout(push_constant) uniform SplatParams {
-    vec3 gridOrigin;    // world position of grid (min corner)
-    float cellSize;
-    int gridX;
-    int gridY;
-    int gridZ;
-    uint particleCount;
-    float falloff;      // field falloff factor, e.g. 4.0
-} params;
-
-int index3DTo1D(int x, int y, int z) {
-    return x + y * params.gridX + z * params.gridX * params.gridY;
-}
-
-uint floatAtomicAdd(inout float farr[], int i, float value) {
-    // We need to do atomic compare and swap on the uint representation
-    // GLSL atomicCompSwap operates on uints, so convert.
-    // This is implemented inline because SSBO arrays can't be reinterpreted directly.
-    // We'll use a uint pointer reinterpretation by accessing via uint array view:
-    // Create a uint alias buffer? Not possible; instead we reinterpret using bitcasts per access:
-    // Read, attempt swap loop:
-    uint oldBits;
-    uint newBits;
-    // read current float as uint bits
-    // In GLSL we use bitcast via uintBitsToFloat and floatBitsToUint
-    // But we need atomicCompSwap on a uint SSBO element — to achieve that we require the field stored as uint array.
-    // Simpler approach below: we assume field is declared as uint fieldBits[] (same binding) in a separate SSBO
-    return 0u;
-}
-
-// --- Practical approach:
-// Use a second SSBO of uints that aliases the same float memory (create it on CPU).
-// Then in shader, bind that uint SSBO (binding = 2) and use atomicCompSwap on it.
-// After all splats, marching cubes will interpret bits as floats (via uintBitsToFloat).
+layout(std430, binding = 5) readonly buffer Particles {
+    Particle particles[];
+};
 
 layout(std430, binding = 6) buffer FieldBits {
-    uint fieldBits[]; // reinterpretation of the same floats as uint
+    uint fieldBits[]; // stores float bits via floatBitsToUint
 };
+
+
+int index3DTo1D(int x, int y, int z) {
+    return x + y * gridX + z * gridX * gridY;
+}
+
+// atomic add for a float stored as uint in fieldBits[idx]
+void atomicAddFloatAsUint(uint index, float value) {
+    uint oldBits = fieldBits[index];
+    for (;;) {
+        float oldVal = uintBitsToFloat(oldBits);
+        float newVal = oldVal + value;
+        uint newBits = floatBitsToUint(newVal);
+        uint prev = atomicCompSwap(fieldBits[index], oldBits, newBits);
+        if (prev == oldBits) break;
+        oldBits = prev;
+    }
+}
 
 void main() {
     uint pid = gl_GlobalInvocationID.x;
-    if (pid >= params.particleCount) return;
+    if (pid >= particleCount) return;
 
     Particle p = particles[pid];
     if (p.lifetime <= 0.0) return;
 
-    // choose influence radius in world units
     float R = p.radius;
-    // compute particle position in grid space
-    vec3 local = (p.position - params.gridOrigin) / params.cellSize;
+    vec3 local = (p.position - gridOrigin) / cellSize;
     ivec3 center = ivec3(floor(local));
 
-    // compute integer radius in cells
-    int rCells = int(ceil(R / params.cellSize));
+    int rCells = int(ceil(R / cellSize));
     int minX = max(0, center.x - rCells);
     int minY = max(0, center.y - rCells);
     int minZ = max(0, center.z - rCells);
-    int maxX = min(params.gridX - 1, center.x + rCells);
-    int maxY = min(params.gridY - 1, center.y + rCells);
-    int maxZ = min(params.gridZ - 1, center.z + rCells);
+    int maxX = min(gridX - 1, center.x + rCells);
+    int maxY = min(gridY - 1, center.y + rCells);
+    int maxZ = min(gridZ - 1, center.z + rCells);
 
     for (int z = minZ; z <= maxZ; ++z) {
         for (int y = minY; y <= maxY; ++y) {
             for (int x = minX; x <= maxX; ++x) {
-                // world position of cell center
-                vec3 cellCenter = params.gridOrigin + (vec3(x, y, z) + vec3(0.5)) * params.cellSize;
+                vec3 cellCenter = gridOrigin + (vec3(x, y, z) + vec3(0.5)) * cellSize;
                 float dist = length(cellCenter - p.position);
                 if (dist > R) continue;
 
-                // example kernel: val = (1 - (d/R)^2)^3  (smooth falloff)
                 float t = clamp(1.0 - (dist*dist) / (R*R), 0.0, 1.0);
-                float val = t * t * t; // smooth blob
+                float val = t * t * t;
 
                 int idx = index3DTo1D(x, y, z);
-
-                // Atomic add on float via uint CAS on fieldBits[idx]
-                // read old
-                uint oldBits = fieldBits[idx];
-                float oldVal = uintBitsToFloat(oldBits);
-                float newVal = oldVal + val;
-                uint newBits = floatBitsToUint(newVal);
-                // CAS loop
-                uint prevBits = atomicCompSwap(fieldBits[idx], oldBits, newBits);
-                while (prevBits != oldBits) {
-                    oldBits = prevBits;
-                    oldVal = uintBitsToFloat(oldBits);
-                    newVal = oldVal + val;
-                    newBits = floatBitsToUint(newVal);
-                    prevBits = atomicCompSwap(fieldBits[idx], oldBits, newBits);
-                }
+                // bounds-check: should be guaranteed by min/max above
+                atomicAddFloatAsUint(uint(idx), val);
             }
         }
     }

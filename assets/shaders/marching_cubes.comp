@@ -38,6 +38,19 @@ layout(std430, binding = 4) buffer Triangles {
     OutVertex verts[]; // sized to max vertices = numCells * 5 * 3
 };
 
+//----------------------------------------------------------------
+//particles implementation
+//----------------------------------------------------------------
+layout(std430, binding = 6) buffer FieldBits { uint fieldBits[]; };
+
+float readField(int idx) {
+    return uintBitsToFloat(fieldBits[idx]);
+}
+
+//----------------------------------------------------------------
+//End of particles imoplementation
+//----------------------------------------------------------------
+
 // Uniforms: grid dims and cell size & origin
 uniform ivec3 voxelGridDim; // e.g. (CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE)
 uniform vec3 gridOrigin;    // world position of voxel[0,0,0]

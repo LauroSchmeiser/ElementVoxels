@@ -20,6 +20,19 @@ namespace gl3 {
         glAttachShader(shaderProgram, vertexShader);
         glAttachShader(shaderProgram, fragmentShader);
         glLinkProgram(shaderProgram);
+        GLint success = 0;
+        glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success);
+
+        if (!success) {
+            GLint maxLength = 0;
+            glGetProgramiv(shaderProgram, GL_INFO_LOG_LENGTH, &maxLength);
+
+            std::vector<char> errorLog(maxLength);
+            glGetProgramInfoLog(shaderProgram, maxLength, &maxLength, &errorLog[0]);
+
+            std::cout << "COMPUTE SHADER LINK ERROR:\n" << errorLog.data() << std::endl;
+        }
+
         glDetachShader(shaderProgram, vertexShader);
         glDetachShader(shaderProgram, fragmentShader);
     }
@@ -31,6 +44,19 @@ namespace gl3 {
         shaderProgram = glCreateProgram();
         glAttachShader(shaderProgram, computeShader);
         glLinkProgram(shaderProgram);
+        GLint success = 0;
+        glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success);
+
+        if (!success) {
+            GLint maxLength = 0;
+            glGetProgramiv(shaderProgram, GL_INFO_LOG_LENGTH, &maxLength);
+
+            std::vector<char> errorLog(maxLength);
+            glGetProgramInfoLog(shaderProgram, maxLength, &maxLength, &errorLog[0]);
+
+            std::cout << "COMPUTE SHADER LINK ERROR:\n" << errorLog.data() << std::endl;
+        }
+
         glDetachShader(shaderProgram, computeShader);
     }
 
@@ -49,10 +75,16 @@ namespace gl3 {
         else if (shaderType == GL_COMPUTE_SHADER) compilationStatus.shaderName = "Compute";
 
         glGetShaderiv(shaderID, GL_COMPILE_STATUS, &compilationStatus.success);
-        if(compilationStatus.success == GL_FALSE) {
-            glGetShaderInfoLog(shaderID, GL_INFO_LOG_LENGTH, nullptr, compilationStatus.infoLog);
-            throw std::runtime_error("ERROR: " + std::string(compilationStatus.shaderName) + " shader compilation failed.\n" +
-            std::string(compilationStatus.infoLog));
+        if (compilationStatus.success == GL_FALSE) {
+            GLint logLen = 0;
+            glGetShaderiv(shaderID, GL_INFO_LOG_LENGTH, &logLen);
+            std::string log(logLen, '\0');
+            glGetShaderInfoLog(shaderID, logLen, nullptr, &log[0]);
+
+            std::cerr << "Shader compile failed (" << shaderPath << "):\n";
+            std::cerr << "=== SOURCE ===\n" << shaderSource << "\n";
+            std::cerr << "=== LOG ===\n" << log << "\n";
+            throw std::runtime_error("Shader compilation failed: " + shaderPath.string());
         }
 
         return shaderID;
@@ -99,7 +131,7 @@ namespace gl3 {
         auto uniformLocation = glGetUniformLocation(shaderProgram, uniformName.c_str());
         if(uniformLocation==-1)
         {
-            std::cout<< "This doesnt work" << uniformName.c_str() ;
+            std::cout<< "This doesnt work: " << uniformName.c_str() << "\n" ;
         }
         glUniform1f(uniformLocation, value);
     }
@@ -109,9 +141,21 @@ namespace gl3 {
         auto uniformLocation = glGetUniformLocation(shaderProgram, uniformName.c_str());
         if(uniformLocation==-1)
         {
-            std::cout<< "This doesnt work" << uniformName.c_str() ;
+            std::cout<< "This doesnt work: " << uniformName.c_str() << "\n" ;
         }
         glUniform1i(uniformLocation, value);
+    }
+
+    void Shader::setUInt(const std::string &uniformName, unsigned int value) const
+    {
+        GLint loc = glGetUniformLocation(shaderProgram, uniformName.c_str());
+        if (loc == -1)
+        {
+            std::cout << "Warning: uniform '" << uniformName << "' not found in shader.\n";
+            return;
+        }
+
+        glUniform1ui(loc, value);
     }
 
     void Shader::use() const {
