@@ -71,6 +71,18 @@ vec3 sampleColor(ivec3 p) {
     return voxels[idx].color.xyz;
 }
 
+/*  //new versions for fluid shaders, dont work with normal rendering
+float sampleDensity(ivec3 p) {
+    int idx = p.x + p.y*voxelGridDim.x + p.z*voxelGridDim.x*voxelGridDim.y;
+    return uintBitsToFloat(fieldBits[idx]);
+}
+
+
+vec3 sampleColor(ivec3 p) {
+    // for now, assign fixed color or encode particle type
+    return vec3(0.2f, 0.5f, 1.0f); // blueish fluid
+}*/
+
 // interpolate along edge p1->p2 where d1,d2 are densities
 vec3 vertexInterpolate(vec3 p1, vec3 p2, float d1, float d2) {
     float denom = (d1 - d2);

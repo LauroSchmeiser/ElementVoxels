@@ -70,18 +70,11 @@ namespace gl3 {
 
 
         try {
-            metaballSplatShader= std::make_unique<Shader>("shaders/metaball_splat.comp");
+            voxelSplatShader= std::make_unique<Shader>("shaders/metaball_splat.comp");
         } catch (std::exception &e) {
             std::cerr << "Failed to create metaballSplatShader: " << e.what() << std::endl;
             // optionally abort here
         }
-        try {
-            particleSimShader= std::make_unique<Shader>("shaders/particle_sim.comp");
-        } catch (std::exception &e) {
-            std::cerr << "Failed to create particleSimShader: " << e.what() << std::endl;
-            // optionally abort here
-        }
-
 
         audio.init();
         audio.setGlobalVolume(0.1f);
@@ -243,6 +236,23 @@ namespace gl3 {
             }
         }
 
+        //fluid Chunk
+        for (int x = 0; x < CHUNK_SIZE; ++x) {
+            for (int y = 0; y < CHUNK_SIZE; ++y) {
+                for (int z = 0; z < CHUNK_SIZE; ++z) {
+                    float dx = x - centerOffset;
+                    float dy = y - centerOffset;
+                    float dz = z - centerOffset;
+                    float dist = sqrt(dx * dx + dy * dy + dz * dz);
+
+                    auto &voxel = fluidPlanetChunk.voxels[x][y][z];
+                    voxel.density = radius - dist + densityEpsilon;
+                    voxel.type = (voxel.density > 0.0f) ? 1 : 0;
+                    voxel.color = glm::vec3(0.0f, 0.2f, 1.0f);
+                }
+            }
+        }
+
         // robust lumpy meteor generator (drop-in)
         const float rx = centerOffset * 0.75f; // ensure meteor fits inside chunk
         const float ry = centerOffset * 0.55f;
@@ -379,6 +389,26 @@ namespace gl3 {
             Planet s = {pos, scale, 0.0f, axis, speed, color};
             suns.push_back(s);
             CollisionEntities.push_back(s);
+        }
+
+        glm::vec3 pos;
+        float radius;
+        pos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
+        glm::vec3 color = glm::vec3(0.1f,0.6f,1.0f);
+        glm::vec3 axis = glm::normalize(glm::vec3(distAxis(rng), distAxis(rng), distAxis(rng)));
+        float speed = distSpeed(rng);
+        Planet s = {pos, glm::vec3(10,10,10), 0.0f, axis, speed, color};
+        fluidPlanets.push_back(s);
+        int fluidPlanetsCount=25;
+        for (int j = 0; j < fluidPlanetsCount; ++j) {
+            glm::vec3 pos;
+            float radius;
+            pos = fluidPlanets.at(0).position+(glm::vec3(distPos(rng), distPos(rng), distPos(rng))/10.0f);
+            glm::vec3 color = glm::vec3(0.1f,0.6f,1.0f);
+            glm::vec3 axis = glm::normalize(glm::vec3(distAxis(rng), distAxis(rng), distAxis(rng)));
+            float speed = distSpeed(rng);
+            Planet s = {pos, glm::vec3(10,10,10), 0.0f, axis, speed, color};
+            fluidPlanets.push_back(s);
         }
 
         int planetsCount=50;
@@ -639,107 +669,93 @@ namespace gl3 {
 
     void Game::renderFluidPlanets() {
 
+        // compute PV once per frame
+        float aspect = (windowHeight == 0) ? (float)windowWidth / 1.0f : (float)windowWidth / (float)windowHeight;
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
+        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), glm::vec3(0.0f, 1.0f, 0.0f));
+        glm::mat4 pv = projection * view;
+        glm::mat4 identityModel = glm::mat4(1.0f);
+
         const int GRID_X = 128;
         const int GRID_Y = 128;
         const int GRID_Z = 128;
         const size_t FIELD_COUNT = size_t(GRID_X) * GRID_Y * GRID_Z;
 
-        // ==== PARTICLE SSBO (binding = 5)
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBO);
-        glBufferData(GL_SHADER_STORAGE_BUFFER,
-                     maxParticles * sizeof(Particle),
-                     nullptr,
-                     GL_DYNAMIC_DRAW);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, particleSSBO);
-
-        // ==== FIELD SSBO (uint-array) binding = 6
+        // ---- Clear field SSBO (binding=6) ----
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, fieldBitsSSBO);
-        glBufferData(GL_SHADER_STORAGE_BUFFER,
-                     FIELD_COUNT * sizeof(uint32_t),
-                     nullptr,
-                     GL_DYNAMIC_COPY);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, FIELD_COUNT * sizeof(uint32_t), nullptr, GL_DYNAMIC_COPY);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, fieldBitsSSBO);
 
-        // Clear field
-        {
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, fieldBitsSSBO);
-            void* ptr = glMapBufferRange(GL_SHADER_STORAGE_BUFFER,
-                                         0,
-                                         FIELD_COUNT * sizeof(uint32_t),
-                                         GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
-            memset(ptr, 0, FIELD_COUNT * sizeof(uint32_t));
-            glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
-        }
+        for(auto &planet : fluidPlanets) {
 
-        // ==== spawn test planets ====
-        particles.clear();
-        particles.push_back(Particle{
-                                    glm::vec3(0,0,0), glm::vec3(0),
-                                    1000.0f,  // lifetime
-                                    10.0f,    // radius
-                                    0
-                            });
+            // ---- Upload voxel chunk (binding=0) ----
+            uploadVoxelChunk(fluidPlanetChunk, &planet.color);
 
-        // upload particles
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBO);
-        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
-                        particles.size() * sizeof(Particle),
-                        particles.data());
+            // ---- Voxel-to-field splat ----
+            voxelSplatShader->use();
+            voxelSplatShader->setVec3("gridOrigin", planet.position - 0.5f * glm::vec3(CHUNK_SIZE));
+            voxelSplatShader->setFloat("voxelSize", 1.0f);
+            voxelSplatShader->setFloat("influenceRadius", 1000.0f); // tweak for fluid thickness
 
-        // ==== PARTICLE SIM ====
-        particleSimShader->use();
-        particleSimShader->setFloat("dt", deltaTime);
-        particleSimShader->setUInt("particleCount", particles.size());
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, particleSSBO);
+            // bind SSBOs
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssboVoxels);     // input voxels
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, fieldBitsSSBO);  // output field
 
-        glDispatchCompute((particles.size() + 255) / 256, 1, 1);
-        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+            // dispatch
+            const int localSize = 8;
+            int groups = (CHUNK_SIZE + localSize - 1) / localSize;
+            glDispatchCompute(groups, groups, groups);
+            glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
-        // ==== CLEAR FIELD ====
-        // already done above
+            // ---- Marching Cubes on field ----
+            marchingCubesShader->use();
+            marchingCubesShader->setVec3("gridOrigin", planet.position - 0.5f * glm::vec3(GRID_X, GRID_Y, GRID_Z));
+            marchingCubesShader->setFloat("voxelSize", 1.0f);
 
-        // ==== METABALL SPLAT ====
-        metaballSplatShader->use();
-        metaballSplatShader->setVec3("gridOrigin", glm::vec3(0));
-        metaballSplatShader->setFloat("cellSize", 1.0f);
-        metaballSplatShader->setInt("gridX", GRID_X);
-        metaballSplatShader->setInt("gridY", GRID_Y);
-        metaballSplatShader->setInt("gridZ", GRID_Z);
-        metaballSplatShader->setUInt("particleCount", particles.size());
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, fieldBitsSSBO);   // read field
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, ssboTriangles);   // output triangles
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, ssboCounter);     // atomic counter
 
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, particleSSBO);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, fieldBitsSSBO);
+            resetAtomicCounter();
+            dispatchCompute();
+            glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT);
 
-        glDispatchCompute((particles.size() + 127) / 128, 1, 1);
-        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+            // ---- Lighting setup ----
+            constexpr int MAX_LIGHTS = 4;
+            struct LightEntry { glm::vec3 pos; glm::vec3 color; float intensity; };
+            std::vector<LightEntry> candidates;
+            candidates.reserve(suns.size());
 
-        // marching cubes will now read fieldBits (binding=4 is MC output, so modify MC shader)
-    }
+            const float EPS = 1e-5f;
+            for(auto &s : suns) {
+                float dist = glm::distance(planet.position, s.position);
+                float invSq = 2.0f / (dist*dist + EPS);
+                float sunBase = glm::length(s.scale)*glm::length(s.scale) * 125.0f;
+                candidates.push_back({s.position, s.color, sunBase * invSq});
+            }
 
+            std::sort(candidates.begin(), candidates.end(),
+                      [](const LightEntry &a, const LightEntry &b){ return a.intensity > b.intensity; });
+            int numLights = std::min<int>((int)candidates.size(), MAX_LIGHTS);
 
-    // Utility: seed sphere
-    void Game::spawnPlanetAt(const glm::vec3& center, float radius, int numParticles) {
-        for (int i=0;i<numParticles;i++){
-            // sample point inside sphere (rejection or spherical coordinates with random radius^1/3)
-            float u = rand(); // 0..1
-            float v = rand();
-            float w = rand();
-            float theta = 2.0f * M_PI * u;
-            float phi = acos(2.0f*v - 1.0f);
-            float r = radius * cbrt(w); // distribution uniform in volume
+            voxelShader->use();
+            voxelShader->setInt("numLights", numLights);
+            for(int i=0;i<numLights;i++){
+                std::string idx = std::to_string(i);
+                voxelShader->setVec3(("lightPos[" + idx + "]").c_str(), candidates[i].pos);
+                voxelShader->setVec3(("lightColor[" + idx + "]").c_str(), candidates[i].color);
+                voxelShader->setFloat(("lightIntensity[" + idx + "]").c_str(), candidates[i].intensity);
+            }
 
-            glm::vec3 dir = glm::vec3(
-                    sin(phi)*cos(theta),
-                    sin(phi)*sin(theta),
-                    cos(phi)
-            );
-            Particle p;
-            p.position = center + dir * r;
-            p.velocity = glm::vec3(0.0f); // static initial
-            p.lifetime = 10000.0f;
-            p.radius = radius * 0.07f; // influence radius per particle (tweak)
-            p.type = 0u;
-            particles.push_back(p);
+            voxelShader->setVec3("ambientColor", glm::vec3(0.001f));
+            voxelShader->setMatrix("model", identityModel);
+            voxelShader->setMatrix("mvp", pv);
+            voxelShader->setVec3("viewPos", cameraPos);
+            voxelShader->setFloat("emission", 0.1f);
+            voxelShader->setVec3("emissionColor", glm::vec3(0.1f,0.6f,1.0f));
+            voxelShader->setVec3("uniformColor", planet.color);
+
+            drawTriangles(*voxelShader);
         }
     }
 

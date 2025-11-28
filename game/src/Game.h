@@ -122,12 +122,7 @@ namespace gl3 {
         std::unique_ptr<Shader> marchingCubesShader;
 
         // inside Game class:
-        std::unique_ptr<Shader> particleSimShader;
-        std::unique_ptr<Shader> metaballSplatShader;
-
-// uniform locations
-        GLint dtLoc = -1;
-
+        std::unique_ptr<Shader> voxelSplatShader;
 
 
         struct Particle {
@@ -141,7 +136,5 @@ namespace gl3 {
         std::vector<Particle> particles;
         int maxParticles =100;
         //helper function
-        void spawnPlanetAt(const glm::vec3& center, float radius, int numParticles);
-
     };
 }
