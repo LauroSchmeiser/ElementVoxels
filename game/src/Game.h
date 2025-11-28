@@ -68,6 +68,7 @@ namespace gl3 {
         void setupVEffects();
         void findBestParent();
 
+
         //Simulation-Steps
         bool isOverlapping(const glm::vec3& pos, float rad, const std::vector<Planet>& others);
 
@@ -95,7 +96,7 @@ namespace gl3 {
         size_t maxVerts = CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE * 5 * 3;
 
         //SSBOs for marching cubes
-        GLuint ssboVoxels = 0, ssboEdgeTable = 0, ssboTriTable = 0, ssboCounter = 0, ssboTriangles = 0;
+        GLuint ssboVoxels = 0, ssboEdgeTable = 0, ssboTriTable = 0, ssboCounter = 0, ssboTriangles = 0, particleSSBO=0, fieldBitsSSBO=0;
 
 
 
@@ -118,7 +119,15 @@ namespace gl3 {
 
 
         std::unique_ptr<Shader> voxelShader;
-        std::unique_ptr<Shader> computeShader;
+        std::unique_ptr<Shader> marchingCubesShader;
+
+        // inside Game class:
+        std::unique_ptr<Shader> particleSimShader;
+        std::unique_ptr<Shader> metaballSplatShader;
+
+// uniform locations
+        GLint dtLoc = -1;
+
 
 
         struct Particle {
@@ -129,6 +138,10 @@ namespace gl3 {
             unsigned int  type;       // 0=water,1=fire,2=smoke...
         };
 
+        std::vector<Particle> particles;
+        int maxParticles =100;
+        //helper function
+        void spawnPlanetAt(const glm::vec3& center, float radius, int numParticles);
 
     };
 }

@@ -11,7 +11,7 @@ namespace gl3 {
     class Shader {
     public:
         Shader(const fs::path &vertexShaderPath, const fs::path &fragmentShaderPath);
-        Shader(const fs::path &computeShaderPath);
+        explicit Shader(const fs::path &computeShaderPath);
         ~Shader();
 
         // Delete copy constructor
@@ -39,9 +39,14 @@ namespace gl3 {
         std::string readText(const fs::path &filePath);
 
         unsigned int shaderProgram = 0;
+        unsigned int shaderProgram2 = 0;
+        unsigned int shaderProgram3 = 0;
+
         unsigned int vertexShader = 0;
         unsigned int fragmentShader = 0;
         unsigned int computeShader= 0;
+        unsigned int particleSimShaderProgram=0;
+        unsigned int metaballSplatShaderProgram=0;
     };
 }
 

@@ -44,7 +44,10 @@ namespace gl3 {
 
         glStatusData compilationStatus{};
 
-        compilationStatus.shaderName = shaderType == GL_VERTEX_SHADER ? "Vertex" : "Fragment";
+        if (shaderType == GL_VERTEX_SHADER) compilationStatus.shaderName = "Vertex";
+        else if (shaderType == GL_FRAGMENT_SHADER) compilationStatus.shaderName = "Fragment";
+        else if (shaderType == GL_COMPUTE_SHADER) compilationStatus.shaderName = "Compute";
+
         glGetShaderiv(shaderID, GL_COMPILE_STATUS, &compilationStatus.success);
         if(compilationStatus.success == GL_FALSE) {
             glGetShaderInfoLog(shaderID, GL_INFO_LOG_LENGTH, nullptr, compilationStatus.infoLog);

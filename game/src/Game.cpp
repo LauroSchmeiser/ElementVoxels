@@ -63,7 +63,10 @@ namespace gl3 {
         glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
 
         voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel.frag");
-        computeShader = std::make_unique<Shader>("shaders/marching_cubes.comp");
+        marchingCubesShader = std::make_unique<Shader>("shaders/marching_cubes.comp");
+        metaballSplatShader= std::make_unique<Shader>("shaders/metaball_splat.comp");
+        particleSimShader= std::make_unique<Shader>("shaders/particle_sim.comp");
+
 
         audio.init();
         audio.setGlobalVolume(0.1f);
@@ -122,7 +125,7 @@ namespace gl3 {
             //Post-Prod Steps?
 
             //Rendering Steps
-            computeShader->use();
+            marchingCubesShader->use();
             renderSuns();
             renderPlanets();
 
@@ -165,6 +168,13 @@ namespace gl3 {
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboTriangles);
         glBufferData(GL_SHADER_STORAGE_BUFFER, maxVerts * sizeof(OutVertex), nullptr, GL_DYNAMIC_DRAW);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, ssboTriangles);
+
+        //5 particle ssbo
+        glGenBuffers(1, &particleSSBO);
+
+        //6 fieldbits ssbo
+        glGenBuffers(1, &fieldBitsSSBO);
+
     }
 
     void Game::setupCamera()
@@ -438,7 +448,7 @@ namespace gl3 {
         for (auto &sun : suns) {
             uploadVoxelChunk(sunChunk, &sun.color);           // upload densities/colors, uses binding 0
             resetAtomicCounter();                     // zero counter in binding 3
-            setComputeUniforms(sun.position, sun.scale, *computeShader);
+            setComputeUniforms(sun.position, sun.scale, *marchingCubesShader);
             dispatchCompute();
 
             // read debug vertex count
@@ -518,7 +528,7 @@ namespace gl3 {
         for (auto &planet : planets) {
             uploadVoxelChunk(baseChunk, &planet.color);
             resetAtomicCounter();
-            setComputeUniforms(planet.position, planet.scale, *computeShader);
+            setComputeUniforms(planet.position, planet.scale, *marchingCubesShader);
             float angleRad = glm::radians(planet.rotationAngle);
             glm::mat3 rot = glm::mat3(glm::rotate(glm::mat4(1.0), angleRad, planet.rotationAxis));
             dispatchCompute();
@@ -610,7 +620,7 @@ namespace gl3 {
         }
     }
 
-    /*
+
     void Game::renderFluidPlanets() {
         // Constants
         const int GRID_X = 128;
@@ -618,25 +628,21 @@ namespace gl3 {
         const int GRID_Z = 128;
         const size_t FIELD_COUNT = size_t(GRID_X) * GRID_Y * GRID_Z;
 
-// 1) Create SSBO for particles
-        GLuint particleSSBO;
-        glGenBuffers(1, &particleSSBO);
+        // 1) Create SSBO for particles
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBO);
         glBufferData(GL_SHADER_STORAGE_BUFFER, maxParticles * sizeof(Particle), nullptr, GL_DYNAMIC_DRAW);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, particleSSBO);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, particleSSBO);
 
-// 2) Create SSBO for field bits (uint)
-        GLuint fieldBitsSSBO;
-        glGenBuffers(1, &fieldBitsSSBO);
+        // 2) Create SSBO for field bits (uint)
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, fieldBitsSSBO);
         glBufferData(GL_SHADER_STORAGE_BUFFER, FIELD_COUNT * sizeof(uint32_t), nullptr, GL_DYNAMIC_COPY);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, fieldBitsSSBO);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, fieldBitsSSBO);
 
-// Optional: create a float-view buffer on CPU if you want to read field.
-// But marching cubes compute shader can read uints and convert to float.
+        // Optional: create a float-view buffer on CPU if you want to read field.
+        // But marching cubes compute shader can read uints and convert to float.
 
 
-// 3) Initialize fieldBits to zeros (use glClearBufferData or a compute shader)
+        // 3) Initialize fieldBits to zeros (use glClearBufferData or a compute shader)
         {
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, fieldBitsSSBO);
             // Zero it
@@ -645,49 +651,23 @@ namespace gl3 {
             glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
         }
 
-// 4) Upload initial particles (planets)
-        std::vector<Particle> particles;
+        // 4) Upload initial particles (planets)
         particles.reserve(maxParticles);
 
-// Utility: seed sphere
-        void spawnPlanetAt(const glm::vec3& center, float radius, int numParticles) {
-            for (int i=0;i<numParticles;i++){
-                // sample point inside sphere (rejection or spherical coordinates with random radius^1/3)
-                float u = randf(); // 0..1
-                float v = randf();
-                float w = randf();
-                float theta = 2.0f * M_PI * u;
-                float phi = acos(2.0f*v - 1.0f);
-                float r = radius * cbrt(w); // distribution uniform in volume
-
-                glm::vec3 dir = glm::vec3(
-                        sin(phi)*cos(theta),
-                        sin(phi)*sin(theta),
-                        cos(phi)
-                );
-                Particle p;
-                p.position = center + dir * r;
-                p.velocity = glm::vec3(0.0f); // static initial
-                p.lifetime = 10000.0f;
-                p.radius = radius * 0.07f; // influence radius per particle (tweak)
-                p.type = 0u;
-                particles.push_back(p);
-            }
-        }
-
 // spawn a few planets
-        spawnPlanetAt(glm::vec3(-2.0f, 0.0f, -5.0f), 1.2f, 1600);
-        spawnPlanetAt(glm::vec3(2.5f, 0.5f, -3.0f), 0.9f, 1200);
+
 
 // upload particle array to GPU
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBO);
-        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, particles.size() * sizeof(Particle), particles.data());
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 6, particles.size() * sizeof(Particle), particles.data());
 
 // 5) Dispatch simulation
-        glUseProgram(particleSimProgram);
-        glUniform1f(dtLoc, dt);
-// set push constants/UBOs as needed (GL doesn't have push constants, use UBO or uniforms)
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, particleSSBO);
+        particleSimShader->use();
+        particleSimShader->setFloat("dt", deltaTime);
+
+// bind SSBOs
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, particleSSBO);
+
         glDispatchCompute((particles.size() + 255) / 256, 1, 1);
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
@@ -700,18 +680,34 @@ namespace gl3 {
 // OR dispatch the clear_field compute shader
 
 // 7) Dispatch metaball splat shader
-        glUseProgram(metaballSplatProgram);
-// set uniforms: gridOrigin, cellSize, gridX/Y/Z, particleCount, etc.
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, particleSSBO);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, fieldBitsSSBO);
-        glDispatchCompute((particles.size() + 127) / 128, 1, 1);
+        metaballSplatShader->use();
+        metaballSplatShader->setVec3("gridOrigin", glm::vec3(0,0,0));
+        metaballSplatShader->setFloat("cellSize", 1);
+        metaballSplatShader->setInt("gridX", GRID_X);
+        metaballSplatShader->setInt("gridY", GRID_Y);
+        metaballSplatShader->setInt("gridZ", GRID_Z);
+
+        // set uniforms: gridOrigin, cellSize, gridX/Y/Z, particleCount, etc.
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, particleSSBO);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, fieldBitsSSBO);
+
+        glDispatchCompute((particles.size()+127)/128, 1, 1);
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
-        computeShader->use();
+        marchingCubesShader->use();
+
+        // compute PV once per frame (do this outside the loops)
+        float aspect = (windowHeight == 0) ? (float)windowWidth / 1.0f : (float)windowWidth / (float)windowHeight;
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
+        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), glm::vec3(0.0f, 1.0f, 0.0f));
+        glm::mat4 pv = projection * view;
+        glm::mat4 identityModel = glm::mat4(1.0f);
+
+
         for (auto &planet : fluidPlanets) {
             uploadVoxelChunk(baseChunk, &planet.color);
             resetAtomicCounter();
-            setComputeUniforms(planet.position, planet.scale, *computeShader);
+            setComputeUniforms(planet.position, planet.scale, *marchingCubesShader);
             dispatchCompute();
 
             unsigned int vertexCount = 0;
@@ -779,7 +775,32 @@ namespace gl3 {
         // 9) After marching cubes writes mesh VB/IB, memory barrier and draw as usual.
 
     }
-     */
+
+    // Utility: seed sphere
+    void Game::spawnPlanetAt(const glm::vec3& center, float radius, int numParticles) {
+        for (int i=0;i<numParticles;i++){
+            // sample point inside sphere (rejection or spherical coordinates with random radius^1/3)
+            float u = rand(); // 0..1
+            float v = rand();
+            float w = rand();
+            float theta = 2.0f * M_PI * u;
+            float phi = acos(2.0f*v - 1.0f);
+            float r = radius * cbrt(w); // distribution uniform in volume
+
+            glm::vec3 dir = glm::vec3(
+                    sin(phi)*cos(theta),
+                    sin(phi)*sin(theta),
+                    cos(phi)
+            );
+            Particle p;
+            p.position = center + dir * r;
+            p.velocity = glm::vec3(0.0f); // static initial
+            p.lifetime = 10000.0f;
+            p.radius = radius * 0.07f; // influence radius per particle (tweak)
+            p.type = 0u;
+            particles.push_back(p);
+        }
+    }
 
     void Game::UpdateRotation(std::vector<Planet>& planets)
     {
