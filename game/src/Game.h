@@ -8,11 +8,20 @@
 #include <soloud.h>
 #include <soloud_wav.h>
 #include <string>
+#include <array>
 #include "entities//Entity.h"
 #include "rendering/VoxelRenderer.h"
 #include "rendering/SunBillboard.h"
 
 namespace gl3 {
+
+    static constexpr int ChunkCount=4;
+
+
+    struct GameData{
+        std::array<std::array<std::array<Chunk, ChunkCount>,ChunkCount>,ChunkCount> gameWorld;
+    };
+
     class Game {
     public:
         Game(int width, int height, const std::string &title);
@@ -77,6 +86,7 @@ namespace gl3 {
         //Post-Prod Steps?
 
         //Rendering-Steps
+        void renderChunks();
         void renderSuns();
         void renderPlanets();
         void renderFluidPlanets();
@@ -101,18 +111,20 @@ namespace gl3 {
 
 
         //Chunks:
-        Chunk meteorChunk;
-        Chunk baseChunk;
-        Chunk sunChunk;
-        Chunk fluidPlanetChunk;
+        //Chunk meteorChunk;
+        //Chunk baseChunk;
+        //Chunk sunChunk;
+        //Chunk fluidPlanetChunk;
 
-        std::vector<Planet> suns;
-        std::vector<Planet> planets;
-        std::vector<Planet> meteors;
-        std::vector<Planet> fluidPlanets;
+
+        //std::vector<Planet> suns;
+        //std::vector<Planet> planets;
+        //std::vector<Planet> meteors;
+        //std::vector<Planet> fluidPlanets;
 
         std::vector<Planet> CollisionEntities;
 
+        std::unique_ptr<GameData> data = std::make_unique<GameData>();
 
         //vEffects
         SunBillboard sunBillboards;

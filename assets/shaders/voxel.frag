@@ -62,5 +62,7 @@ void main() {
     // simple Reinhard tone mapping
     vec3 color = hdr / (hdr + vec3(1.0));
 
-    FragColor = vec4(color, 1.0);
+    vec3 testColor= ambient+emiss+vertexColor;
+
+    FragColor = vec4(testColor, 1.0);
 }
