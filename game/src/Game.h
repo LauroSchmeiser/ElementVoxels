@@ -102,7 +102,8 @@ namespace gl3 {
         glm::vec3 cameraPos = glm::vec3(0.0f, 0.0f, 50.0f);
         glm::vec2 cameraRotation = glm::vec2(-90.0f, 0.0f); // pitch, yaw
         int windowWidth = 800, windowHeight = 600;
-        size_t voxelCount = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
+        const int DIM = CHUNK_SIZE + 1;
+        size_t voxelCount = DIM * DIM * DIM;
         size_t maxVerts = CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE * 5 * 3;
 
         //SSBOs for marching cubes

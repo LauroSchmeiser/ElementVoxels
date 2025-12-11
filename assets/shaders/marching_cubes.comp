@@ -52,7 +52,7 @@ float readField(int idx) {
 //----------------------------------------------------------------
 
 // Uniforms: grid dims and cell size & origin
-uniform ivec3 voxelGridDim; // e.g. (CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE)
+uniform ivec3 voxelGridDim; // now = (25,25,25)
 uniform vec3 gridOrigin;    // world position of voxel[0,0,0]
 uniform float voxelSize;    // spacing between voxels
 

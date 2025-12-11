@@ -207,9 +207,9 @@ namespace gl3 {
         for(auto &chunkb : data->gameWorld) {
             for (auto &chunka : chunkb) {
                 for (auto &chunk : chunka) {
-                    for (int x = 0; x < CHUNK_SIZE; ++x) {
-                        for (int y = 0; y < CHUNK_SIZE; ++y) {
-                            for (int z = 0; z < CHUNK_SIZE; ++z) {
+                    for (int x = 0; x <= CHUNK_SIZE; ++x) {
+                        for (int y = 0; y <= CHUNK_SIZE; ++y) {
+                            for (int z = 0; z <= CHUNK_SIZE; ++z) {
                                 chunk.voxels[x][y][z].type = 0; // Air
                                 chunk.voxels[x][y][z].density = -1.0f;
                             }
@@ -220,7 +220,7 @@ namespace gl3 {
         }
 
         std::mt19937 rng(std::random_device{}());
-         int chunkGridSize = ChunkCount * CHUNK_SIZE;
+         int chunkGridSize = ChunkCount * DIM;
 
          std::uniform_real_distribution<float> distPos(0.0f, chunkGridSize);
          std::uniform_real_distribution<float> distScale(0.5f, 3.0f);
@@ -282,17 +282,21 @@ namespace gl3 {
 
                         // Convert chunk coordinates to world coordinates
                         glm::vec3 chunkWorldOffset = glm::vec3(
-                                chunkX * CHUNK_SIZE,
-                                chunkY * CHUNK_SIZE,
-                                chunkZ * CHUNK_SIZE
+                                chunkX * DIM,
+                                chunkY * DIM,
+                                chunkZ * DIM
                         );
 
                         // Fill voxels in this chunk
-                        for (int localX = 0; localX < CHUNK_SIZE; ++localX) {
-                            for (int localY = 0; localY < CHUNK_SIZE; ++localY) {
-                                for (int localZ = 0; localZ < CHUNK_SIZE; ++localZ) {
+                        for (int localX = 0; localX <= CHUNK_SIZE; ++localX) {
+                            for (int localY = 0; localY <= CHUNK_SIZE; ++localY) {
+                                for (int localZ = 0; localZ <= CHUNK_SIZE; ++localZ) {
                                     // Convert to world coordinates
-                                    glm::vec3 worldPos = chunkWorldOffset + glm::vec3(localX, localY, localZ);
+                                    glm::vec3 worldPos = glm::vec3(
+                                            chunkX * CHUNK_SIZE + localX,
+                                            chunkY * CHUNK_SIZE + localY,
+                                            chunkZ * CHUNK_SIZE + localZ
+                                    );
 
                                     float dist = glm::distance(worldPos, planet.worldPos);
 
@@ -313,9 +317,9 @@ namespace gl3 {
                         }
 
                         int solidVoxels = 0;
-                        for(int x=0;x<CHUNK_SIZE;x++)
-                            for(int y=0;y<CHUNK_SIZE;y++)
-                                for(int z=0;z<CHUNK_SIZE;z++)
+                        for(int x=0;x<=CHUNK_SIZE;x++)
+                            for(int y=0;y<=CHUNK_SIZE;y++)
+                                for(int z=0;z<=CHUNK_SIZE;z++)
                                     if(chunk.voxels[x][y][z].isSolid()) solidVoxels++;
 
                         //std::cout << "Chunk ("<<chunkX<<","<<chunkY<<","<<chunkZ<<") has " << solidVoxels << " solid voxels\n";
@@ -701,9 +705,9 @@ namespace gl3 {
 
                     // Check if chunk has any solid voxels (optional optimization)
                     bool hasSolid = false;
-                    for(int x = 0; x < CHUNK_SIZE && !hasSolid; ++x) {
-                        for(int y = 0; y < CHUNK_SIZE && !hasSolid; ++y) {
-                            for(int z = 0; z < CHUNK_SIZE && !hasSolid; ++z) {
+                    for(int x = 0; x < DIM && !hasSolid; ++x) {
+                        for(int y = 0; y < DIM&& !hasSolid; ++y) {
+                            for(int z = 0; z < DIM && !hasSolid; ++z) {
                                 if(chunk.voxels[x][y][z].isSolid()) {
                                     hasSolid = true;
                                 }
@@ -1172,8 +1176,10 @@ namespace gl3 {
         // Set false to use overrideColor / chunk colors.
         bool doColorByDensity = false;
 
-        size_t voxelCount = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
+        const int DIM = CHUNK_SIZE + 1;
+        size_t voxelCount = DIM * DIM * DIM;
         std::vector<CpuVoxel> voxels(voxelCount);
+
 
         // find min/max density for normalization (optional, fast)
         float minD = FLT_MAX, maxD = -FLT_MAX;
@@ -1187,16 +1193,19 @@ namespace gl3 {
             if (maxD - minD < 1e-6f) { maxD = minD + 1.0f; }
         }
 
-        for(int x=0;x<CHUNK_SIZE;x++) {
-            for(int y=0;y<CHUNK_SIZE;y++) {
-                for(int z=0;z<CHUNK_SIZE;z++) {
+        for(int x=0;x<=CHUNK_SIZE;x++) {
+            for(int y=0;y<=CHUNK_SIZE;y++) {
+                for(int z=0;z<=CHUNK_SIZE;z++) {
                     const auto &v = chunk.voxels[x][y][z];
-                    int idx = x + y*CHUNK_SIZE + z*CHUNK_SIZE*CHUNK_SIZE;
+                    const int DIM = CHUNK_SIZE + 1;
+
+                    int idx = x + y * DIM + z * DIM * DIM;
+
 
                     voxels[idx].density = v.density;
 
                     if (doColorByDensity) {
-                        // normalize to [0..1]
+                        // normalize to [0..1
                         float nv = (v.density - minD) / (maxD - minD);
                         nv = glm::clamp(nv, 0.0f, 1.0f);
                         voxels[idx].color = glm::vec4(nv, nv, nv, 1.0f);
@@ -1222,6 +1231,7 @@ namespace gl3 {
 
     void Game::setComputeUniforms(const glm::vec3& position, const glm::vec3& objectScale, Shader& computeShader)
     {
+        /*
         computeShader.use();
 
         // base voxel size (world units per voxel) you used previously
@@ -1241,8 +1251,24 @@ namespace gl3 {
         computeShader.setVec3("gridOrigin", gridOrigin);
         computeShader.setFloat("voxelSize", effectiveVoxelSize);
         // shader expects ivec3 voxelGridDim
-        computeShader.setIVec3("voxelGridDim", glm::ivec3(CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE));
-    }
+        int DIM = CHUNK_SIZE + 1;
+        computeShader.setIVec3("voxelGridDim", glm::ivec3(DIM, DIM, DIM));
+        */
+
+
+        computeShader.use();
+
+        float voxelSize = 1.0f;
+
+        // gridOrigin = world position of voxel (0,0,0)
+        computeShader.setVec3("gridOrigin", position);
+
+        computeShader.setFloat("voxelSize", voxelSize);
+
+        int DIM = CHUNK_SIZE + 1;
+        computeShader.setIVec3("voxelGridDim", glm::ivec3(DIM, DIM, DIM));
+
+         }
     void Game::dispatchCompute()
     {
         int groups = (CHUNK_SIZE - 1 + 7) / 8; // local_size = 8 in compute shader
