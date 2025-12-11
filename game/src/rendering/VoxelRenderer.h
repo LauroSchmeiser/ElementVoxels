@@ -17,6 +17,12 @@ namespace gl3 {
         glm::vec3 color;
     };
 
+    struct EmissiveBlob {
+        glm::vec3 sumPos;
+        int count = 0;
+        glm::vec3 color;
+    };
+
     struct OutVertex {
         glm::vec4 pos;    // xyz: position, w unused
         glm::vec4 normal; // xyz: normal, w unused

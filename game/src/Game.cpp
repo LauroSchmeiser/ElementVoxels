@@ -112,7 +112,7 @@ namespace gl3 {
         //fillChunks();
         //setSimulationVariables();
         //findBestParent();
-        //setupVEffects();
+        setupVEffects();
 
 
         while (!glfwWindowShouldClose(window)) {
@@ -756,20 +756,19 @@ namespace gl3 {
      */
 
     void Game::setupVEffects() {
-        sunBillboards.init(16);
+        sunBillboards.init(64); // maxInstances, adjust based on max expected suns
 
     }
 
     void Game::renderChunks() {
-        //glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-        //glDisable(GL_CULL_FACE);       // VERY important for debugging
-        //glDisable(GL_DEPTH_TEST);      // Optional, makes sure things don’t hide
-        //glLineWidth(10.0f);             // Makes lines more visible
-
         float aspect = (windowHeight == 0) ? (float)windowWidth / 1.0f : (float)windowWidth / (float)windowHeight;
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), glm::vec3(0.0f, 1.0f, 0.0f));
         glm::mat4 pv = projection * view;
+
+        std::vector<VoxelLight> globalVoxelLights;
+        std::vector<SunInstance> emissiveBillboards;
+        globalVoxelLights.reserve(30); // adjust depending on expected lights
 
         int chunkIndex = 0;
 
@@ -777,122 +776,121 @@ namespace gl3 {
             for(int chunkY = 0; chunkY < ChunkCount; ++chunkY) {
                 for(int chunkZ = 0; chunkZ < ChunkCount; ++chunkZ) {
                     auto& chunk = data->gameWorld[chunkX][chunkY][chunkZ];
+                    glm::vec3 chunkOrigin(chunkX * CHUNK_SIZE, chunkY * CHUNK_SIZE, chunkZ * CHUNK_SIZE);
 
-                    // Check if chunk has any solid voxels (optional optimization)
                     bool hasSolid = false;
-                    for(int x = 0; x < DIM && !hasSolid; ++x) {
-                        for(int y = 0; y < DIM&& !hasSolid; ++y) {
-                            for(int z = 0; z < DIM && !hasSolid; ++z) {
-                                if(chunk.voxels[x][y][z].isSolid()) {
-                                    hasSolid = true;
-                                }
-                            }
-                        }
-                    }
+                    EmissiveBlob blob{glm::vec3(0.0f), 0, glm::vec3(1.0f)};
                     std::vector<VoxelLight> voxelLights;
-                    voxelLights.reserve(32);   // enough for a few big objects
+                    voxelLights.reserve(3);
 
-                    glm::vec3 chunkOrigin = glm::vec3(
-                            chunkX * CHUNK_SIZE,
-                            chunkY * CHUNK_SIZE,
-                            chunkZ * CHUNK_SIZE
-                    );
-
-                    // Scan voxels for emissive sources (type 2)
-                    for (int x = 0; x < CHUNK_SIZE; ++x) {
-                        for (int y = 0; y < CHUNK_SIZE; ++y) {
-                            for (int z = 0; z < CHUNK_SIZE; ++z) {
-
+                    // Single loop: check solids & collect emissive voxels
+                    for(int x = 0; x < CHUNK_SIZE; ++x) {
+                        for(int y = 0; y < CHUNK_SIZE; ++y) {
+                            for(int z = 0; z < CHUNK_SIZE; ++z) {
                                 const auto &vox = chunk.voxels[x][y][z];
 
-                                if (vox.type == 2) { // EMISSIVE
+                                if(vox.isSolid())
+                                    hasSolid = true;
 
+                                if(vox.type == 2) {
                                     glm::vec3 worldPos = chunkOrigin + glm::vec3(x, y, z);
+                                    float intensity = 2.5f + vox.density * vox.density * 10.0f;
 
-                                    // stronger light if more density or clustered voxels
-                                    float intensity = 2.5f + vox.density * 6.0f;
+                                    globalVoxelLights.push_back({worldPos, intensity, vox.color});
+                                    voxelLights.push_back({worldPos, intensity, vox.color});
 
-                                    glm::vec3 color = vox.color; // we set color when generating planets
-
-                                    voxelLights.push_back({worldPos, intensity, color});
+                                    blob.sumPos += worldPos;
+                                    blob.color = vox.color;
+                                    blob.count++;
                                 }
                             }
                         }
                     }
-
-
-
 
                     if(!hasSolid) {
                         chunkIndex++;
-                        continue; // Skip empty chunks
+                        continue; // skip empty chunks
                     }
 
-                    // Upload this specific chunk
-                    uploadVoxelChunk(chunk, nullptr); // Don't override colors
+                    // Create billboard for chunk if emissive voxels found
+                    if(blob.count > 0) {
+                        glm::vec3 center = blob.sumPos / (float)blob.count;
+                        float radius = pow((float)blob.count, 1.0f/3.0f);
 
-                    // Set chunk position in world
-                    glm::vec3 chunkWorldPos = glm::vec3(
-                            chunkX * CHUNK_SIZE,
-                            chunkY * CHUNK_SIZE,
-                            chunkZ * CHUNK_SIZE
-                    );
+                        SunInstance inst;
+                        inst.position = center;
+                        inst.scale = radius * 2.5f;
+                        inst.color = blob.color;
+
+                        emissiveBillboards.push_back(inst);
+                    }
+
+                    // Upload chunk geometry
+                    uploadVoxelChunk(chunk, nullptr);
+
+                    glm::vec3 chunkWorldPos = chunkOrigin;
 
                     resetAtomicCounter();
-                    setComputeUniforms(chunkWorldPos, glm::vec3(1.0f), *marchingCubesShader); // Scale = 1
+                    setComputeUniforms(chunkWorldPos, glm::vec3(1.0f), *marchingCubesShader);
                     dispatchCompute();
 
                     unsigned int vertexCount = 0;
                     glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
                     glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(unsigned int), &vertexCount);
-
                     if(vertexCount == 0) {
                         chunkIndex++;
                         continue;
                     }
 
-                    // Set up lighting (similar to before but for chunk position)
-                    // ... (your lighting code here)
-
-                    // Set chunk model matrix
+                    // Setup shader
                     glm::mat4 model = glm::translate(glm::mat4(1.0f), chunkWorldPos);
                     voxelShader->use();
                     voxelShader->setMatrix("model", model);
                     voxelShader->setMatrix("mvp", pv);
                     voxelShader->setVec3("viewPos", cameraPos);
-
-                    // Set uniform color to white (using voxel colors from chunk)
                     voxelShader->setVec3("uniformColor", glm::vec3(1.0f));
-
                     voxelShader->setFloat("emission", 0.1f);
 
-
+                    // Pick nearest lights using squared distance
                     int maxLights = 4;
-                    int numLights = std::min((int)voxelLights.size(), maxLights);
+                    int numToPick = std::min(maxLights, (int)globalVoxelLights.size());
+                    std::vector<VoxelLight> lightsForChunk(numToPick); // fixed-size vector
 
-                    voxelShader->use();
+                    glm::vec3 chunkCenter = chunkOrigin + glm::vec3(CHUNK_SIZE / 2.0f);
 
+                    std::partial_sort_copy(
+                            globalVoxelLights.begin(), globalVoxelLights.end(),
+                            lightsForChunk.begin(), lightsForChunk.end(),
+                            [chunkCenter](const VoxelLight &a, const VoxelLight &b){
+                                // Compare squared distances
+                                glm::vec3 diffA = a.pos - chunkCenter;
+                                glm::vec3 diffB = b.pos - chunkCenter;
+                                return (diffA.x*diffA.x + diffA.y*diffA.y + diffA.z*diffA.z) <
+                                       (diffB.x*diffB.x + diffB.y*diffB.y + diffB.z*diffB.z);
+                            }
+                    );
+
+
+
+                    int numLights = (int)std::min(maxLights, (int)globalVoxelLights.size());
                     voxelShader->setInt("numLights", numLights);
-
-                    for (int i = 0; i < numLights; ++i) {
-                        voxelShader->setVec3("lightPos[" + std::to_string(i) + "]", voxelLights[i].pos);
-                        voxelShader->setVec3("lightColor[" + std::to_string(i) + "]", voxelLights[i].color);
-                        voxelShader->setFloat("lightIntensity[" + std::to_string(i) + "]", voxelLights[i].intensity);
+                    for(int i = 0; i < numLights; ++i){
+                        voxelShader->setVec3("lightPos[" + std::to_string(i) + "]", lightsForChunk[i].pos);
+                        voxelShader->setVec3("lightColor[" + std::to_string(i) + "]", lightsForChunk[i].color);
+                        voxelShader->setFloat("lightIntensity[" + std::to_string(i) + "]", lightsForChunk[i].intensity);
                     }
 
-                    // slight ambient light
                     voxelShader->setVec3("ambientColor", glm::vec3(0.05f));
 
                     drawTriangles(*voxelShader);
-
-                    //std::cout<<"Rendered Planet: "<<chunkIndex<<" at: "<<"\n"<<chunkWorldPos.x<<"\n"<<chunkWorldPos.y<<"\n"<<chunkWorldPos.z<<"\n";
 
                     chunkIndex++;
                 }
             }
         }
-        //glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
+        // Render all emissive billboards
+        sunBillboards.render(emissiveBillboards, view, projection, (float)glfwGetTime());
     }
 
     /*
