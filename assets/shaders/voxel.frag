@@ -27,12 +27,16 @@ void main() {
     // accumulate light contributions
     vec3 lightAccum = vec3(0.0);
 
+    if(numLights<=0)
+    {
+        lightAccum = vec3(1,0.75,0)*1.2f;
+    }
     for (int i = 0; i < numLights; ++i) {
         // direction from fragment to light
         vec3 L = normalize(lightPos[i] - fragPos);
 
         // Lambert diffuse
-        float NdotL = max(dot(N, L), 0.0);
+        float NdotL = max(dot(N, L), 0.1);
 
         // If you didn't bake inverse-square on CPU, compute attenuation here:
         // float dist = length(lightPos[i] - fragPos);
@@ -62,7 +66,5 @@ void main() {
     // simple Reinhard tone mapping
     vec3 color = hdr / (hdr + vec3(1.0));
 
-    vec3 testColor= ambient+emiss+vertexColor;
-
-    FragColor = vec4(testColor, 1.0);
+    FragColor = vec4(color, 1.0);
 }
