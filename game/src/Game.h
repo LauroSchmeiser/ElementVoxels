@@ -15,7 +15,7 @@
 
 namespace gl3 {
 
-    static constexpr int ChunkCount=4;
+    static constexpr int ChunkCount=7;
 
 
     struct GameData{

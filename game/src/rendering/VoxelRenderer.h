@@ -8,6 +8,13 @@ namespace gl3 {
         float density=1.0f;
         glm::vec3 color = glm::vec3(1.0f);
         bool isSolid() const { return type != 0; }
+        //0==Empty, 1==base, 2==fire;
+    };
+
+    struct VoxelLight {
+        glm::vec3 pos;
+        float intensity;
+        glm::vec3 color;
     };
 
     struct OutVertex {
@@ -17,7 +24,7 @@ namespace gl3 {
     };
 
 
-    constexpr int CHUNK_SIZE =24;
+    constexpr int CHUNK_SIZE =20;
 
 
     struct Chunk {
