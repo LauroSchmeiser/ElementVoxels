@@ -870,6 +870,14 @@ namespace gl3 {
                             }
                     );
 
+                    //TODO: Optimize light
+
+                    // Option A: Only use lights in nearby chunks
+                    //Maintain a spatial hash / chunk grid of voxel lights. Then each chunk only checks lights in the 27 neighboring chunks (3×3×3). That drastically reduces comparisons.
+                    //
+                    //Option B: Precompute nearest lights to camera
+                    //If the lights’ effect falls off quickly with distance, you can select the nearest maxLights once per frame relative to the camera instead of per chunk.
+
 
 
                     int numLights = (int)std::min(maxLights, (int)globalVoxelLights.size());
