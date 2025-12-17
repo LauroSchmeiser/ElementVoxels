@@ -15,7 +15,7 @@
 
 namespace gl3 {
 
-    static constexpr int ChunkCount=7;
+    static constexpr int ChunkCount=8;
 
 
     struct GameData{
@@ -36,6 +36,7 @@ namespace gl3 {
         void draw();
         void updateDeltaTime();
         void updatePhysics();
+        bool checkEmptyChunks(Chunk chunk);
 
 
         // --- Generate planet transforms ---
@@ -115,13 +116,13 @@ namespace gl3 {
         //Chunk meteorChunk;
         //Chunk baseChunk;
         //Chunk sunChunk;
-        //Chunk fluidPlanetChunk;
+        Chunk fluidPlanetChunk;
 
 
         //std::vector<Planet> suns;
         //std::vector<Planet> planets;
         //std::vector<Planet> meteors;
-        //std::vector<Planet> fluidPlanets;
+        std::vector<Planet> fluidPlanets;
 
         std::vector<Planet> CollisionEntities;
 
@@ -145,6 +146,8 @@ namespace gl3 {
             float radius;     // metaball influence
             unsigned int  type;       // 0=water,1=fire,2=smoke...
         };
+
+        std::vector<SunInstance> emissiveBillboards;
 
         std::vector<Particle> particles;
         int maxParticles =100;

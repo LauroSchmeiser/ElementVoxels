@@ -25,7 +25,8 @@ void main() {
     vec3 N = normalize(normal);
 
     // accumulate light contributions
-    vec3 lightAccum = vec3(0.005);
+    vec3 lightAccum = vec3(0.02);
+
 
 
     for (int i = 0; i < numLights; ++i) {

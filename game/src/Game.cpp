@@ -136,7 +136,6 @@ namespace gl3 {
             marchingCubesShader->use();
             renderChunks();
             //renderSuns();
-            //renderPlanets();
             //renderFluidPlanets();
 
             glfwSwapBuffers(window);
@@ -241,6 +240,8 @@ namespace gl3 {
         };
         std::vector<WorldPlanet> worldPlanets; // New struct
         std::vector<WorldPlanet> suns; // special planets
+        std::vector<WorldPlanet> waterPlanets; // special planets
+
 
         const float VoxelRadius = (CHUNK_SIZE - 1) * 0.5f;
 
@@ -312,6 +313,45 @@ namespace gl3 {
         }
 
 
+        // --- Generate 2–3 waterPlanets
+        std::uniform_real_distribution<float> waterDistColorR(0.0f, 0.2f);
+        std::uniform_real_distribution<float> waterDistColorG(0.2f, 0.8f);
+        std::uniform_real_distribution<float> waterDistColorB(0.8f, 1.0f);
+
+        int waterCount = 0 + (rng() % 1); // 2 or 3 planets
+
+        for (int i = 0; i < waterCount; ++i) {
+            glm::vec3 worldPos;
+            glm::vec3 scale;
+            float worldRadius;
+
+            int attempts = 0;
+            const int maxAttempts = 25;
+
+            do {
+                worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
+                scale = glm::vec3(distScale(rng));
+                worldRadius = getVoxelPlanetRadius(scale, VoxelRadius);
+                attempts++;
+            } while (isOverlapping(worldPos, worldRadius, CollisionEntities) && attempts < maxAttempts);
+
+            if (attempts >= maxAttempts) continue;
+
+            WorldPlanet lp = {
+                    worldPos,
+                    worldRadius,
+                    glm::vec3(
+                            waterDistColorR(rng),  // reddish
+                            waterDistColorG(rng),  // orange-ish
+                            waterDistColorB(rng)   // small amount of dark red
+                    ),
+                    scale
+            };
+
+            waterPlanets.push_back(lp);
+        }
+
+
         int solidCount=0;
 // After generating world planets, carve them into chunks
         for (const auto& planet : worldPlanets) {
@@ -349,8 +389,6 @@ namespace gl3 {
                                         chunk.voxels[localX][localY][localZ].type = 1; // Solid
                                         chunk.voxels[localX][localY][localZ].density = planet.radius - dist;
                                         chunk.voxels[localX][localY][localZ].color = planet.color;
-                                        //std::cout<<"solid voxel loaded";
-                                        solidCount++;
                                     }
                                 }
                             }
@@ -364,31 +402,41 @@ namespace gl3 {
                                 for(int z=0;z<=CHUNK_SIZE;z++)
                                     if(chunk.voxels[x][y][z].isSolid()) solidVoxels++;
 
-                        //std::cout << "Chunk ("<<chunkX<<","<<chunkY<<","<<chunkZ<<") has " << solidVoxels << " solid voxels\n";
-
-
+                        /*else {
+                            std::cout << "Chunk (" << chunkX << "," << chunkY << "," << chunkZ << ") has "
+                                      << solidVoxels << " solid voxels\n";
+                        }
+                         */
+                        if(checkEmptyChunks(chunk))
+                        {
+                            solidCount++;
+                        }
                     }
 
                 }
             }
-            //std::cout<<"ChunkCount: "<<ChunkCount<<"\n";
-            //std::cout<<"ChunkCountx3: "<<(ChunkCount*ChunkCount*ChunkCount)<<"\n";
-
-            //std::cout<<"VoxelCount: "<<CHUNK_SIZE<<"\n";
-            //std::cout<<"VoxelCountx3: "<<CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE<<"\n";
-
-            //std::cout<<"VoxelCount*ChunkCount: "<<((CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE)*(ChunkCount*ChunkCount*ChunkCount))<<"\n";
-
 
             //planet.worldPos
         }
-        // --- Carve lava planets (type = 3) ---
+        std::cout<<"ChunkCount: "<<(ChunkCount*ChunkCount*ChunkCount)<<"\n";
+        std::cout<<"Solid Chunks: "<<solidCount<<"\n";
+        std::cout<<"Empty Chunks: "<<((ChunkCount*ChunkCount*ChunkCount)-solidCount)<<"\n";
+
+        std::cout<<"VoxelsPerChunk: "<<CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE<<"\n";
+        std::cout<<"Number of Voxels: "<<((CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE)*(ChunkCount*ChunkCount*ChunkCount))<<"\n";
+
+        //std::cout<<"ChunkCount: "<<ChunkCount<<"\n";
+
+        //std::cout<<"VoxelCount: "<<CHUNK_SIZE<<"\n";
+        //std::cout<<"VoxelCountx3: "<<CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE<<"\n";
+
+        // --- Carve lava planets (type = 2) ---
         for (const auto& planet : suns) {
             for (int chunkX = 0; chunkX < ChunkCount; ++chunkX) {
                 for (int chunkY = 0; chunkY < ChunkCount; ++chunkY) {
                     for (int chunkZ = 0; chunkZ < ChunkCount; ++chunkZ) {
 
-                        auto& chunk = data->gameWorld[chunkX][chunkY][chunkZ];
+                        auto &chunk = data->gameWorld[chunkX][chunkY][chunkZ];
 
                         for (int localX = 0; localX <= CHUNK_SIZE; ++localX) {
                             for (int localY = 0; localY <= CHUNK_SIZE; ++localY) {
@@ -413,10 +461,42 @@ namespace gl3 {
                     }
                 }
             }
+
+            // --- Carve water planets (type = 3) ---
+            for (const auto &planet: waterPlanets) {
+                for (int chunkX = 0; chunkX < ChunkCount; ++chunkX) {
+                    for (int chunkY = 0; chunkY < ChunkCount; ++chunkY) {
+                        for (int chunkZ = 0; chunkZ < ChunkCount; ++chunkZ) {
+
+                            auto &chunk = data->gameWorld[chunkX][chunkY][chunkZ];
+
+                            for (int localX = 0; localX <= CHUNK_SIZE; ++localX) {
+                                for (int localY = 0; localY <= CHUNK_SIZE; ++localY) {
+                                    for (int localZ = 0; localZ <= CHUNK_SIZE; ++localZ) {
+
+                                        glm::vec3 worldPos = glm::vec3(
+                                                chunkX * CHUNK_SIZE + localX,
+                                                chunkY * CHUNK_SIZE + localY,
+                                                chunkZ * CHUNK_SIZE + localZ
+                                        );
+
+                                        float dist = glm::distance(worldPos, planet.worldPos);
+
+                                        if (dist <= planet.radius) {
+                                            chunk.voxels[localX][localY][localZ].type = 3; // planet made of fire
+                                            chunk.voxels[localX][localY][localZ].density = planet.radius - dist;
+                                            chunk.voxels[localX][localY][localZ].color = planet.color;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
 
-        std::cout<<"SolidCount: "<<solidCount<<"\n";
         /*for (size_t i = 0; i < worldPlanets.size(); ++i) {
             glm::vec3 toPlanet = worldPlanets[i].worldPos - cameraPos;   // vector from camera to planet
             glm::vec3 forward = getCameraFront();                        // normalized camera direction
@@ -767,8 +847,8 @@ namespace gl3 {
         glm::mat4 pv = projection * view;
 
         std::vector<VoxelLight> globalVoxelLights;
-        std::vector<SunInstance> emissiveBillboards;
-        globalVoxelLights.reserve(30); // adjust depending on expected lights
+        emissiveBillboards.clear();
+        globalVoxelLights.reserve(50); // adjust depending on expected lights
 
         int chunkIndex = 0;
 
@@ -778,23 +858,23 @@ namespace gl3 {
                     auto& chunk = data->gameWorld[chunkX][chunkY][chunkZ];
                     glm::vec3 chunkOrigin(chunkX * CHUNK_SIZE, chunkY * CHUNK_SIZE, chunkZ * CHUNK_SIZE);
 
-                    bool hasSolid = false;
                     EmissiveBlob blob{glm::vec3(0.0f), 0, glm::vec3(1.0f)};
                     std::vector<VoxelLight> voxelLights;
                     voxelLights.reserve(3);
 
-                    // Single loop: check solids & collect emissive voxels
+                    if(!checkEmptyChunks(chunk)) {
+                        chunkIndex++;
+                        continue; // Skip empty chunks
+                    }
+
                     for(int x = 0; x < CHUNK_SIZE; ++x) {
                         for(int y = 0; y < CHUNK_SIZE; ++y) {
                             for(int z = 0; z < CHUNK_SIZE; ++z) {
                                 const auto &vox = chunk.voxels[x][y][z];
 
-                                if(vox.isSolid())
-                                    hasSolid = true;
-
                                 if(vox.type == 2) {
                                     glm::vec3 worldPos = chunkOrigin + glm::vec3(x, y, z);
-                                    float intensity = 2.5f + vox.density * vox.density * 10.0f;
+                                    float intensity = 20.0f + vox.density * vox.density * 10.0f;
 
                                     globalVoxelLights.push_back({worldPos, intensity, vox.color});
                                     voxelLights.push_back({worldPos, intensity, vox.color});
@@ -807,19 +887,14 @@ namespace gl3 {
                         }
                     }
 
-                    if(!hasSolid) {
-                        chunkIndex++;
-                        continue; // skip empty chunks
-                    }
-
                     // Create billboard for chunk if emissive voxels found
                     if(blob.count > 0) {
                         glm::vec3 center = blob.sumPos / (float)blob.count;
-                        float radius = pow((float)blob.count, 1.0f/3.0f);
+                        float radius = pow((float)blob.count, 1.0f/2.0f);
 
                         SunInstance inst;
                         inst.position = center;
-                        inst.scale = radius * 2.5f;
+                        inst.scale = radius;
                         inst.color = blob.color;
 
                         emissiveBillboards.push_back(inst);
@@ -852,7 +927,7 @@ namespace gl3 {
                     voxelShader->setFloat("emission", 0.1f);
 
                     // Pick nearest lights using squared distance
-                    int maxLights = 4;
+                    int maxLights = 2;
                     int numToPick = std::min(maxLights, (int)globalVoxelLights.size());
                     std::vector<VoxelLight> lightsForChunk(numToPick); // fixed-size vector
 
@@ -988,236 +1063,113 @@ namespace gl3 {
 
     }
 
-
-    void Game::renderPlanets() {
-        // compute PV once per frame (do this outside the loops)
-        float aspect = (windowHeight == 0) ? (float)windowWidth / 1.0f : (float)windowWidth / (float)windowHeight;
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
-        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), glm::vec3(0.0f, 1.0f, 0.0f));
-        glm::mat4 pv = projection * view;
-        glm::mat4 identityModel = glm::mat4(1.0f);
-
-
-        // Render planets
-        for (auto &planet : planets) {
-            uploadVoxelChunk(baseChunk, &planet.color);
-            resetAtomicCounter();
-            setComputeUniforms(planet.position, planet.scale, *marchingCubesShader);
-            float angleRad = glm::radians(planet.rotationAngle);
-            glm::mat3 rot = glm::mat3(glm::rotate(glm::mat4(1.0), angleRad, planet.rotationAxis));
-            dispatchCompute();
-
-            unsigned int vertexCount = 0;
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
-            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(unsigned int), &vertexCount);
-            //Vertex-Count Debug
-            //std::cout << "[compute] planet vertexCount = " << vertexCount << std::endl;
-
-            // choose top-N lights to send to shader
-            constexpr int MAX_LIGHTS = 4;
-            struct LightEntry {
-                glm::vec3 pos;
-                glm::vec3 color;
-                float intensity; // scaled brightness including inverse-square
-            };
-
-            // build list of candidate lights (with computed intensity)
-            std::vector<LightEntry> candidates;
-            candidates.reserve(suns.size());
-
-            const float EPS = 1e-5f;
-            for (auto &s : suns) {
-                float dist = glm::distance(planet.position, s.position);
-                float invSq = 2.0f / (dist * dist + EPS);
-
-                // sunBrightness: tune to your scene. using scale length as proxy
-                float sunBase = glm::length(s.scale)* glm::length(s.scale) * (125.0f); // tweak multiplier
-                float intensity = sunBase * invSq;
-
-                candidates.push_back({ s.position, s.color, intensity });
-            }
-
-            std::sort(suns.begin(), suns.end(),
-                      [](const Planet &a, const Planet &b) {
-                          return glm::length(a.scale) > glm::length(b.scale);
-                      });
-
-
-            planet.orbitAngle += deltaTime * planet.orbitSpeed; // deltaTime in seconds
-
-            glm::vec3 flat(
-                    cos(planet.orbitAngle + planet.orbitOffset) * planet.orbitRadius,
-                    0.0f,
-                    sin(planet.orbitAngle + planet.orbitOffset) * planet.orbitRadius
-            );
-
-            glm::mat4 tilt = glm::rotate(glm::mat4(1.0f), planet.orbitInclination, glm::vec3(1,0,0));
-            glm::vec3 tilted = glm::vec3(tilt * glm::vec4(flat, 1.0f));
-
-            planet.position = planet.parent->position + tilted;
-
-            // sort by intensity descending
-            std::sort(candidates.begin(), candidates.end(),
-                      [](const LightEntry &a, const LightEntry &b) {
-                          return a.intensity > b.intensity;
-                      });
-
-            // take top MAX_LIGHTS
-            int numLights = std::min<int>((int)candidates.size(), MAX_LIGHTS);
-
-            // optional: if all intensities tiny, you can set numLights = 0
-
-            // send uniforms
-            voxelShader->use();
-            voxelShader->setInt("numLights", numLights);
-
-            for (int i = 0; i < numLights; ++i) {
-                std::string idx = std::to_string(i);
-                voxelShader->setVec3(("lightPos[" + idx + "]").c_str(), candidates[i].pos);
-                voxelShader->setVec3(("lightColor[" + idx + "]").c_str(), candidates[i].color);
-                voxelShader->setFloat(("lightIntensity[" + idx + "]").c_str(), candidates[i].intensity);
-            }
-
-            // fallback ambient if desired
-            voxelShader->setVec3("ambientColor", glm::vec3(0.001f)); // very small ambient term
-
-            // other per-object uniforms
-            voxelShader->setMatrix("model", identityModel);
-            voxelShader->setMatrix("mvp", pv);
-            voxelShader->setVec3("viewPos", cameraPos);
-            voxelShader->setFloat("emission", 0.0f);
-            voxelShader->setVec3("emissionColor", glm::vec3(0.0f));
-            voxelShader->setVec3("uniformColor", planet.color); // albedo
-
-
-            drawTriangles(*voxelShader);
-        }
-    }
-
-
-    void Game::renderFluidPlanets() {
-
-        //build instances
-        std::vector<SunInstance> instances;
-        instances.reserve(fluidPlanets.size());
-
-        // compute PV once per frame
-        float aspect = (windowHeight == 0) ? (float)windowWidth / 1.0f : (float)windowWidth / (float)windowHeight;
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
-        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), glm::vec3(0.0f, 1.0f, 0.0f));
-        glm::mat4 pv = projection * view;
-        glm::mat4 identityModel = glm::mat4(1.0f);
-
-        const int GRID_X = 128;
-        const int GRID_Y = 128;
-        const int GRID_Z = 128;
-        const size_t FIELD_COUNT = size_t(GRID_X) * GRID_Y * GRID_Z;
-
-        // ---- Clear field SSBO (binding=6) ----
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, fieldBitsSSBO);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, FIELD_COUNT * sizeof(uint32_t), nullptr, GL_DYNAMIC_COPY);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, fieldBitsSSBO);
-
-        for(auto &planet : fluidPlanets) {
-
-            // ---- Upload voxel chunk (binding=0) ----
-            uploadVoxelChunk(fluidPlanetChunk, &planet.color);
-
-            // ---- Voxel-to-field splat ----
-            voxelSplatShader->use();
-            voxelSplatShader->setVec3("gridOrigin", planet.position - 0.5f * glm::vec3(CHUNK_SIZE));
-            voxelSplatShader->setFloat("voxelSize", 0.25f);
-            voxelSplatShader->setFloat("influenceRadius", 10.0f); // tweak for fluid thickness
-
-            // bind SSBOs
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssboVoxels);     // input voxels
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, fieldBitsSSBO);  // output field
-
-            // dispatch
-            const int localSize = 8;
-            int groups = (CHUNK_SIZE + localSize - 1) / localSize;
-            glDispatchCompute(groups, groups, groups);
-            glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-
-            // ---- Marching Cubes on field ----
-            marchingCubesShader->use();
-            marchingCubesShader->setVec3("gridOrigin", planet.position - 0.5f * glm::vec3(GRID_X, GRID_Y, GRID_Z));
-            marchingCubesShader->setFloat("voxelSize", 0.25f);
-
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, fieldBitsSSBO);   // read field
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, ssboTriangles);   // output triangles
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, ssboCounter);     // atomic counter
-
-            resetAtomicCounter();
-            dispatchCompute();
-            glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT);
-
-            // ---- Lighting setup ----
-            constexpr int MAX_LIGHTS = 4;
-            struct LightEntry { glm::vec3 pos; glm::vec3 color; float intensity; };
-            std::vector<LightEntry> candidates;
-            candidates.reserve(suns.size());
-
-            const float EPS = 1e-5f;
-            for(auto &s : suns) {
-                float dist = glm::distance(planet.position, s.position);
-                float invSq = 2.0f / (dist*dist + EPS);
-                float sunBase = glm::length(s.scale)*glm::length(s.scale) * 125.0f;
-                candidates.push_back({s.position, s.color, sunBase * invSq});
-            }
-
-            std::sort(candidates.begin(), candidates.end(),
-                      [](const LightEntry &a, const LightEntry &b){ return a.intensity > b.intensity; });
-            int numLights = std::min<int>((int)candidates.size(), MAX_LIGHTS);
-
-            voxelShader->use();
-            voxelShader->setInt("numLights", numLights);
-            for(int i=0;i<numLights;i++){
-                std::string idx = std::to_string(i);
-                voxelShader->setVec3(("lightPos[" + idx + "]").c_str(), candidates[i].pos);
-                voxelShader->setVec3(("lightColor[" + idx + "]").c_str(), candidates[i].color);
-                voxelShader->setFloat(("lightIntensity[" + idx + "]").c_str(), candidates[i].intensity);
-            }
-
-            voxelShader->setVec3("ambientColor", glm::vec3(0.001f));
-            voxelShader->setMatrix("model", identityModel);
-            voxelShader->setMatrix("mvp", pv);
-            voxelShader->setVec3("viewPos", cameraPos);
-            voxelShader->setFloat("emission", 0.1f);
-            voxelShader->setVec3("emissionColor", glm::vec3(0.1f,0.6f,1.0f));
-            voxelShader->setVec3("uniformColor", planet.color);
-
-            drawTriangles(*voxelShader);
-            //render Billboards
-            SunInstance inst;
-            inst.position = planet.position+((cameraPos-planet.position)/glm::vec3(4));
-            // choose scale for billboard so it visually surrounds voxel core; tweak as you like
-            inst.scale = glm::length(planet.scale) * 3.14f;
-            // compute sphere radius in world units used by your marching-cubes mesh
-            const float baseVoxelSize = 1.0f;
-            float scaleAvg = (planet.scale.x + planet.scale.y + planet.scale.z) / 2.5f;
-            float sphereRadiusWorld = ((CHUNK_SIZE - 1) * 0.5f) * (baseVoxelSize * scaleAvg) *2.0f;
-
-            // billboard scale = diameter (world units). small padding avoids clipping.
-            inst.scale = sphereRadiusWorld * 1.05f;
-            inst.color = planet.color; // use sun.color (set when creating suns)
-            instances.push_back(inst);
-
-        }
-
-        // render billboards (time: use glfwGetTime or your time accumulator)
-        //sunBillboards.render(instances, view, projection, (float)glfwGetTime());
-    }
      */
+    void Game::renderFluidPlanets()
+{
+    const int GRID_X = 128;
+    const int GRID_Y = 128;
+    const int GRID_Z = 128;
+    const size_t FIELD_COUNT = size_t(GRID_X) * GRID_Y * GRID_Z;
 
-    void Game::UpdateRotation(std::vector<Planet>& planets)
+    // PV matrix
+    float aspect = windowHeight == 0 ? float(windowWidth) : float(windowWidth) / float(windowHeight);
+    glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
+    glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), {0,1,0});
+    glm::mat4 pv = projection * view;
+
+    // Billboards
+    std::vector<SunInstance> billboardInstances;
+    billboardInstances.reserve(fluidPlanets.size());
+
+    // Clear field storage
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, fieldBitsSSBO);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, FIELD_COUNT * sizeof(uint32_t), nullptr, GL_DYNAMIC_COPY);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, fieldBitsSSBO);
+
+    // Color palette for fluid planets (blue/green)
+    const glm::vec3 baseColors[5] = {
+        {0.10f, 0.60f, 1.00f},
+        {0.00f, 0.75f, 0.80f},
+        {0.20f, 0.85f, 0.95f},
+        {0.05f, 0.55f, 0.70f},
+        {0.15f, 0.70f, 0.90f}
+    };
+
+    for (size_t i = 0; i < fluidPlanets.size(); i++)
     {
-        for(auto & planet : planets){
-            planet.rotationAngle += deltaTime * planet.rotationSpeed;
-            if (planet.rotationAngle > 360.0f) planet.rotationAngle -= 360.0f;
+        Planet &planet = fluidPlanets[i];
 
-        }
+        // Pick blue/green color
+        glm::vec3 planetColor = baseColors[i % 5];
+
+        // Upload the 32³ voxel template (binding 0)
+        uploadVoxelChunk(fluidPlanetChunk, &planetColor);
+
+        // -------------------------
+        // Voxel splat into a field
+        // -------------------------
+        voxelSplatShader->use();
+        voxelSplatShader->setVec3("gridOrigin", planet.position - 0.5f * glm::vec3(CHUNK_SIZE));
+        voxelSplatShader->setFloat("voxelSize", 0.25f);
+        voxelSplatShader->setFloat("influenceRadius", 10.0f);
+
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssboVoxels);     // input
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, fieldBitsSSBO);  // output
+
+        const int LOCAL = 8;
+        int groups = (CHUNK_SIZE + LOCAL - 1) / LOCAL;
+        glDispatchCompute(groups, groups, groups);
+        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+        // -------------------------
+        // Marching cubes
+        // -------------------------
+        marchingCubesShader->use();
+        marchingCubesShader->setVec3("gridOrigin", planet.position - 0.5f * glm::vec3(GRID_X,GRID_Y,GRID_Z));
+        marchingCubesShader->setFloat("voxelSize", 0.25f);
+
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, fieldBitsSSBO);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, ssboTriangles);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, ssboCounter);
+
+        resetAtomicCounter();
+        dispatchCompute();
+        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT);
+
+        // -------------------------
+        // Lighting (no emission)
+        // -------------------------
+        voxelShader->use();
+        voxelShader->setInt("numLights", 0); // not emissive — no lights needed
+        voxelShader->setVec3("ambientColor", {0.05f, 0.08f, 0.10f});
+        voxelShader->setVec3("viewPos", cameraPos);
+        voxelShader->setMatrix("model", glm::mat4(1.0f));
+        voxelShader->setMatrix("mvp", pv);
+
+        voxelShader->setFloat("emission", 0.0f);          // not emissive
+        voxelShader->setVec3("emissionColor", {0,0,0});   // no glow in mesh
+        voxelShader->setVec3("uniformColor", planetColor);
+
+        drawTriangles(*voxelShader);
+
+        // -------------------------
+        // Billboard glow (fluid look)
+        // -------------------------
+        SunInstance inst;
+        inst.position =
+            planet.position + (cameraPos - planet.position) * 0.25f;
+
+        float r = (CHUNK_SIZE * 0.25f) * glm::length(planet.scale);
+        inst.scale = r * 2.5f;       // glow radius
+        inst.color = planetColor;    // same as planet
+
+        billboardInstances.push_back(inst);
     }
+
+    // Draw all billboards
+    sunBillboards.render(billboardInstances, view, projection, float(glfwGetTime()));
+}
+
 
 
     void Game::update() {
@@ -1392,12 +1344,12 @@ namespace gl3 {
 
         float voxelSize = 1.0f;
 
-        // gridOrigin = world position of voxel (0,0,0)
+        // gridOrigin = world position of voxel
         computeShader.setVec3("gridOrigin", position);
 
         computeShader.setFloat("voxelSize", voxelSize);
 
-        int DIM = CHUNK_SIZE + 1;
+        int DIM = CHUNK_SIZE+1;
         computeShader.setIVec3("voxelGridDim", glm::ivec3(DIM, DIM, DIM));
 
          }
@@ -1561,6 +1513,20 @@ namespace gl3 {
         }
     }
 */
+
+    bool Game::checkEmptyChunks(gl3::Chunk chunk) {
+        // Single loop: check solids & collect emissive voxels
+        for(int x = 0; x < CHUNK_SIZE ; ++x) {
+            for(int y = 0; y < CHUNK_SIZE; ++y) {
+                for(int z = 0; z < CHUNK_SIZE; ++z) {
+                    if(chunk.voxels[x][y][z].isSolid()) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
     void Game::simulatePhysics(const std::vector<gl3::Game::Planet> &others)
     {
 
