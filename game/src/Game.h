@@ -111,7 +111,7 @@ namespace gl3 {
         //SSBOs for marching cubes
         GLuint ssboVoxels = 0, ssboEdgeTable = 0, ssboTriTable = 0, ssboCounter = 0, ssboTriangles = 0, particleSSBO=0, fieldBitsSSBO=0;
 
-        const int MAX_LIGHTS = 4;       // matches shader
+        const int MAX_LIGHTS = 10;       // matches shader
         const float LIGHT_RADIUS = 50.0f*CHUNK_SIZE;
         const float LIGHT_RADIUS_SQ = LIGHT_RADIUS * LIGHT_RADIUS;
 

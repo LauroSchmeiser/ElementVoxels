@@ -25,7 +25,7 @@ void main() {
     vec3 N = normalize(normal);
 
     // accumulate light contributions
-    vec3 lightAccum = vec3(0.02);
+    vec3 lightAccum = vec3(0.0);
 
 
 
@@ -38,7 +38,7 @@ void main() {
         float NdotL = max(dot(N, L), 0.0);
 
         // inverse square attenuation
-        float attenuation = 2.0 / (distSq + 1.0);
+        float attenuation = 1 / (distSq + 1.0);
 
         float intensity = lightIntensity[i] * attenuation;
 
@@ -63,5 +63,5 @@ void main() {
     // simple Reinhard tone mapping
     vec3 color = hdr / (hdr + vec3(1.0));
 
-    FragColor = vec4(color, 1.0);
+    FragColor = vec4(hdr, 1.0);
 }

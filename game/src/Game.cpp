@@ -849,7 +849,7 @@ namespace gl3 {
 
         std::vector<VoxelLight> globalVoxelLights;
         emissiveBillboards.clear();
-        globalVoxelLights.reserve(50); // adjust depending on expected lights
+        globalVoxelLights.reserve(10); // adjust depending on expected lights
 
         int chunkIndex = 0;
 
@@ -860,8 +860,6 @@ namespace gl3 {
                     glm::vec3 chunkOrigin(chunkX * CHUNK_SIZE, chunkY * CHUNK_SIZE, chunkZ * CHUNK_SIZE);
 
                     EmissiveBlob blob{glm::vec3(0.0f), 0, glm::vec3(1.0f)};
-                    std::vector<VoxelLight> voxelLights;
-                    voxelLights.reserve(3);
 
                     if(!hasSolidVoxels(chunk)) {
                         chunkIndex++;
@@ -877,11 +875,8 @@ namespace gl3 {
                                     glm::vec3 worldPos = chunkOrigin + glm::vec3(x, y, z);
                                     float intensity = 20.0f + vox.density * vox.density * 10.0f;
 
-                                    globalVoxelLights.push_back({worldPos, intensity, vox.color});
-                                    voxelLights.push_back({worldPos, intensity, vox.color});
-
                                     blob.sumPos += worldPos;
-                                    blob.color = vox.color;
+                                    blob.sumColor += vox.color;
                                     blob.count++;
                                 }
                             }
@@ -891,26 +886,22 @@ namespace gl3 {
                     // Create billboard for chunk if emissive voxels found
                     if (blob.count > 0) {
                         glm::vec3 center = blob.sumPos / float(blob.count);
+                        glm::vec3 avgColor = blob.sumColor / float(blob.count);
 
-                        // ---- Lighting (physical) ----
-                        float energy = float(blob.count);
-                        float intensity = energy * 30.0f;
+                        // ---- LIGHT (physical) ----
+                        float intensity = float(blob.count) * 30.0f;
 
                         globalVoxelLights.push_back({
                                                             center,
                                                             intensity,
-                                                            blob.color
+                                                            avgColor
                                                     });
 
-                        // ---- Billboard (visual) ----
+                        // ---- BILLBOARD (visual) ----
                         SunInstance inst;
                         inst.position = center;
-
-                        // billboard size should be exaggerated (visual, not physical)
-                        inst.scale = sqrt(float(blob.count));
-
-                        // boost color for visibility
-                        inst.color = blob.color * 2.5f;
+                        inst.scale = sqrt(float(blob.count)) * 2.0f;
+                        inst.color = avgColor * 2.5f;
 
                         emissiveBillboards.push_back(inst);
                     }
@@ -943,8 +934,7 @@ namespace gl3 {
                     voxelShader->setFloat("emission", 0.1f);
 
                     // Pick nearest lights using squared distance
-                    int maxLights = 2;
-                    int numToPick = std::min(maxLights, (int)globalVoxelLights.size());
+                    int numToPick = std::min(MAX_LIGHTS, (int)globalVoxelLights.size());
                     std::vector<VoxelLight> lightsForChunk(numToPick); // fixed-size vector
 
                     glm::vec3 chunkCenter = chunkOrigin + glm::vec3(CHUNK_SIZE / 2.0f);
@@ -971,7 +961,7 @@ namespace gl3 {
 
 
 
-                    int numLights = (int)std::min(maxLights, (int)globalVoxelLights.size());
+                    int numLights = (int)std::min(MAX_LIGHTS, (int)globalVoxelLights.size());
                     voxelShader->setInt("numLights", numLights);
                     for(int i = 0; i < numLights; ++i){
                         voxelShader->setVec3("lightPos[" + std::to_string(i) + "]", lightsForChunk[i].pos);
@@ -979,7 +969,7 @@ namespace gl3 {
                         voxelShader->setFloat("lightIntensity[" + std::to_string(i) + "]", lightsForChunk[i].intensity);
                     }
 
-                    voxelShader->setVec3("ambientColor", glm::vec3(0.05f));
+                    voxelShader->setVec3("ambientColor", glm::vec3(0.005f));
 
                     drawTriangles(*voxelShader);
 

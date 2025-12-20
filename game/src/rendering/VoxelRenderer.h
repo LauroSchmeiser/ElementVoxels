@@ -21,9 +21,10 @@ namespace gl3 {
 
     struct EmissiveBlob {
         glm::vec3 sumPos;
-        int count = 0;
-        glm::vec3 color;
+        int count=0;
+        glm::vec3 sumColor;
     };
+
 
     struct OutVertex {
         glm::vec4 pos;    // xyz: position, w unused
