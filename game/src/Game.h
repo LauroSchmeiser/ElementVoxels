@@ -36,7 +36,7 @@ namespace gl3 {
         void draw();
         void updateDeltaTime();
         void updatePhysics();
-        bool checkEmptyChunks(Chunk chunk);
+        bool hasSolidVoxels(gl3::Chunk chunk);
 
 
         // --- Generate planet transforms ---
@@ -81,6 +81,7 @@ namespace gl3 {
 
         //Simulation-Steps
         bool isOverlapping(const glm::vec3& pos, float rad, const std::vector<Planet>& others);
+        void rebuildChunkLights(int cx,int cy, int cz);
 
         //Input-Steps
 
@@ -110,6 +111,9 @@ namespace gl3 {
         //SSBOs for marching cubes
         GLuint ssboVoxels = 0, ssboEdgeTable = 0, ssboTriTable = 0, ssboCounter = 0, ssboTriangles = 0, particleSSBO=0, fieldBitsSSBO=0;
 
+        const int MAX_LIGHTS = 4;       // matches shader
+        const float LIGHT_RADIUS = 50.0f*CHUNK_SIZE;
+        const float LIGHT_RADIUS_SQ = LIGHT_RADIUS * LIGHT_RADIUS;
 
 
         //Chunks:
@@ -150,6 +154,7 @@ namespace gl3 {
         std::vector<SunInstance> emissiveBillboards;
 
         std::vector<Particle> particles;
+
         int maxParticles =100;
         //helper function
     };

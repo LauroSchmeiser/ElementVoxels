@@ -1,4 +1,6 @@
 #pragma once
+
+#include <vector>
 #include "glm/glm.hpp"
 
 namespace gl3 {
@@ -30,11 +32,13 @@ namespace gl3 {
     };
 
 
-    constexpr int CHUNK_SIZE =13;
+    constexpr int CHUNK_SIZE =18;
 
 
     struct Chunk {
         Voxel voxels[CHUNK_SIZE + 1][CHUNK_SIZE + 1][CHUNK_SIZE + 1];
+        std::vector<VoxelLight> emissiveLights;
+        bool lightingDirty;
     };
 
 }

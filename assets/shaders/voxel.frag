@@ -30,27 +30,26 @@ void main() {
 
 
     for (int i = 0; i < numLights; ++i) {
-        // direction from fragment to light
-        vec3 L = normalize(lightPos[i] - fragPos);
+        vec3 toLight = lightPos[i] - fragPos;
+        float distSq = dot(toLight, toLight);
+        float dist = sqrt(distSq);
+        vec3 L = toLight / max(dist, 0.001);
 
-        // Lambert diffuse
-        float NdotL = max(dot(N, L), 0.01);
+        float NdotL = max(dot(N, L), 0.0);
 
-        // If you didn't bake inverse-square on CPU, compute attenuation here:
-        // float dist = length(lightPos[i] - fragPos);
-        // float att = 1.0 / (dist*dist + 1e-5);
-        // float intensity = lightIntensity[i] * att;
-        // But in this example we assume lightIntensity[i] already has attenuation baked.
+        // inverse square attenuation
+        float attenuation = 2.0 / (distSq + 1.0);
 
-        float intensity = lightIntensity[i];
+        float intensity = lightIntensity[i] * attenuation;
 
-        // Add color * intensity * lambert
         lightAccum += lightColor[i] * intensity * NdotL;
     }
 
+
     // convert accumulated light to reflected diffuse (energy-conserving Lambert)
     // diffuse reflectance = albedo / PI * incoming_radiance
-    vec3 diffuse = (albedo / PI) * lightAccum;
+    vec3 diffuse = albedo * lightAccum;
+
 
     // ambient (very small)
     vec3 ambient = ambientColor * albedo;

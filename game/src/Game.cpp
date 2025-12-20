@@ -407,7 +407,7 @@ namespace gl3 {
                                       << solidVoxels << " solid voxels\n";
                         }
                          */
-                        if(checkEmptyChunks(chunk))
+                        if(hasSolidVoxels(chunk))
                         {
                             solidCount++;
                         }
@@ -423,7 +423,8 @@ namespace gl3 {
         std::cout<<"Empty Chunks: "<<((ChunkCount*ChunkCount*ChunkCount)-solidCount)<<"\n";
 
         std::cout<<"VoxelsPerChunk: "<<CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE<<"\n";
-        std::cout<<"Number of Voxels: "<<((CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE)*(ChunkCount*ChunkCount*ChunkCount))<<"\n";
+        std::cout<<"Absolute Number of Voxels: "<<((CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE)*(ChunkCount*ChunkCount*ChunkCount))<<"\n";
+        std::cout<<"Number of rendered Voxels: "<<((CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE)*solidCount)<<"\n";
 
         //std::cout<<"ChunkCount: "<<ChunkCount<<"\n";
 
@@ -862,7 +863,7 @@ namespace gl3 {
                     std::vector<VoxelLight> voxelLights;
                     voxelLights.reserve(3);
 
-                    if(!checkEmptyChunks(chunk)) {
+                    if(!hasSolidVoxels(chunk)) {
                         chunkIndex++;
                         continue; // Skip empty chunks
                     }
@@ -888,17 +889,32 @@ namespace gl3 {
                     }
 
                     // Create billboard for chunk if emissive voxels found
-                    if(blob.count > 0) {
-                        glm::vec3 center = blob.sumPos / (float)blob.count;
-                        float radius = pow((float)blob.count, 1.0f/2.0f);
+                    if (blob.count > 0) {
+                        glm::vec3 center = blob.sumPos / float(blob.count);
 
+                        // ---- Lighting (physical) ----
+                        float energy = float(blob.count);
+                        float intensity = energy * 30.0f;
+
+                        globalVoxelLights.push_back({
+                                                            center,
+                                                            intensity,
+                                                            blob.color
+                                                    });
+
+                        // ---- Billboard (visual) ----
                         SunInstance inst;
                         inst.position = center;
-                        inst.scale = radius;
-                        inst.color = blob.color;
+
+                        // billboard size should be exaggerated (visual, not physical)
+                        inst.scale = sqrt(float(blob.count));
+
+                        // boost color for visibility
+                        inst.color = blob.color * 2.5f;
 
                         emissiveBillboards.push_back(inst);
                     }
+
 
                     // Upload chunk geometry
                     uploadVoxelChunk(chunk, nullptr);
@@ -975,6 +991,37 @@ namespace gl3 {
         // Render all emissive billboards
         sunBillboards.render(emissiveBillboards, view, projection, (float)glfwGetTime());
     }
+
+    void Game::rebuildChunkLights(int cx, int cy, int cz) {
+        Chunk& chunk = data->gameWorld[cx][cy][cz];
+        chunk.emissiveLights.clear();
+
+        glm::vec3 chunkOrigin(cx * CHUNK_SIZE,
+                              cy * CHUNK_SIZE,
+                              cz * CHUNK_SIZE);
+
+        for (int x = 0; x < CHUNK_SIZE; ++x)
+            for (int y = 0; y < CHUNK_SIZE; ++y)
+                for (int z = 0; z < CHUNK_SIZE; ++z) {
+                    const auto& vox = chunk.voxels[x][y][z];
+
+                    if (vox.type == 2) { // emissive voxel
+                        glm::vec3 pos = chunkOrigin + glm::vec3(x, y, z);
+
+                        float baseIntensity = 25.0f;
+                        float intensity = baseIntensity + vox.density * vox.density * 10.0f;
+
+                        chunk.emissiveLights.push_back({
+                                                               pos,
+                                                               intensity,
+                                                               vox.color
+                                                       });
+                    }
+                }
+
+        chunk.lightingDirty = false;
+    }
+
 
     /*
     void Game::renderSuns()
@@ -1063,7 +1110,12 @@ namespace gl3 {
 
     }
 
+
+
      */
+
+
+
     void Game::renderFluidPlanets()
 {
     const int GRID_X = 128;
@@ -1514,7 +1566,7 @@ namespace gl3 {
     }
 */
 
-    bool Game::checkEmptyChunks(gl3::Chunk chunk) {
+    bool Game::hasSolidVoxels(gl3::Chunk chunk) {
         // Single loop: check solids & collect emissive voxels
         for(int x = 0; x < CHUNK_SIZE ; ++x) {
             for(int y = 0; y < CHUNK_SIZE; ++y) {
