@@ -9,17 +9,20 @@
 #include <soloud_wav.h>
 #include <string>
 #include <array>
+#include <unordered_set>
+#include <unordered_map>
 #include "entities//Entity.h"
 #include "rendering/VoxelRenderer.h"
 #include "rendering/SunBillboard.h"
 
 namespace gl3 {
 
-    static constexpr int ChunkCount=8;
+    static constexpr int ChunkCount=12;
+    static constexpr int RenderingRange=50;
 
 
     struct GameData{
-        std::array<std::array<std::array<Chunk, ChunkCount>,ChunkCount>,ChunkCount> gameWorld;
+        std::unordered_map<ChunkCoord, Chunk, ChunkCoordHash> gameWorld;
     };
 
     class Game {
@@ -36,26 +39,19 @@ namespace gl3 {
         void draw();
         void updateDeltaTime();
         void updatePhysics();
-        bool hasSolidVoxels(gl3::Chunk chunk);
+        bool hasSolidVoxels(const gl3::Chunk& chunk);
+        uint32_t makeLightID(int cx, int cy, int cz);
 
 
-        // --- Generate planet transforms ---
-        struct Planet {
-            glm::vec3 position;
-            glm::vec3 scale;
-            float rotationAngle;
-            glm::vec3 rotationAxis;
-            float rotationSpeed;
+            // --- Generate planet transforms ---
+
+
+        struct WorldPlanet {
+            glm::vec3 worldPos;   // world-space center
+            float radius;         // world-space radius
             glm::vec3 color;
-            float orbitAngle;
-            float orbitSpeed;
-            float orbitRadius;
-            float orbitInclination;
-            float orbitOffset;
-            Planet* parent = nullptr;  // <—— parent "sun"
+            int type;             // 1=rock, 2=lava, 3=water
         };
-
-        void simulatePhysics(const std::vector<gl3::Game::Planet> &others);
 
         // Updated signatures
         void uploadVoxelChunk(const Chunk& chunk, const glm::vec3* overrideColor = nullptr);
@@ -64,12 +60,12 @@ namespace gl3 {
         void dispatchCompute();
         void drawTriangles(Shader& voxelShader);
 
-        void UpdateRotation(std::vector<Planet>& planets);
         void handleCameraInput();
         float getVoxelPlanetRadius(const glm::vec3& scale, float baseChunkRadius);
+        bool isOverlapping(const glm::vec3 &pos, float rad, const std::vector<gl3::Game::WorldPlanet> &others);
 
 
-        //Initialization-Steps
+            //Initialization-Steps
         void setupSSBOsAndTables();
         void setupCamera();
         void generateChunks();
@@ -80,7 +76,7 @@ namespace gl3 {
 
 
         //Simulation-Steps
-        bool isOverlapping(const glm::vec3& pos, float rad, const std::vector<Planet>& others);
+        void updateWorldLighting();
         void rebuildChunkLights(int cx,int cy, int cz);
 
         //Input-Steps
@@ -111,9 +107,11 @@ namespace gl3 {
         //SSBOs for marching cubes
         GLuint ssboVoxels = 0, ssboEdgeTable = 0, ssboTriTable = 0, ssboCounter = 0, ssboTriangles = 0, particleSSBO=0, fieldBitsSSBO=0;
 
-        const int MAX_LIGHTS = 10;       // matches shader
-        const float LIGHT_RADIUS = 50.0f*CHUNK_SIZE;
+        const int MAX_LIGHTS = 4;       // matches shader
+        const float LIGHT_RADIUS = 1000.0f*CHUNK_SIZE;
         const float LIGHT_RADIUS_SQ = LIGHT_RADIUS * LIGHT_RADIUS;
+
+        std::unordered_set<uint32_t> usedLightIDs;
 
 
         //Chunks:
@@ -126,9 +124,9 @@ namespace gl3 {
         //std::vector<Planet> suns;
         //std::vector<Planet> planets;
         //std::vector<Planet> meteors;
-        std::vector<Planet> fluidPlanets;
+        std::vector<WorldPlanet> fluidPlanets;
 
-        std::vector<Planet> CollisionEntities;
+        std::vector<WorldPlanet> CollisionEntities;
 
         std::unique_ptr<GameData> data = std::make_unique<GameData>();
 

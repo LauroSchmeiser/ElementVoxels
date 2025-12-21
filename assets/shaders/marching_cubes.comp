@@ -61,15 +61,18 @@ int voxelIndex(ivec3 p) {
     return p.x + p.y * voxelGridDim.x + p.z * voxelGridDim.x * voxelGridDim.y;
 }
 
+ivec3 clampVoxel(ivec3 p) {
+    return clamp(p, ivec3(0), voxelGridDim - ivec3(1));
+}
+
 float sampleDensity(ivec3 p) {
-    int idx = voxelIndex(p);
-    return voxels[idx].density;
+    return voxels[voxelIndex(clampVoxel(p))].density;
 }
 
 vec3 sampleColor(ivec3 p) {
-    int idx = voxelIndex(p);
-    return voxels[idx].color.xyz;
+    return voxels[voxelIndex(clampVoxel(p))].color.xyz;
 }
+
 
 /*  //new versions for fluid shaders, dont work with normal rendering
 float sampleDensity(ivec3 p) {
@@ -86,9 +89,10 @@ vec3 sampleColor(ivec3 p) {
 // interpolate along edge p1->p2 where d1,d2 are densities
 vec3 vertexInterpolate(vec3 p1, vec3 p2, float d1, float d2) {
     float denom = (d1 - d2);
-    float t = denom == 0.0 ? 0.5 : (d1 / denom);
+    float t = abs(denom) < 1e-6 ? 0.5 : (d1 / denom);
     return mix(p1, p2, clamp(t, 0.0, 1.0));
 }
+
 
 // approximate normal by central differences on density samples
 vec3 computeNormal(vec3 worldPos) {

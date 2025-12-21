@@ -113,6 +113,7 @@ namespace gl3 {
         //setSimulationVariables();
         //findBestParent();
         setupVEffects();
+        updateWorldLighting();
 
 
         while (!glfwWindowShouldClose(window)) {
@@ -121,6 +122,8 @@ namespace gl3 {
 
             //Simulation Steps
             updateDeltaTime();
+            updateWorldLighting();
+
             //UpdateRotation(suns);
             //UpdateRotation(planets);
 
@@ -195,6 +198,19 @@ namespace gl3 {
         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
     }
 
+    inline int worldToChunk(float v) {
+        return int(std::floor(v / CHUNK_SIZE));
+    }
+
+    inline Chunk& getOrCreateChunk(
+            std::unordered_map<ChunkCoord, Chunk, ChunkCoordHash>& world,
+            int cx, int cy, int cz
+    ) {
+        ChunkCoord key{cx, cy, cz};
+        return world[key]; // default-constructs if missing
+    }
+
+
     void Game::generateChunks() {
 
         const float centerOffset = (CHUNK_SIZE - 1) * 0.5f;
@@ -202,42 +218,18 @@ namespace gl3 {
         const float densityEpsilon = 1e-4f; // small bias to avoid exact zeros
 
 
-        // Clear all chunks to "air" first
-        for(auto &chunkb : data->gameWorld) {
-            for (auto &chunka : chunkb) {
-                for (auto &chunk : chunka) {
-                    for (int x = 0; x <= CHUNK_SIZE; ++x) {
-                        for (int y = 0; y <= CHUNK_SIZE; ++y) {
-                            for (int z = 0; z <= CHUNK_SIZE; ++z) {
-                                chunk.voxels[x][y][z].type = 0; // Air
-                                chunk.voxels[x][y][z].density = -1.0f;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         std::mt19937 rng(std::random_device{}());
-         int chunkGridSize = ChunkCount * DIM;
+        int chunkGridSize = ChunkCount * DIM;
 
-         std::uniform_real_distribution<float> distPos(0.0f, chunkGridSize);
-         std::uniform_real_distribution<float> distScale(0.5f, 3.0f);
+        std::uniform_real_distribution<float> distPos(-100.0f, 100.0f);
+
+        std::uniform_real_distribution<float> distScale(0.5f, 3.0f);
         std::uniform_real_distribution<float> distAxis(-1.0f, 1.0f);
         std::uniform_real_distribution<float> distSpeed(5.0f, 5.2f);
 
         std::uniform_real_distribution<float> distColor(0.3f, 1.0f);
         std::uniform_real_distribution<float> distColor2(0.66f, 1.0f);
 
-
-
-        struct WorldPlanet {
-            glm::vec3 worldPos;     // Position in world coordinates
-            float radius;           // World-space radius
-            glm::vec3 color;
-            glm::vec3 scale;
-            // ... other planet properties
-        };
         std::vector<WorldPlanet> worldPlanets; // New struct
         std::vector<WorldPlanet> suns; // special planets
         std::vector<WorldPlanet> waterPlanets; // special planets
@@ -246,32 +238,14 @@ namespace gl3 {
         const float VoxelRadius = (CHUNK_SIZE - 1) * 0.5f;
 
 
-// Generate planets in world space
-        for (int i = 0; i < 5 ; ++i) {
-            glm::vec3 worldPos;
-            glm::vec3 scale;
-            float worldRadius;
-
-            int attempts = 0;
-            const int maxAttempts = 25;
-
-            do {
-                worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
-                scale = glm::vec3(distScale(rng));
-                worldRadius = getVoxelPlanetRadius(scale, VoxelRadius);
-                attempts++;
-            } while (isOverlapping(worldPos, worldRadius, CollisionEntities) && attempts < maxAttempts);
-
-            if (attempts >= maxAttempts) continue;
-
-            WorldPlanet wp = {
-                    worldPos,
-                    worldRadius,
-                    glm::vec3(distColor(rng), distColor(rng), distColor(rng)),
-                    scale
-            };
-
-            worldPlanets.push_back(wp);
+        int planetCount = 5;
+        for (int i = 0; i < planetCount; ++i) {
+            WorldPlanet p;
+            p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
+            p.radius = distScale(rng) * CHUNK_SIZE;
+            p.color = glm::vec3(distColor(rng), distColor(rng), distColor(rng));
+            p.type = 1; // solid planet
+            worldPlanets.push_back(p);
         }
 
         // --- Generate 2–3 suns
@@ -282,36 +256,23 @@ namespace gl3 {
         int lavaCount = 2 + (rng() % 2); // 2 or 3 planets
 
         for (int i = 0; i < lavaCount; ++i) {
-            glm::vec3 worldPos;
-            glm::vec3 scale;
-            float worldRadius;
-
-            int attempts = 0;
-            const int maxAttempts = 25;
-
-            do {
-                worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
-                scale = glm::vec3(distScale(rng));
-                worldRadius = getVoxelPlanetRadius(scale, VoxelRadius);
-                attempts++;
-            } while (isOverlapping(worldPos, worldRadius, CollisionEntities) && attempts < maxAttempts);
-
-            if (attempts >= maxAttempts) continue;
-
-            WorldPlanet lp = {
-                    worldPos,
-                    worldRadius,
-                    glm::vec3(
-                            lavaDistColorR(rng),  // reddish
-                            lavaDistColorG(rng),  // orange-ish
-                            lavaDistColorB(rng)   // small amount of dark red
-                    ),
-                    scale
-            };
-
-            suns.push_back(lp);
+            WorldPlanet p;
+            p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
+            p.radius = distScale(rng) * CHUNK_SIZE;
+            p.color = glm::vec3(lavaDistColorR(rng), lavaDistColorG(rng), lavaDistColorB(rng));
+            p.type = 2; // solid planet
+            suns.push_back(p);
         }
 
+
+        Chunk& c = getOrCreateChunk(data->gameWorld, 0, 0, 0);
+        for (int x = 0; x < CHUNK_SIZE; ++x)
+            for (int y = 0; y < CHUNK_SIZE; ++y)
+                for (int z = 0; z < CHUNK_SIZE; ++z) {
+                    c.voxels[x][y][z].type = 1;
+                    c.voxels[x][y][z].color = glm::vec3(1,0,1);
+                }
+        c.meshDirty = true;
 
         // --- Generate 2–3 waterPlanets
         std::uniform_real_distribution<float> waterDistColorR(0.0f, 0.2f);
@@ -321,697 +282,354 @@ namespace gl3 {
         int waterCount = 0 + (rng() % 1); // 2 or 3 planets
 
         for (int i = 0; i < waterCount; ++i) {
-            glm::vec3 worldPos;
-            glm::vec3 scale;
-            float worldRadius;
-
-            int attempts = 0;
-            const int maxAttempts = 25;
-
-            do {
-                worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
-                scale = glm::vec3(distScale(rng));
-                worldRadius = getVoxelPlanetRadius(scale, VoxelRadius);
-                attempts++;
-            } while (isOverlapping(worldPos, worldRadius, CollisionEntities) && attempts < maxAttempts);
-
-            if (attempts >= maxAttempts) continue;
-
-            WorldPlanet lp = {
-                    worldPos,
-                    worldRadius,
-                    glm::vec3(
-                            waterDistColorR(rng),  // reddish
-                            waterDistColorG(rng),  // orange-ish
-                            waterDistColorB(rng)   // small amount of dark red
-                    ),
-                    scale
-            };
-
-            waterPlanets.push_back(lp);
+            WorldPlanet p;
+            p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
+            p.radius = distScale(rng) * CHUNK_SIZE;
+            p.color = glm::vec3(waterDistColorR(rng), waterDistColorG(rng), waterDistColorB(rng));
+            p.type = 3; // solid planet
+            waterPlanets.push_back(p);
         }
 
+        // After generating world planets, carve them into chunks
+        // --------------------------------------------------
+// 🌍 Carve planets into chunks (unordered_map world)
+// --------------------------------------------------
+        size_t touchedChunks = 0;
+        size_t solidVoxels = 0;
 
-        int solidCount=0;
-// After generating world planets, carve them into chunks
-        for (const auto& planet : worldPlanets) {
-            // Determine which chunks this planet affects
-            // For simplicity, mark all voxels in sphere
-            for (int chunkX = 0; chunkX < ChunkCount; ++chunkX) {
-                for (int chunkY = 0; chunkY < ChunkCount; ++chunkY) {
-                    for (int chunkZ = 0; chunkZ < ChunkCount; ++chunkZ) {
-                        auto& chunk = data->gameWorld[chunkX][chunkY][chunkZ];
+        for (const WorldPlanet &planet: worldPlanets) {
 
-                        // Convert chunk coordinates to world coordinates
-                        glm::vec3 chunkWorldOffset = glm::vec3(
-                                chunkX * DIM,
-                                chunkY * DIM,
-                                chunkZ * DIM
+            int minCX = worldToChunk(planet.worldPos.x - planet.radius);
+            int maxCX = worldToChunk(planet.worldPos.x + planet.radius);
+            int minCY = worldToChunk(planet.worldPos.y - planet.radius);
+            int maxCY = worldToChunk(planet.worldPos.y + planet.radius);
+            int minCZ = worldToChunk(planet.worldPos.z - planet.radius);
+            int maxCZ = worldToChunk(planet.worldPos.z + planet.radius);
+
+            for (int cx = minCX; cx <= maxCX; ++cx)
+                for (int cy = minCY; cy <= maxCY; ++cy)
+                    for (int cz = minCZ; cz <= maxCZ; ++cz) {
+
+                        Chunk &chunk =
+                                getOrCreateChunk(data->gameWorld, cx, cy, cz);
+
+                        glm::vec3 chunkOrigin(
+                                cx * CHUNK_SIZE,
+                                cy * CHUNK_SIZE,
+                                cz * CHUNK_SIZE
                         );
 
-                        // Fill voxels in this chunk
-                        for (int localX = 0; localX <= CHUNK_SIZE; ++localX) {
-                            for (int localY = 0; localY <= CHUNK_SIZE; ++localY) {
-                                for (int localZ = 0; localZ <= CHUNK_SIZE; ++localZ) {
-                                    // Convert to world coordinates
-                                    glm::vec3 worldPos = glm::vec3(
-                                            chunkX * CHUNK_SIZE + localX,
-                                            chunkY * CHUNK_SIZE + localY,
-                                            chunkZ * CHUNK_SIZE + localZ
-                                    );
+                        bool chunkTouched = false;
 
-                                    float dist = glm::distance(worldPos, planet.worldPos);
+                        for (int lx = 0; lx <= CHUNK_SIZE; ++lx)
+                            for (int ly = 0; ly <= CHUNK_SIZE; ++ly)
+                                for (int lz = 0; lz <= CHUNK_SIZE; ++lz) {
 
-                                    //std::cout<<"Atomic: "<<(dist <= planet.radius)<<"\n dist: "<<dist<<"\n radius: "<<planet.radius<<"\n";
-
-                                    // If inside planet
-                                    if (dist <= planet.radius) {
-                                        chunk.voxels[localX][localY][localZ].type = 1; // Solid
-                                        chunk.voxels[localX][localY][localZ].density = planet.radius - dist;
-                                        chunk.voxels[localX][localY][localZ].color = planet.color;
-                                    }
-                                }
-                            }
-
-
-                        }
-
-                        int solidVoxels = 0;
-                        for(int x=0;x<=CHUNK_SIZE;x++)
-                            for(int y=0;y<=CHUNK_SIZE;y++)
-                                for(int z=0;z<=CHUNK_SIZE;z++)
-                                    if(chunk.voxels[x][y][z].isSolid()) solidVoxels++;
-
-                        /*else {
-                            std::cout << "Chunk (" << chunkX << "," << chunkY << "," << chunkZ << ") has "
-                                      << solidVoxels << " solid voxels\n";
-                        }
-                         */
-                        if(hasSolidVoxels(chunk))
-                        {
-                            solidCount++;
-                        }
-                    }
-
-                }
-            }
-
-            //planet.worldPos
-        }
-        std::cout<<"ChunkCount: "<<(ChunkCount*ChunkCount*ChunkCount)<<"\n";
-        std::cout<<"Solid Chunks: "<<solidCount<<"\n";
-        std::cout<<"Empty Chunks: "<<((ChunkCount*ChunkCount*ChunkCount)-solidCount)<<"\n";
-
-        std::cout<<"VoxelsPerChunk: "<<CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE<<"\n";
-        std::cout<<"Absolute Number of Voxels: "<<((CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE)*(ChunkCount*ChunkCount*ChunkCount))<<"\n";
-        std::cout<<"Number of rendered Voxels: "<<((CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE)*solidCount)<<"\n";
-
-        //std::cout<<"ChunkCount: "<<ChunkCount<<"\n";
-
-        //std::cout<<"VoxelCount: "<<CHUNK_SIZE<<"\n";
-        //std::cout<<"VoxelCountx3: "<<CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE<<"\n";
-
-        // --- Carve lava planets (type = 2) ---
-        for (const auto& planet : suns) {
-            for (int chunkX = 0; chunkX < ChunkCount; ++chunkX) {
-                for (int chunkY = 0; chunkY < ChunkCount; ++chunkY) {
-                    for (int chunkZ = 0; chunkZ < ChunkCount; ++chunkZ) {
-
-                        auto &chunk = data->gameWorld[chunkX][chunkY][chunkZ];
-
-                        for (int localX = 0; localX <= CHUNK_SIZE; ++localX) {
-                            for (int localY = 0; localY <= CHUNK_SIZE; ++localY) {
-                                for (int localZ = 0; localZ <= CHUNK_SIZE; ++localZ) {
-
-                                    glm::vec3 worldPos = glm::vec3(
-                                            chunkX * CHUNK_SIZE + localX,
-                                            chunkY * CHUNK_SIZE + localY,
-                                            chunkZ * CHUNK_SIZE + localZ
-                                    );
+                                    glm::vec3 worldPos =
+                                            chunkOrigin + glm::vec3(lx, ly, lz);
 
                                     float dist = glm::distance(worldPos, planet.worldPos);
 
                                     if (dist <= planet.radius) {
-                                        chunk.voxels[localX][localY][localZ].type = 2; // planet made of fire
-                                        chunk.voxels[localX][localY][localZ].density = planet.radius - dist;
-                                        chunk.voxels[localX][localY][localZ].color = planet.color;
+                                        Voxel &v = chunk.voxels[lx][ly][lz];
+
+                                        v.type = planet.type;
+                                        v.color = planet.color;
+                                        v.density = planet.radius - dist;
+
+                                        chunk.meshDirty = true;
+                                        chunk.lightingDirty = true;
+
+                                        chunkTouched = true;
+                                        solidVoxels++;
                                     }
                                 }
-                            }
-                        }
+
+                        if (chunkTouched)
+                            touchedChunks++;
                     }
-                }
-            }
+            auto carveSpecialPlanets =
+                    [&](const std::vector<WorldPlanet> &planets) {
 
-            // --- Carve water planets (type = 3) ---
-            for (const auto &planet: waterPlanets) {
-                for (int chunkX = 0; chunkX < ChunkCount; ++chunkX) {
-                    for (int chunkY = 0; chunkY < ChunkCount; ++chunkY) {
-                        for (int chunkZ = 0; chunkZ < ChunkCount; ++chunkZ) {
+                        for (const auto &planet: planets) {
 
-                            auto &chunk = data->gameWorld[chunkX][chunkY][chunkZ];
+                            int minCX = worldToChunk(planet.worldPos.x - planet.radius);
+                            int maxCX = worldToChunk(planet.worldPos.x + planet.radius);
+                            int minCY = worldToChunk(planet.worldPos.y - planet.radius);
+                            int maxCY = worldToChunk(planet.worldPos.y + planet.radius);
+                            int minCZ = worldToChunk(planet.worldPos.z - planet.radius);
+                            int maxCZ = worldToChunk(planet.worldPos.z + planet.radius);
 
-                            for (int localX = 0; localX <= CHUNK_SIZE; ++localX) {
-                                for (int localY = 0; localY <= CHUNK_SIZE; ++localY) {
-                                    for (int localZ = 0; localZ <= CHUNK_SIZE; ++localZ) {
+                            for (int cx = minCX; cx <= maxCX; ++cx)
+                                for (int cy = minCY; cy <= maxCY; ++cy)
+                                    for (int cz = minCZ; cz <= maxCZ; ++cz) {
 
-                                        glm::vec3 worldPos = glm::vec3(
-                                                chunkX * CHUNK_SIZE + localX,
-                                                chunkY * CHUNK_SIZE + localY,
-                                                chunkZ * CHUNK_SIZE + localZ
+                                        Chunk &chunk =
+                                                getOrCreateChunk(data->gameWorld, cx, cy, cz);
+
+                                        glm::vec3 chunkOrigin(
+                                                cx * CHUNK_SIZE,
+                                                cy * CHUNK_SIZE,
+                                                cz * CHUNK_SIZE
                                         );
 
-                                        float dist = glm::distance(worldPos, planet.worldPos);
+                                        for (int lx = 0; lx <= CHUNK_SIZE; ++lx)
+                                            for (int ly = 0; ly <= CHUNK_SIZE; ++ly)
+                                                for (int lz = 0; lz <= CHUNK_SIZE; ++lz) {
 
-                                        if (dist <= planet.radius) {
-                                            chunk.voxels[localX][localY][localZ].type = 3; // planet made of fire
-                                            chunk.voxels[localX][localY][localZ].density = planet.radius - dist;
-                                            chunk.voxels[localX][localY][localZ].color = planet.color;
-                                        }
+                                                    glm::vec3 worldPos =
+                                                            chunkOrigin + glm::vec3(lx, ly, lz);
+
+                                                    float dist = glm::distance(worldPos, planet.worldPos);
+
+                                                    if (dist <= planet.radius) {
+                                                        auto &v = chunk.voxels[lx][ly][lz];
+                                                        v.type = planet.type;
+                                                        v.color = planet.color;
+                                                        v.density = planet.radius - dist;
+                                                        chunk.meshDirty = true;
+                                                        chunk.lightingDirty = true;
+                                                    }
+                                                }
                                     }
-                                }
+                        }
+                    };
+
+            carveSpecialPlanets(suns);
+            carveSpecialPlanets(waterPlanets);
+
+            size_t chunkCount = data->gameWorld.size();
+            size_t solidChunkCount = 0;
+
+            for (const auto &[coord, chunk]: data->gameWorld) {
+                for (int x = 0; x <= CHUNK_SIZE; ++x)
+                    for (int y = 0; y <= CHUNK_SIZE; ++y)
+                        for (int z = 0; z <= CHUNK_SIZE; ++z) {
+                            if (chunk.voxels[x][y][z].isSolid()) {
+                                solidChunkCount++;
+                                goto nextChunk;
                             }
                         }
-                    }
-                }
-            }
-        }
-
-
-        /*for (size_t i = 0; i < worldPlanets.size(); ++i) {
-            glm::vec3 toPlanet = worldPlanets[i].worldPos - cameraPos;   // vector from camera to planet
-            glm::vec3 forward = getCameraFront();                        // normalized camera direction
-
-            float dot = glm::dot(glm::normalize(toPlanet), forward);
-
-            if (dot > 0.0f) {
-                std::cout << "Planet " << i << " is in front of the camera. Pos: "
-                          << worldPlanets[i].worldPos.x << ", "
-                          << worldPlanets[i].worldPos.y << ", "
-                          << worldPlanets[i].worldPos.z << "\n";
-            } else {
-                std::cout << "Planet " << i << " is behind the camera.\n";
-            }
-        }
-
-*/
-        /*
-        for (int x = 0; x < CHUNK_SIZE; ++x) {
-            for (int y = 0; y < CHUNK_SIZE; ++y) {
-                for (int z = 0; z < CHUNK_SIZE; ++z) {
-                    float dx = x - centerOffset;
-                    float dy = y - centerOffset;
-                    float dz = z - centerOffset;
-                    float dist = sqrt(dx * dx + dy * dy + dz * dz);
-
-                    auto &voxel = baseChunk.voxels[x][y][z];
-                    // SDF: positive inside, negative outside
-                    voxel.density = radius - dist + densityEpsilon;
-                    voxel.type = (voxel.density > 0.0f) ? 1 : 0;
-
-                    // default chunk color (will be overridden per-object if desired)
-                    voxel.color = glm::vec3(0.5f);
-                }
-            }
-        }
-
-        // sunChunk: same but optionally different color
-        for (int x = 0; x < CHUNK_SIZE; ++x) {
-            for (int y = 0; y < CHUNK_SIZE; ++y) {
-                for (int z = 0; z < CHUNK_SIZE; ++z) {
-                    float dx = x - centerOffset;
-                    float dy = y - centerOffset;
-                    float dz = z - centerOffset;
-                    float dist = sqrt(dx * dx + dy * dy + dz * dz);
-
-                    auto &voxel = sunChunk.voxels[x][y][z];
-                    voxel.density = radius - dist + densityEpsilon;
-                    voxel.type = (voxel.density > 0.0f) ? 1 : 0;
-                    voxel.color = glm::vec3(1.0f, 0.75f, 0.0f);
-                }
-            }
-        }
-
-        //fluid Chunk
-        for (int x = 0; x < CHUNK_SIZE; ++x) {
-            for (int y = 0; y < CHUNK_SIZE; ++y) {
-                for (int z = 0; z < CHUNK_SIZE; ++z) {
-                    float dx = x - centerOffset;
-                    float dy = y - centerOffset;
-                    float dz = z - centerOffset;
-                    float dist = sqrt(dx * dx + dy * dy + dz * dz);
-
-                    auto &voxel = fluidPlanetChunk.voxels[x][y][z];
-                    voxel.density = radius - dist + densityEpsilon;
-                    voxel.type = (voxel.density > 0.0f) ? 1 : 0;
-                    voxel.color = glm::vec3(0.0f, 0.2f, 1.0f);
-                }
-            }
-        }
-
-
-        // robust lumpy meteor generator (drop-in)
-        const float rx = centerOffset * 0.75f; // ensure meteor fits inside chunk
-        const float ry = centerOffset * 0.55f;
-        const float rz = centerOffset * 0.55f;
-        const float minRadius = std::min(std::min(rx, ry), rz);
-
-        // base eps and noise
-        const float noiseAmp = minRadius * 0.06f; // start small (6%)
-        const uint32_t seed = 1337u;
-        auto intNoise = [&](int xi, int yi, int zi)->float {
-            uint32_t h = uint32_t(xi+17) * 73856093u ^ uint32_t(yi+31) * 19349663u ^ uint32_t(zi+97) * 83492791u ^ seed;
-            h = (h ^ (h >> 13u)) * 0x5bd1e995u;
-            h ^= h >> 15u;
-            return (float)(h & 0xFFFFu) / float(0xFFFFu); // [0..1]
-        };
-
-        // optional extra lumps (offsets & scales) to break symmetry
-        struct Lump { float ox, oy, oz, sx, sy, sz; };
-        std::vector<Lump> lumps = {
-                { 0.2f*rx,  -0.1f*ry, 0.05f*rz, 0.6f, 0.6f, 0.6f },
-                {-0.3f*rx,   0.15f*ry,-0.12f*rz, 0.5f, 0.5f, 0.5f },
-                { 0.0f,      0.25f*ry, 0.2f*rz,  0.4f, 0.4f, 0.4f },
-        };
-
-        for (int x=0;x<CHUNK_SIZE;++x) {
-            for (int y=0;y<CHUNK_SIZE;++y) {
-                for (int z=0;z<CHUNK_SIZE;++z) {
-                    float dx = float(x) - centerOffset;
-                    float dy = float(y) - centerOffset;
-                    float dz = float(z) - centerOffset;
-
-                    // normalized ellipsoid distance (1 == surface)
-                    float ellMain = sqrtf((dx*dx)/(rx*rx) + (dy*dy)/(ry*ry) + (dz*dz)/(rz*rz));
-                    float baseDensity = (1.0f - ellMain) * minRadius;
-
-                    // add a few small ellipsoidal lumps and take max (union)
-                    float maxDensity = baseDensity;
-                    for (auto &L : lumps) {
-                        float lx = (dx - L.ox) / (rx * L.sx);
-                        float ly = (dy - L.oy) / (ry * L.sy);
-                        float lz = (dz - L.oz) / (rz * L.sz);
-                        float ell = sqrtf(lx*lx + ly*ly + lz*lz);
-                        float d = (1.0f - ell) * (minRadius * 0.6f);
-                        maxDensity = glm::max(maxDensity, d);
-                    }
-
-                    // gentle procedural noise, fade toward the surface (0 at ell>=1)
-                    float n = intNoise(x,y,z);
-                    float rawNoise = (n - 0.5f) * 2.0f * noiseAmp;
-                    float interiorFactor = glm::clamp(1.0f - ellMain, 0.0f, 1.0f);
-                    interiorFactor = pow(interiorFactor, 0.8f); // keep some roughness near surface
-                    float noise = rawNoise * interiorFactor;
-
-                    float density = maxDensity + noise + densityEpsilon;
-
-                    meteorChunk.voxels[x][y][z].density = density;
-                    meteorChunk.voxels[x][y][z].type = (density > 0.0f) ? 1 : 0;
-                    meteorChunk.voxels[x][y][z].color = glm::vec3(0.45f,0.37f,0.28f);
-                }
-            }
-        }
-        // Debug: inspect meteorChunk SDF
-        float minD = 1e9f, maxD = -1e9f;
-        int cx = CHUNK_SIZE/2, cy = CHUNK_SIZE/2, cz = CHUNK_SIZE/2;
-        for (int x=0;x<CHUNK_SIZE;++x){
-            for (int y=0;y<CHUNK_SIZE;++y){
-                for (int z=0;z<CHUNK_SIZE;++z){
-                    float d = meteorChunk.voxels[x][y][z].density;
-                    minD = std::min(minD, d);
-                    maxD = std::max(maxD, d);
-                }
-            }
-        }
-
-*/
-        //std::cout<<"Generated Planets: "<<worldPlanets.size();
-    }
-
-    /*
-    void Game::fillChunks()
-    {
-        std::mt19937 rng(std::random_device{}());
-        std::uniform_real_distribution<float> distPos(-100.0f, 100.0f);
-        std::uniform_real_distribution<float> distScale(0.5f, 3.0f);
-        std::uniform_real_distribution<float> distAxis(-1.0f, 1.0f);
-        std::uniform_real_distribution<float> distSpeed(5.0f, 5.2f);
-
-        std::uniform_real_distribution<float> distColor(0.3f, 1.0f);
-        std::uniform_real_distribution<float> distColor2(0.66f, 1.0f);
-
-/*
-        for(auto  &chunkb : data->gameWorld) {
-            for (auto &chunka: chunkb) {
-                for (auto &chunk: chunka) {
-                    glm::vec3 pos;
-                    glm::vec3 scale;
-                    float radius;
-
-                    // Try up to N times to find a valid non-overlapping position
-                    int attempts = 0;
-                    const int maxAttempts = 10 * 2;
-
-                    const float VoxelRadius = (CHUNK_SIZE - 1) * 0.5f;
-                    do {
-                        pos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
-                        scale = glm::vec3(distScale(rng));
-                        radius = getVoxelPlanetRadius(scale, VoxelRadius);
-                        attempts++;
-                    } while (isOverlapping(pos, radius, CollisionEntities) && attempts < maxAttempts);
-
-                    // If all attempts failed, skip this one
-                    if (attempts >= maxAttempts) {
-                        std::cout << "failed collision checks";
-                        continue;
-
-                    }
-
-                    glm::vec3 axis = glm::normalize(glm::vec3(distAxis(rng), distAxis(rng), distAxis(rng)));
-                    Planet p = {pos, scale, 0.0f, axis, distSpeed(rng),
-                                glm::vec3(distColor(rng), distColor(rng), distColor(rng))};
-
-                    planets.push_back(p);
-                    CollisionEntities.push_back(p);
-
-                }
-            }
-        }
-
-
-        // --- Generate mesh from voxel chunk ---
-        for (int i = 0; i < 4; ++i) {
-            glm::vec3 pos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
-            glm::vec3 scale = glm::vec3(1.5f);
-            glm::vec3 color = glm::vec3(0.5f, 0.45f, 0.35f);
-            glm::vec3 axis = glm::normalize(glm::vec3(distAxis(rng), distAxis(rng), distAxis(rng)));
-            float speed = distSpeed(rng);
-
-            Planet m = {pos, scale, 0.0f, axis, speed, color};
-
-            meteors.push_back(m);
-            CollisionEntities.push_back(m); // SAME object
-        }
-
-
-        int sunsCount=3;
-        for (int j = 0; j < sunsCount; ++j) {
-            glm::vec3 pos;
-            glm::vec3 scale;
-            float radius;
-
-            // Try up to N times to find a valid non-overlapping position
-            int attempts = 0;
-            const int maxAttempts = sunsCount*25;
-
-            const float VoxelRadius = (CHUNK_SIZE - 1) * 0.5f ;
-
-            do {
-                pos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
-                scale = glm::vec3(distScale(rng)*5);
-                radius = getVoxelPlanetRadius(scale,VoxelRadius);
-                attempts++;
-            }
-            while (isOverlapping(pos, radius, CollisionEntities) && attempts < maxAttempts);
-
-            // If all attempts failed, skip this one
-            if (attempts >= maxAttempts)
-            {
-                std::cout<<"failed collision checks";
-                continue;
-
-            }
-            glm::vec3 color = glm::vec3(distColor2(rng), distColor(rng) , 0.0f);
-            glm::vec3 axis = glm::normalize(glm::vec3(distAxis(rng), distAxis(rng), distAxis(rng)));
-            float speed = distSpeed(rng)*(5/scale.x);
-            Planet s = {pos, scale, 0.0f, axis, speed, color};
-            suns.push_back(s);
-            CollisionEntities.push_back(s);
-        }
-
-        glm::vec3 pos;
-        float radius;
-        pos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
-        glm::vec3 color = glm::vec3(0.1f,0.6f,1.0f);
-        glm::vec3 axis = glm::normalize(glm::vec3(distAxis(rng), distAxis(rng), distAxis(rng)));
-        float speed = distSpeed(rng);
-        Planet s = {pos, glm::vec3(10,10,10), 0.0f, axis, speed, color};
-        fluidPlanets.push_back(s);
-        int fluidPlanetsCount=15;
-        for (int j = 0; j < fluidPlanetsCount; ++j) {
-            glm::vec3 pos;
-            float radius;
-            pos = fluidPlanets.at(0).position+(glm::vec3(distPos(rng), distPos(rng), distPos(rng))/25.0f);
-            glm::vec3 color = glm::vec3(0.1f,0.6f,1.0f);
-            glm::vec3 axis = glm::normalize(glm::vec3(distAxis(rng), distAxis(rng), distAxis(rng)));
-            float speed = distSpeed(rng);
-            Planet s = {pos, glm::vec3(0.25f,0.25f,0.25f), 0.0f, axis, speed, color};
-            fluidPlanets.push_back(s);
-        }
-
-        int planetsCount=25;
-        for (int i = 0; i < planetsCount; ++i) {
-
-            glm::vec3 pos;
-            glm::vec3 scale;
-            float radius;
-
-            // Try up to N times to find a valid non-overlapping position
-            int attempts = 0;
-            const int maxAttempts = planetsCount*2;
-
-            const float VoxelRadius = (CHUNK_SIZE - 1) * 0.5f ;
-            do {
-                pos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
-                scale = glm::vec3(distScale(rng));
-                radius = getVoxelPlanetRadius(scale,VoxelRadius);
-                attempts++;
-            }
-            while (isOverlapping(pos, radius, CollisionEntities) && attempts < maxAttempts);
-
-            // If all attempts failed, skip this one
-            if (attempts >= maxAttempts)
-            {
-                std::cout<<"failed collision checks";
-                continue;
-
+                nextChunk:;
             }
 
-            glm::vec3 axis = glm::normalize(glm::vec3(distAxis(rng), distAxis(rng), distAxis(rng)));
-            Planet p = { pos, scale, 0.0f, axis, distSpeed(rng), glm::vec3(distColor(rng),distColor(rng),distColor(rng)) };
+            std::cout << "Generated Chunks: " << chunkCount << "\n";
+            std::cout << "Chunks With Solids: " << solidChunkCount << "\n";
+            std::cout << "Solid Voxels: " << solidVoxels << "\n";
+            std::cout << "Voxels per Chunk: "
+                      << (CHUNK_SIZE + 1) * (CHUNK_SIZE + 1) * (CHUNK_SIZE + 1) << "\n";
 
-            planets.push_back(p);
-            CollisionEntities.push_back(p);
-
-        }
-
-
-    }
-    */
-
-    /*
-    void Game::setSimulationVariables()
-    {
-        std::mt19937 rng(std::random_device{}());
-        std::uniform_real_distribution<float> distOrbit(0.0f, 1.0f);
-        for(auto &planet : planets)
-        {
-            planet.orbitOffset      = distOrbit(rng) * glm::two_pi<float>();       // random 0–2π
-            planet.orbitInclination = (distOrbit(rng) * 2.0f - 1.0f) * glm::radians(30.0f); // -30°..+30°
-            planet.orbitRadius      = 100.0f + distOrbit(rng) * 200.0f;            // 50–200 units
-            planet.orbitSpeed       = (0.001f + distOrbit(rng)) * (planet.orbitOffset/3.0f)*(1.0f/planet.scale.length());           // 0.001–0.01 rad/sec (slow)
-            std::cout<<"orbit speed: "<<planet.orbitSpeed<<"\n";
-            std::coutstd::cout<<"orbitOffset: "<<planet.orbitOffset<<"\n";
-            std::cout<<"1/planet.scale.length(): "<<(1/planet.scale.length())<<"\n";
-        }
-
-        for(auto &sun : suns)
-        {
-            sun.orbitOffset      = distOrbit(rng) * glm::two_pi<float>();       // random 0–2π
-            sun.orbitInclination = (distOrbit(rng) * 2.0f - 1.0f) * glm::radians(30.0f); // -30°..+30°
-            sun.orbitRadius      = 100.0f + distOrbit(rng) * 150.0f;            // 50–200 units
-            sun.orbitSpeed       = (0.001f + distOrbit(rng)) * (sun.orbitOffset/3.0f)*(1.0f/sun.scale.length());           //        // 0.001–0.01 rad/sec (slow)
         }
     }
-
-     */
 
     void Game::setupVEffects() {
-        sunBillboards.init(64); // maxInstances, adjust based on max expected suns
+        sunBillboards.init(12); // maxInstances, adjust based on max expected suns
 
     }
 
     void Game::renderChunks() {
-        float aspect = (windowHeight == 0) ? (float)windowWidth / 1.0f : (float)windowWidth / (float)windowHeight;
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
-        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), glm::vec3(0.0f, 1.0f, 0.0f));
+
+        float aspect = (windowHeight == 0)
+                       ? float(windowWidth)
+                       : float(windowWidth) / float(windowHeight);
+
+        glm::mat4 projection =
+                glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
+
+        glm::mat4 view =
+                glm::lookAt(cameraPos,
+                            cameraPos + getCameraFront(),
+                            glm::vec3(0.0f, 1.0f, 0.0f));
+
         glm::mat4 pv = projection * view;
 
-        std::vector<VoxelLight> globalVoxelLights;
+        const int camCX = worldToChunk(cameraPos.x);
+        const int camCY = worldToChunk(cameraPos.y);
+        const int camCZ = worldToChunk(cameraPos.z);
+
+        const int R  = RenderingRange;
+        const int R2 = R * R;
+
         emissiveBillboards.clear();
-        globalVoxelLights.reserve(10); // adjust depending on expected lights
+        usedLightIDs.clear();
 
-        int chunkIndex = 0;
+        // --------------------------------------------------
+        // 🔥 Iterate EXISTING chunks only
+        // --------------------------------------------------
+        for (auto& [coord, chunk] : data->gameWorld) {
 
-        for(int chunkX = 0; chunkX < ChunkCount; ++chunkX) {
-            for(int chunkY = 0; chunkY < ChunkCount; ++chunkY) {
-                for(int chunkZ = 0; chunkZ < ChunkCount; ++chunkZ) {
-                    auto& chunk = data->gameWorld[chunkX][chunkY][chunkZ];
-                    glm::vec3 chunkOrigin(chunkX * CHUNK_SIZE, chunkY * CHUNK_SIZE, chunkZ * CHUNK_SIZE);
+            int dx = coord.x - camCX;
+            int dy = coord.y - camCY;
+            int dz = coord.z - camCZ;
 
-                    EmissiveBlob blob{glm::vec3(0.0f), 0, glm::vec3(1.0f)};
+            if (dx*dx + dy*dy + dz*dz > R2)
+                continue;
 
-                    if(!hasSolidVoxels(chunk)) {
-                        chunkIndex++;
-                        continue; // Skip empty chunks
-                    }
+            if (!hasSolidVoxels(chunk))
+                continue;
 
-                    for(int x = 0; x < CHUNK_SIZE; ++x) {
-                        for(int y = 0; y < CHUNK_SIZE; ++y) {
-                            for(int z = 0; z < CHUNK_SIZE; ++z) {
-                                const auto &vox = chunk.voxels[x][y][z];
-
-                                if(vox.type == 2) {
-                                    glm::vec3 worldPos = chunkOrigin + glm::vec3(x, y, z);
-                                    float intensity = 20.0f + vox.density * vox.density * 10.0f;
-
-                                    blob.sumPos += worldPos;
-                                    blob.sumColor += vox.color;
-                                    blob.count++;
-                                }
-                            }
-                        }
-                    }
-
-                    // Create billboard for chunk if emissive voxels found
-                    if (blob.count > 0) {
-                        glm::vec3 center = blob.sumPos / float(blob.count);
-                        glm::vec3 avgColor = blob.sumColor / float(blob.count);
-
-                        // ---- LIGHT (physical) ----
-                        float intensity = float(blob.count) * 30.0f;
-
-                        globalVoxelLights.push_back({
-                                                            center,
-                                                            intensity,
-                                                            avgColor
-                                                    });
-
-                        // ---- BILLBOARD (visual) ----
-                        SunInstance inst;
-                        inst.position = center;
-                        inst.scale = sqrt(float(blob.count)) * 2.0f;
-                        inst.color = avgColor * 2.5f;
-
-                        emissiveBillboards.push_back(inst);
-                    }
-
-
-                    // Upload chunk geometry
-                    uploadVoxelChunk(chunk, nullptr);
-
-                    glm::vec3 chunkWorldPos = chunkOrigin;
-
-                    resetAtomicCounter();
-                    setComputeUniforms(chunkWorldPos, glm::vec3(1.0f), *marchingCubesShader);
-                    dispatchCompute();
-
-                    unsigned int vertexCount = 0;
-                    glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
-                    glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(unsigned int), &vertexCount);
-                    if(vertexCount == 0) {
-                        chunkIndex++;
-                        continue;
-                    }
-
-                    // Setup shader
-                    glm::mat4 model = glm::translate(glm::mat4(1.0f), chunkWorldPos);
-                    voxelShader->use();
-                    voxelShader->setMatrix("model", model);
-                    voxelShader->setMatrix("mvp", pv);
-                    voxelShader->setVec3("viewPos", cameraPos);
-                    voxelShader->setVec3("uniformColor", glm::vec3(1.0f));
-                    voxelShader->setFloat("emission", 0.1f);
-
-                    // Pick nearest lights using squared distance
-                    int numToPick = std::min(MAX_LIGHTS, (int)globalVoxelLights.size());
-                    std::vector<VoxelLight> lightsForChunk(numToPick); // fixed-size vector
-
-                    glm::vec3 chunkCenter = chunkOrigin + glm::vec3(CHUNK_SIZE / 2.0f);
-
-                    std::partial_sort_copy(
-                            globalVoxelLights.begin(), globalVoxelLights.end(),
-                            lightsForChunk.begin(), lightsForChunk.end(),
-                            [chunkCenter](const VoxelLight &a, const VoxelLight &b){
-                                // Compare squared distances
-                                glm::vec3 diffA = a.pos - chunkCenter;
-                                glm::vec3 diffB = b.pos - chunkCenter;
-                                return (diffA.x*diffA.x + diffA.y*diffA.y + diffA.z*diffA.z) <
-                                       (diffB.x*diffB.x + diffB.y*diffB.y + diffB.z*diffB.z);
-                            }
-                    );
-
-                    //TODO: Optimize light
-
-                    // Option A: Only use lights in nearby chunks
-                    //Maintain a spatial hash / chunk grid of voxel lights. Then each chunk only checks lights in the 27 neighboring chunks (3×3×3). That drastically reduces comparisons.
-                    //
-                    //Option B: Precompute nearest lights to camera
-                    //If the lights’ effect falls off quickly with distance, you can select the nearest maxLights once per frame relative to the camera instead of per chunk.
-
-
-
-                    int numLights = (int)std::min(MAX_LIGHTS, (int)globalVoxelLights.size());
-                    voxelShader->setInt("numLights", numLights);
-                    for(int i = 0; i < numLights; ++i){
-                        voxelShader->setVec3("lightPos[" + std::to_string(i) + "]", lightsForChunk[i].pos);
-                        voxelShader->setVec3("lightColor[" + std::to_string(i) + "]", lightsForChunk[i].color);
-                        voxelShader->setFloat("lightIntensity[" + std::to_string(i) + "]", lightsForChunk[i].intensity);
-                    }
-
-                    voxelShader->setVec3("ambientColor", glm::vec3(0.005f));
-
-                    drawTriangles(*voxelShader);
-
-                    chunkIndex++;
+            // ----------------------------------
+            // Billboard lights (once per light)
+            // ----------------------------------
+            for (const auto& light : chunk.emissiveLights) {
+                if (usedLightIDs.insert(light.id).second) {
+                    SunInstance inst;
+                    inst.position = light.pos;
+                    inst.scale    = std::sqrt(light.intensity);
+                    inst.color    = light.color * 2.5f;
+                    emissiveBillboards.push_back(inst);
                 }
             }
+
+            glm::vec3 chunkOrigin(
+                    coord.x * CHUNK_SIZE,
+                    coord.y * CHUNK_SIZE,
+                    coord.z * CHUNK_SIZE
+            );
+
+            glm::vec3 chunkCenter =
+                    chunkOrigin + glm::vec3(CHUNK_SIZE * 0.5f);
+
+            // ----------------------------------
+            // Collect nearby lights
+            // ----------------------------------
+            std::vector<VoxelLight> nearbyLights;
+            nearbyLights.reserve(8);
+
+            for (auto& [ncoord, neighbor] : data->gameWorld) {
+
+                int ndx = ncoord.x - coord.x;
+                int ndy = ncoord.y - coord.y;
+                int ndz = ncoord.z - coord.z;
+
+                if (ndx*ndx + ndy*ndy + ndz*ndz > 16) // ~4 chunks
+                    continue;
+
+                for (const auto& light : neighbor.emissiveLights) {
+                    glm::vec3 d = light.pos - chunkCenter;
+                    if (glm::dot(d, d) <= LIGHT_RADIUS_SQ)
+                        nearbyLights.push_back(light);
+                }
+            }
+
+            std::sort(
+                    nearbyLights.begin(),
+                    nearbyLights.end(),
+                    [chunkCenter](const VoxelLight& a, const VoxelLight& b) {
+                        float da2 = glm::dot(a.pos - chunkCenter, a.pos - chunkCenter);
+                        float db2 = glm::dot(b.pos - chunkCenter, b.pos - chunkCenter);
+                        return (da2 < db2) || (da2 == db2 && a.id < b.id);
+                    }
+            );
+
+            if ((int)nearbyLights.size() > MAX_LIGHTS)
+                nearbyLights.resize(MAX_LIGHTS);
+
+            // ----------------------------------
+            // Geometry + draw
+            // ----------------------------------
+            if (chunk.meshDirty) {
+                uploadVoxelChunk(chunk, nullptr);
+
+                resetAtomicCounter();
+                setComputeUniforms(chunkOrigin, glm::vec3(1.0f), *marchingCubesShader);
+                dispatchCompute();
+
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
+                glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                                   sizeof(unsigned int), &chunk.vertexCount);
+
+                chunk.meshDirty = false;
+            }
+
+            if (chunk.vertexCount == 0)
+                continue;
+
+
+            voxelShader->use();
+            voxelShader->setMatrix("model", glm::mat4(1.0f));
+            voxelShader->setMatrix("mvp", pv);
+            voxelShader->setVec3("viewPos", cameraPos);
+            voxelShader->setVec3("ambientColor", glm::vec3(0.02f));
+            voxelShader->setFloat("emission", 0.0f);
+
+            voxelShader->setInt("numLights", (int)nearbyLights.size());
+
+            for (int i = 0; i < (int)nearbyLights.size(); ++i) {
+                voxelShader->setVec3("lightPos[" + std::to_string(i) + "]",
+                                     nearbyLights[i].pos);
+                voxelShader->setVec3("lightColor[" + std::to_string(i) + "]",
+                                     nearbyLights[i].color);
+                voxelShader->setFloat("lightIntensity[" + std::to_string(i) + "]",
+                                      nearbyLights[i].intensity);
+            }
+
+            drawTriangles(*voxelShader);
         }
 
-        // Render all emissive billboards
-        sunBillboards.render(emissiveBillboards, view, projection, (float)glfwGetTime());
+        // ----------------------------------
+        // Render billboards
+        // ----------------------------------
+        sunBillboards.render(
+                emissiveBillboards,
+                view,
+                projection,
+                (float)glfwGetTime()
+        );
     }
 
+
+
+
     void Game::rebuildChunkLights(int cx, int cy, int cz) {
-        Chunk& chunk = data->gameWorld[cx][cy][cz];
+
+        Chunk& chunk = getOrCreateChunk(data->gameWorld, cx, cy, cz);
         chunk.emissiveLights.clear();
 
-        glm::vec3 chunkOrigin(cx * CHUNK_SIZE,
-                              cy * CHUNK_SIZE,
-                              cz * CHUNK_SIZE);
+        glm::vec3 chunkOrigin(
+                cx * CHUNK_SIZE,
+                cy * CHUNK_SIZE,
+                cz * CHUNK_SIZE
+        );
+
+        glm::vec3 sumPos(0.0f);
+        glm::vec3 sumColor(0.0f);
+        int count = 0;
 
         for (int x = 0; x < CHUNK_SIZE; ++x)
             for (int y = 0; y < CHUNK_SIZE; ++y)
                 for (int z = 0; z < CHUNK_SIZE; ++z) {
+
                     const auto& vox = chunk.voxels[x][y][z];
 
                     if (vox.type == 2) { // emissive voxel
-                        glm::vec3 pos = chunkOrigin + glm::vec3(x, y, z);
-
-                        float baseIntensity = 25.0f;
-                        float intensity = baseIntensity + vox.density * vox.density * 10.0f;
-
-                        chunk.emissiveLights.push_back({
-                                                               pos,
-                                                               intensity,
-                                                               vox.color
-                                                       });
+                        sumPos   += chunkOrigin + glm::vec3(x, y, z);
+                        sumColor += vox.color;
+                        count++;
                     }
                 }
+
+        if (count > 0) {
+            VoxelLight light;
+            light.pos       = sumPos / float(count);
+            light.color     = sumColor / float(count);
+            light.intensity = float(count);
+            light.id        = makeLightID(cx, cy, cz);
+
+            chunk.emissiveLights.push_back(light);
+        }
 
         chunk.lightingDirty = false;
     }
 
+
+
+    uint32_t Game::makeLightID(int cx, int cy, int cz) {
+        // Pack 10 bits per axis (supports up to 1024 chunks per axis)
+        return (uint32_t(cx & 0x3FF) << 20) |
+               (uint32_t(cy & 0x3FF) << 10) |
+               (uint32_t(cz & 0x3FF));
+    }
 
     /*
     void Game::renderSuns()
@@ -1139,7 +757,7 @@ namespace gl3 {
 
     for (size_t i = 0; i < fluidPlanets.size(); i++)
     {
-        Planet &planet = fluidPlanets[i];
+        WorldPlanet &planet = fluidPlanets[i];
 
         // Pick blue/green color
         glm::vec3 planetColor = baseColors[i % 5];
@@ -1151,7 +769,7 @@ namespace gl3 {
         // Voxel splat into a field
         // -------------------------
         voxelSplatShader->use();
-        voxelSplatShader->setVec3("gridOrigin", planet.position - 0.5f * glm::vec3(CHUNK_SIZE));
+        voxelSplatShader->setVec3("gridOrigin", planet.worldPos - 0.5f * glm::vec3(CHUNK_SIZE));
         voxelSplatShader->setFloat("voxelSize", 0.25f);
         voxelSplatShader->setFloat("influenceRadius", 10.0f);
 
@@ -1167,7 +785,7 @@ namespace gl3 {
         // Marching cubes
         // -------------------------
         marchingCubesShader->use();
-        marchingCubesShader->setVec3("gridOrigin", planet.position - 0.5f * glm::vec3(GRID_X,GRID_Y,GRID_Z));
+        marchingCubesShader->setVec3("gridOrigin", planet.worldPos - 0.5f * glm::vec3(GRID_X,GRID_Y,GRID_Z));
         marchingCubesShader->setFloat("voxelSize", 0.25f);
 
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, fieldBitsSSBO);
@@ -1199,9 +817,9 @@ namespace gl3 {
         // -------------------------
         SunInstance inst;
         inst.position =
-            planet.position + (cameraPos - planet.position) * 0.25f;
+            planet.worldPos + (cameraPos - planet.worldPos) * 0.25f;
 
-        float r = (CHUNK_SIZE * 0.25f) * glm::length(planet.scale);
+        float r = (CHUNK_SIZE * 0.25f) * glm::length(planet.radius);
         inst.scale = r * 2.5f;       // glow radius
         inst.color = planetColor;    // same as planet
 
@@ -1322,24 +940,15 @@ namespace gl3 {
         for(int x=0;x<=CHUNK_SIZE;x++) {
             for(int y=0;y<=CHUNK_SIZE;y++) {
                 for(int z=0;z<=CHUNK_SIZE;z++) {
-                    const auto &v = chunk.voxels[x][y][z];
-                    const int DIM = CHUNK_SIZE + 1;
+                    int sx = std::min(x, CHUNK_SIZE - 1);
+                    int sy = std::min(y, CHUNK_SIZE - 1);
+                    int sz = std::min(z, CHUNK_SIZE - 1);
 
+                    const auto &v = chunk.voxels[sx][sy][sz];
                     int idx = x + y * DIM + z * DIM * DIM;
 
-
                     voxels[idx].density = v.density;
-
-                    if (doColorByDensity) {
-                        // normalize to [0..1
-                        float nv = (v.density - minD) / (maxD - minD);
-                        nv = glm::clamp(nv, 0.0f, 1.0f);
-                        voxels[idx].color = glm::vec4(nv, nv, nv, 1.0f);
-                    } else if (overrideColor) {
-                        voxels[idx].color = glm::vec4(*overrideColor, 1.0f); // uniform color
-                    } else {
-                        voxels[idx].color = glm::vec4(v.color, 1.0f);
-                    }
+                    voxels[idx].color = overrideColor ? glm::vec4(*overrideColor, 1.0f) : glm::vec4(v.color, 1.0f);
                 }
             }
         }
@@ -1355,46 +964,25 @@ namespace gl3 {
 
     }
 
-    void Game::setComputeUniforms(const glm::vec3& position, const glm::vec3& objectScale, Shader& computeShader)
+    void Game::setComputeUniforms(const glm::vec3& chunkOrigin,
+                                  const glm::vec3& /*objectScale*/,
+                                  Shader& computeShader)
     {
-        /*
         computeShader.use();
 
-        // base voxel size (world units per voxel) you used previously
-        const float baseVoxelSize = 1.0f;
+        const float voxelSize = 1.0f;
+        const int DIM = CHUNK_SIZE + 1;
 
-        // If the object has a uniform scale, apply it by scaling voxelSize.
-        // If objectScale is vec3, you can pick x (uniform scale) or average.
-        float scale = (objectScale.x + objectScale.y + objectScale.z) / 3.0f;
-        float effectiveVoxelSize = baseVoxelSize * scale;
+        // Shift grid so voxel corners are centered correctly
+        glm::vec3 gridOrigin = chunkOrigin; // no -0.5f * voxelSize
 
-        // We want the chunk centered at 'position'. The compute shader expects gridOrigin
-        // to be the world position of voxel (0,0,0). So offset by half the grid extents:
-        glm::vec3 halfExtents = (glm::vec3(CHUNK_SIZE - 1) * 0.5f) * effectiveVoxelSize;
-        glm::vec3 gridOrigin = position - halfExtents;
 
-        // upload uniforms
         computeShader.setVec3("gridOrigin", gridOrigin);
-        computeShader.setFloat("voxelSize", effectiveVoxelSize);
-        // shader expects ivec3 voxelGridDim
-        int DIM = CHUNK_SIZE + 1;
-        computeShader.setIVec3("voxelGridDim", glm::ivec3(DIM, DIM, DIM));
-        */
-
-
-        computeShader.use();
-
-        float voxelSize = 1.0f;
-
-        // gridOrigin = world position of voxel
-        computeShader.setVec3("gridOrigin", position);
-
         computeShader.setFloat("voxelSize", voxelSize);
-
-        int DIM = CHUNK_SIZE+1;
         computeShader.setIVec3("voxelGridDim", glm::ivec3(DIM, DIM, DIM));
+    }
 
-         }
+
     void Game::dispatchCompute()
     {
         int groups = (CHUNK_SIZE - 1 + 7) / 8; // local_size = 8 in compute shader
@@ -1465,10 +1053,10 @@ namespace gl3 {
     }
 
 
-    bool Game::isOverlapping(const glm::vec3 &pos, float rad, const std::vector<gl3::Game::Planet> &others) {
-        for (const Planet& p : others) {
-            float r = getVoxelPlanetRadius(p.scale,(CHUNK_SIZE - 1) * 0.5f );
-            float dist = glm::distance(pos, p.position);
+    bool Game::isOverlapping(const glm::vec3 &pos, float rad, const std::vector<gl3::Game::WorldPlanet> &others) {
+        for (const WorldPlanet& p : others) {
+            float r = p.radius;
+            float dist = glm::distance(pos, p.worldPos);
 
             if (dist < (rad + r)) {
                 return true;  // collision
@@ -1556,22 +1144,25 @@ namespace gl3 {
     }
 */
 
-    bool Game::hasSolidVoxels(gl3::Chunk chunk) {
-        // Single loop: check solids & collect emissive voxels
-        for(int x = 0; x < CHUNK_SIZE ; ++x) {
-            for(int y = 0; y < CHUNK_SIZE; ++y) {
-                for(int z = 0; z < CHUNK_SIZE; ++z) {
-                    if(chunk.voxels[x][y][z].isSolid()) {
-                        return true;
-                    }
-                }
+    void Game::updateWorldLighting() {
+
+        for (auto& [coord, chunk] : data->gameWorld) {
+            if (chunk.lightingDirty) {
+                rebuildChunkLights(coord.x, coord.y, coord.z);
             }
         }
+    }
+
+
+
+    bool Game::hasSolidVoxels(const gl3::Chunk& chunk) {
+        for (int x = 0; x <= CHUNK_SIZE; ++x)
+            for (int y = 0; y <= CHUNK_SIZE; ++y)
+                for (int z = 0; z <= CHUNK_SIZE; ++z)
+                    if (chunk.voxels[x][y][z].isSolid())
+                        return true;
         return false;
     }
-    void Game::simulatePhysics(const std::vector<gl3::Game::Planet> &others)
-    {
 
-    }
 
 }
