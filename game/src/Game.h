@@ -12,18 +12,17 @@
 #include <unordered_set>
 #include <unordered_map>
 #include "entities//Entity.h"
-#include "rendering/VoxelRenderer.h"
+#include "rendering/VoxelStructures.h"
 #include "rendering/SunBillboard.h"
+#include "rendering/VoxelStructures.h"
+#include "rendering/Chunk.h"
+#include "../robin_hood.h"
+#include "rendering/MultiGridChunkManager.h"
 
 namespace gl3 {
 
-    static constexpr int ChunkCount=12;
-    static constexpr int RenderingRange=50;
-
-
-    struct GameData{
-        std::unordered_map<ChunkCoord, Chunk, ChunkCoordHash> gameWorld;
-    };
+    static constexpr int ChunkCount=30;
+    static constexpr int RenderingRange=10;
 
     class Game {
     public:
@@ -34,12 +33,22 @@ namespace gl3 {
         GLFWwindow *getWindow() { return window; }
 
     private:
+
+        //std::unique_ptr<ChunkManager> chunkManager = std::make_unique<ChunkManager>(); // NEW
+
+        // Or if using MultiGridChunkManager:
+        std::unique_ptr<MultiGridChunkManager> chunkManager = std::make_unique<MultiGridChunkManager>();
         static void framebuffer_size_callback(GLFWwindow *window, int width, int height);
         void update();
         void draw();
         void updateDeltaTime();
         void updatePhysics();
         bool hasSolidVoxels(const gl3::Chunk& chunk);
+
+        glm::vec3 getChunkWorldPosition(const ChunkCoord &coord);
+        ChunkCoord worldToChunkCoord(const glm::vec3 &worldPos) const;
+        int worldToChunk(float worldPos) const;
+
         uint32_t makeLightID(int cx, int cy, int cz);
 
 
@@ -76,9 +85,8 @@ namespace gl3 {
 
 
         //Simulation-Steps
-        void updateWorldLighting();
-        void rebuildChunkLights(int cx,int cy, int cz);
-
+        //void updateWorldLighting();
+        void rebuildChunkLights(const ChunkCoord &coord);
         //Input-Steps
 
         //Post-Prod Steps?
@@ -108,7 +116,7 @@ namespace gl3 {
         GLuint ssboVoxels = 0, ssboEdgeTable = 0, ssboTriTable = 0, ssboCounter = 0, ssboTriangles = 0, particleSSBO=0, fieldBitsSSBO=0;
 
         const int MAX_LIGHTS = 4;       // matches shader
-        const float LIGHT_RADIUS = 1000.0f*CHUNK_SIZE;
+        const float LIGHT_RADIUS = 10000.0f*CHUNK_SIZE;
         const float LIGHT_RADIUS_SQ = LIGHT_RADIUS * LIGHT_RADIUS;
 
         std::unordered_set<uint32_t> usedLightIDs;
@@ -127,8 +135,6 @@ namespace gl3 {
         std::vector<WorldPlanet> fluidPlanets;
 
         std::vector<WorldPlanet> CollisionEntities;
-
-        std::unique_ptr<GameData> data = std::make_unique<GameData>();
 
         //vEffects
         SunBillboard sunBillboards;

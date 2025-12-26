@@ -13,18 +13,20 @@ file(GLOB_RECURSE SOURCE_FILES CONFIGURE_DEPENDS
         src/entities/*.h
 )
 add_executable(${EXE_FILE} ${SOURCE_FILES}
-        src/rendering/VoxelRenderer.cpp
-        src/rendering/VoxelRenderer.h
-        src/rendering/VoxelMesher.cpp
+        src/rendering/VoxelStructures.h
         src/rendering/VoxelMesher.h
         ../main.cpp
-        src/rendering/TestChunk.cpp
-        src/rendering/TestChunk.h
         src/entities/VoxelEntity.cpp
         src/entities/VoxelEntity.h
         src/rendering/marchingTables.h
         src/rendering/SunBillboard.cpp
-        src/rendering/SunBillboard.h)
+        src/rendering/SunBillboard.h
+        ../extern/robin_hood.h
+        src/rendering/MultiGridChunkManager.cpp
+        src/rendering/MultiGridChunkManager.h
+        src/rendering/ChunkManager.cpp
+        src/rendering/ChunkManager.h
+        src/rendering/Chunk.h)
 
 
 
