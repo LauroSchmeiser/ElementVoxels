@@ -22,7 +22,7 @@
 namespace gl3 {
 
     static constexpr int ChunkCount=30;
-    static constexpr int RenderingRange=14;
+    static constexpr int RenderingRange=20;
 
     class Game {
     public:

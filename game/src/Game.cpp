@@ -365,16 +365,58 @@ namespace gl3 {
 
         int renderedChunks = 0;
 
-        // Iterate through all chunks in the manager
-        // Note: In a real implementation, you'd want to get only nearby chunks
-        // For now, we'll iterate through all and cull by distance
+        // Step 1: Process emissive chunks for lighting updates and billboards
+        chunkManager->forEachEmissiveChunk([this](Chunk* chunk) {
+            // Only update lighting if dirty
+            if (chunk->lightingDirty) {
+                rebuildChunkLights(chunk->coord);
+                chunk->lightingDirty = false;
+                // IMPORTANT: Lighting changes might affect mesh (for emissive materials)
+                chunk->meshDirty = true;
+            }
 
-        // Since MultiGridChunkManager doesn't have a "get all chunks" method,
-        // we need to track chunk coordinates. Let's assume we know the world bounds.
-        // For simplicity, let's iterate through a fixed range around camera.
+            // Collect emissive lights for billboards
+            for (const auto& light : chunk->emissiveLights) {
+                if (usedLightIDs.insert(light.id).second) {
+                    SunInstance inst;
+                    inst.position = light.pos;
+                    inst.scale = std::sqrt(light.intensity) * 0.5f;
+                    inst.color = light.color * 2.5f;
+                    emissiveBillboards.push_back(inst);
+                }
+            }
+        });
 
+        // Step 2: Build light spatial index for fast lookup
+        struct GridCell {
+            int gx, gy, gz;
+            bool operator==(const GridCell& other) const {
+                return gx == other.gx && gy == other.gy && gz == other.gz;
+            }
+        };
+
+        struct GridCellHash {
+            size_t operator()(const GridCell& cell) const {
+                return ((cell.gx * 73856093) ^ (cell.gy * 19349663) ^ (cell.gz * 83492791));
+            }
+        };
+
+        std::unordered_map<GridCell, std::vector<const VoxelLight*>, GridCellHash> lightGrid;
+        const int LIGHT_GRID_SIZE = CHUNK_SIZE * 4; // Lights affect 4x4 chunk area
+
+        chunkManager->forEachEmissiveChunk([&](Chunk* chunk) {
+            for (const auto& light : chunk->emissiveLights) {
+                GridCell cell{
+                        (int)std::floor(light.pos.x / LIGHT_GRID_SIZE),
+                        (int)std::floor(light.pos.y / LIGHT_GRID_SIZE),
+                        (int)std::floor(light.pos.z / LIGHT_GRID_SIZE)
+                };
+                lightGrid[cell].push_back(&light);
+            }
+        });
+
+        // Step 3: Iterate through visible chunks
         const int renderRadius = RenderingRange;
-
 
         for (int cx = camCX - renderRadius; cx <= camCX + renderRadius; ++cx) {
             for (int cy = camCY - renderRadius; cy <= camCY + renderRadius; ++cy) {
@@ -387,81 +429,88 @@ namespace gl3 {
 
                     ChunkCoord coord{cx, cy, cz};
                     Chunk* chunk = chunkManager->getChunk(coord);
-
-                    if (!chunk || !hasSolidVoxels(*chunk)) continue;
+                    if (!chunk) continue;
 
                     glm::vec3 chunkOrigin(cx * CHUNK_SIZE, cy * CHUNK_SIZE, cz * CHUNK_SIZE);
 
-                    // Process emissive lights (fire voxels)
-                    if (chunk->lightingDirty) {
-                        rebuildChunkLights(coord);
+                    // Skip empty chunks early
+                    if (!hasSolidVoxels(*chunk)) {
+                        chunk->vertexCount = 0;
+                        continue;
                     }
 
-                    // Add billboards for emissive lights
-                    for (const auto& light : chunk->emissiveLights) {
-                        if (usedLightIDs.insert(light.id).second) {
-                            SunInstance inst;
-                            inst.position = light.pos;
-                            inst.scale = std::sqrt(light.intensity) * 0.5f; // Adjust scale
-                            inst.color = light.color * 2.5f;
-                            emissiveBillboards.push_back(inst);
-                        }
-                    }
+                    // Step 4: Collect nearby lights efficiently
+                    std::vector<const VoxelLight*> nearbyLights;
+                    nearbyLights.reserve(MAX_LIGHTS * 2);
 
-                    // Collect nearby lights for this chunk
-                    std::vector<VoxelLight> nearbyLights;
-                    nearbyLights.reserve(8);
+                    glm::vec3 chunkCenter = chunkOrigin + glm::vec3(CHUNK_SIZE * 0.5f);
 
-                    // Check neighboring chunks for lights
-                    for (int nx = -2; nx <= 2; ++nx) {
-                        for (int ny = -2; ny <= 2; ++ny) {
-                            for (int nz = -2; nz <= 2; ++nz) {
-                                ChunkCoord ncoord{cx + nx, cy + ny, cz + nz};
-                                Chunk* neighbor = chunkManager->getChunk(ncoord);
-                                if (!neighbor) continue;
+                    // Check 2x2x2 light grid cells around chunk
+                    GridCell chunkCell{
+                            (int)std::floor(chunkCenter.x / LIGHT_GRID_SIZE),
+                            (int)std::floor(chunkCenter.y / LIGHT_GRID_SIZE),
+                            (int)std::floor(chunkCenter.z / LIGHT_GRID_SIZE)
+                    };
 
-                                for (const auto& light : neighbor->emissiveLights) {
-                                    glm::vec3 d = light.pos - (chunkOrigin + glm::vec3(CHUNK_SIZE * 0.5f));
-                                    if (glm::dot(d, d) <= LIGHT_RADIUS_SQ) {
-                                        nearbyLights.push_back(light);
+                    for (int gx = -1; gx <= 1; ++gx) {
+                        for (int gy = -1; gy <= 1; ++gy) {
+                            for (int gz = -1; gz <= 1; ++gz) {
+                                GridCell checkCell{chunkCell.gx + gx, chunkCell.gy + gy, chunkCell.gz + gz};
+                                auto it = lightGrid.find(checkCell);
+                                if (it != lightGrid.end()) {
+                                    for (const VoxelLight* light : it->second) {
+                                        glm::vec3 d = light->pos - chunkCenter;
+                                        if (glm::dot(d, d) <= LIGHT_RADIUS_SQ) {
+                                            nearbyLights.push_back(light);
+                                        }
                                     }
                                 }
                             }
                         }
                     }
 
-                    // Sort by distance and limit to MAX_LIGHTS
-                    glm::vec3 chunkCenter = chunkOrigin + glm::vec3(CHUNK_SIZE * 0.5f);
+                    // Step 5: Sort and limit lights
                     std::sort(nearbyLights.begin(), nearbyLights.end(),
-                              [chunkCenter](const VoxelLight& a, const VoxelLight& b) {
-                                  return glm::dot(a.pos - chunkCenter, a.pos - chunkCenter) <
-                                         glm::dot(b.pos - chunkCenter, b.pos - chunkCenter);
+                              [chunkCenter](const VoxelLight* a, const VoxelLight* b) {
+                                  return glm::dot(a->pos - chunkCenter, a->pos - chunkCenter) <
+                                         glm::dot(b->pos - chunkCenter, b->pos - chunkCenter);
                               }
                     );
 
-                    if ((int)nearbyLights.size() > MAX_LIGHTS) {
+                    if (nearbyLights.size() > MAX_LIGHTS) {
                         nearbyLights.resize(MAX_LIGHTS);
                     }
 
-                    // Upload and render chunk geometry
+                    // Step 6: Generate mesh if needed
                     if (true) {
+                        // Upload voxel data to GPU
                         uploadVoxelChunk(*chunk, nullptr);
 
+                        // Reset counters and dispatch compute shader
                         resetAtomicCounter();
                         setComputeUniforms(chunkOrigin, glm::vec3(1.0f), *marchingCubesShader);
                         dispatchCompute();
 
+                        // Get vertex count back from GPU
                         glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
                         glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
                                            sizeof(unsigned int), &chunk->vertexCount);
 
-                        chunk->meshDirty = false;
-                        //std::cout<<"chunk was rendered";
+                        // Only clear dirty flag if we successfully generated geometry
+                        if (chunk->vertexCount > 0) {
+                            chunk->meshDirty = false;
+                        } else {
+                            // If no geometry but chunk has solid voxels, something's wrong
+                            // with density values - check your Marching Cubes threshold
+                            std::cout << "Warning: Chunk at " << cx << "," << cy << "," << cz
+                                      << " has solid voxels but generated 0 vertices\n";
+                        }
                     }
 
-                    if (chunk->vertexCount == 0)
-                        //std::cout<<"vertex count 0";
+                    // Step 7: Render if we have geometry
+                    if (chunk->vertexCount == 0) {
                         continue;
+                    }
 
                     // Setup shader
                     voxelShader->use();
@@ -470,14 +519,17 @@ namespace gl3 {
                     voxelShader->setVec3("viewPos", cameraPos);
                     voxelShader->setVec3("ambientColor", glm::vec3(0.02f));
                     voxelShader->setFloat("emission", 0.1f);
-                    int numLights=(int)std::min((int)nearbyLights.size(),MAX_LIGHTS);
-                    voxelShader->setInt("numLights", numLights);
+
+                    // Set lights
+                    voxelShader->setInt("numLights", (int)nearbyLights.size());
                     for (int i = 0; i < (int)nearbyLights.size(); ++i) {
-                        voxelShader->setVec3("lightPos[" + std::to_string(i) + "]", nearbyLights[i].pos);
-                        voxelShader->setVec3("lightColor[" + std::to_string(i) + "]", nearbyLights[i].color);
-                        voxelShader->setFloat("lightIntensity[" + std::to_string(i) + "]", nearbyLights[i].intensity);
+                        const VoxelLight* light = nearbyLights[i];
+                        voxelShader->setVec3("lightPos[" + std::to_string(i) + "]", light->pos);
+                        voxelShader->setVec3("lightColor[" + std::to_string(i) + "]", light->color);
+                        voxelShader->setFloat("lightIntensity[" + std::to_string(i) + "]", light->intensity);
                     }
 
+                    // Draw
                     drawTriangles(*voxelShader);
                     renderedChunks++;
                 }
@@ -485,10 +537,63 @@ namespace gl3 {
         }
 
         // Render billboards
-        //sunBillboards.render(emissiveBillboards, view, projection, (float)glfwGetTime());
+        if (!emissiveBillboards.empty()) {
+            sunBillboards.render(emissiveBillboards, view, projection, (float)glfwGetTime());
+        }
 
-        // Debug info
-        //std::cout << "Rendered " << renderedChunks << " chunks\n";
+        std::cout << "Rendered " << renderedChunks << " chunks\n";
+    }
+
+    void Game::buildLightSpatialHash(
+            std::unordered_map<ChunkCoord, std::vector<VoxelLight*>, ChunkCoordHash>& hash) {
+
+        chunkManager->forEachEmissiveChunk([&hash](Chunk* chunk) {
+            for (auto& light : chunk->emissiveLights) {
+                // Determine which chunk grid cell this light belongs to
+                ChunkCoord gridCell{
+                        (int)std::floor(light.pos.x / (CHUNK_SIZE * 2)),  // 2x2 chunk grid
+                        (int)std::floor(light.pos.y / (CHUNK_SIZE * 2)),
+                        (int)std::floor(light.pos.z / (CHUNK_SIZE * 2))
+                };
+                hash[gridCell].push_back(&light);
+            }
+        });
+    }
+
+    std::vector<VoxelLight*> Game::collectNearbyLightsFast(
+            const ChunkCoord& chunkCoord,
+            const glm::vec3& chunkOrigin,
+            const std::unordered_map<ChunkCoord, std::vector<VoxelLight*>, ChunkCoordHash>& hash) {
+
+        std::vector<VoxelLight*> result;
+        result.reserve(MAX_LIGHTS * 8); // Reserve enough space
+
+        glm::vec3 chunkCenter = chunkOrigin + glm::vec3(CHUNK_SIZE * 0.5f);
+
+        // Check 3x3x3 grid cells around the chunk
+        for (int gx = -1; gx <= 1; ++gx) {
+            for (int gy = -1; gy <= 1; ++gy) {
+                for (int gz = -1; gz <= 1; ++gz) {
+                    ChunkCoord gridCell{
+                            chunkCoord.x / 2 + gx,
+                            chunkCoord.y / 2 + gy,
+                            chunkCoord.z / 2 + gz
+                    };
+
+                    auto it = hash.find(gridCell);
+                    if (it != hash.end()) {
+                        for (VoxelLight* light : it->second) {
+                            glm::vec3 d = light->pos - chunkCenter;
+                            if (glm::dot(d, d) <= LIGHT_RADIUS_SQ) {
+                                result.push_back(light);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return result;
     }
 
     void Game::processEmissiveChunks() {
@@ -778,10 +883,22 @@ namespace gl3 {
             glfwSetWindowShouldClose(window, true);
         }
 
-        for(auto &entity: entities) {
-            entity->update(this, deltaTime);
+            // Update lighting only for dirty chunks
+            chunkManager->forEachEmissiveChunk([this](Chunk *chunk) {
+                if (chunk->lightingDirty) {
+                    rebuildChunkLights(chunk->coord);
+                }
+            });
 
-        }
+            // Update dynamic chunks
+            // chunkManager->forEachDynamicChunk([this](Chunk* chunk) {
+            // Physics, animation, etc.
+            //});
+
+            // Update fluid chunks
+            //chunkManager->forEachFluidChunk([this](Chunk* chunk) {
+            // Fluid simulation
+            //});
     }
 
 
