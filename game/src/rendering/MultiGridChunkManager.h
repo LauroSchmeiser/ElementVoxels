@@ -172,6 +172,7 @@ namespace gl3 {
             // In a real implementation, you'd need to track which category each chunk is in
             // For simplicity, we'll just clear and rebuild lists when changing categories
             // This is OK if category changes are infrequent
+
         }
     };
 }

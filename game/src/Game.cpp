@@ -237,7 +237,7 @@ namespace gl3 {
         std::uniform_real_distribution<float> lavaDistColorG(0.2f, 0.5f);
         std::uniform_real_distribution<float> lavaDistColorB(0.0f, 0.1f);
 
-        int lavaCount = 2 + (rng() % 2);
+        int lavaCount = 2   + (rng() % 2);
         for (int i = 0; i < lavaCount; ++i) {
             WorldPlanet p;
             p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
@@ -375,6 +375,7 @@ namespace gl3 {
 
         const int renderRadius = RenderingRange;
 
+
         for (int cx = camCX - renderRadius; cx <= camCX + renderRadius; ++cx) {
             for (int cy = camCY - renderRadius; cy <= camCY + renderRadius; ++cy) {
                 for (int cz = camCZ - renderRadius; cz <= camCZ + renderRadius; ++cz) {
@@ -468,7 +469,7 @@ namespace gl3 {
                     voxelShader->setMatrix("mvp", pv);
                     voxelShader->setVec3("viewPos", cameraPos);
                     voxelShader->setVec3("ambientColor", glm::vec3(0.02f));
-                    voxelShader->setFloat("emission", 1.0f);
+                    voxelShader->setFloat("emission", 0.1f);
                     int numLights=(int)std::min((int)nearbyLights.size(),MAX_LIGHTS);
                     voxelShader->setInt("numLights", numLights);
                     for (int i = 0; i < (int)nearbyLights.size(); ++i) {
@@ -487,7 +488,27 @@ namespace gl3 {
         //sunBillboards.render(emissiveBillboards, view, projection, (float)glfwGetTime());
 
         // Debug info
-        std::cout << "Rendered " << renderedChunks << " chunks\n";
+        //std::cout << "Rendered " << renderedChunks << " chunks\n";
+    }
+
+    void Game::processEmissiveChunks() {
+        chunkManager->forEachEmissiveChunk([this](Chunk* chunk) {
+            // Process only emissive chunks
+            if (chunk->lightingDirty) {
+                rebuildChunkLights(chunk->coord);
+            }
+
+            // Collect emissive lights for billboards
+            for (const auto& light : chunk->emissiveLights) {
+                if (usedLightIDs.insert(light.id).second) {
+                    SunInstance inst;
+                    inst.position = light.pos;
+                    inst.scale = std::sqrt(light.intensity) * 0.5f;
+                    inst.color = light.color * 2.5f;
+                    emissiveBillboards.push_back(inst);
+                }
+            }
+        });
     }
 
         int Game::worldToChunk(float worldPos) const {
@@ -860,9 +881,9 @@ namespace gl3 {
         for(int x=0;x<=CHUNK_SIZE;x++) {
             for(int y=0;y<=CHUNK_SIZE;y++) {
                 for(int z=0;z<=CHUNK_SIZE;z++) {
-                    int sx = std::min(x, CHUNK_SIZE - 1);
-                    int sy = std::min(y, CHUNK_SIZE - 1);
-                    int sz = std::min(z, CHUNK_SIZE - 1);
+                    int sx = std::min(x, CHUNK_SIZE+1 );
+                    int sy = std::min(y, CHUNK_SIZE+1 );
+                    int sz = std::min(z, CHUNK_SIZE+1 );
 
                     const auto &v = chunk.voxels[sx][sy][sz];
                     int idx = x + y * DIM + z * DIM * DIM;

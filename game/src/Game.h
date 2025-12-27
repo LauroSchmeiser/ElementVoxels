@@ -22,7 +22,7 @@
 namespace gl3 {
 
     static constexpr int ChunkCount=30;
-    static constexpr int RenderingRange=10;
+    static constexpr int RenderingRange=14;
 
     class Game {
     public:
@@ -87,12 +87,19 @@ namespace gl3 {
         //Simulation-Steps
         //void updateWorldLighting();
         void rebuildChunkLights(const ChunkCoord &coord);
+        std::vector<VoxelLight*> collectNearbyLightsFast(
+                const ChunkCoord& chunkCoord,
+                const glm::vec3& chunkOrigin,
+                const std::unordered_map<ChunkCoord, std::vector<VoxelLight*>, ChunkCoordHash>& hash);
+        void buildLightSpatialHash(
+                std::unordered_map<ChunkCoord, std::vector<VoxelLight*>, ChunkCoordHash>& hash);
         //Input-Steps
 
         //Post-Prod Steps?
 
         //Rendering-Steps
         void renderChunks();
+        void processEmissiveChunks();
         void renderSuns();
         void renderPlanets();
         void renderFluidPlanets();
@@ -104,7 +111,7 @@ namespace gl3 {
         std::unique_ptr<SoLoud::Wav> backgroundMusic;
         float lastFrameTime = 1.0f/60;
         float deltaTime = 1.0f/60;
-        float accumulator = 0.f;
+        float accumulator = 0.1f;
         glm::vec3 cameraPos = glm::vec3(0.0f, 0.0f, 50.0f);
         glm::vec2 cameraRotation = glm::vec2(-90.0f, 0.0f); // pitch, yaw
         int windowWidth = 800, windowHeight = 600;
