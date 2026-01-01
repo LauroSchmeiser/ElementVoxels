@@ -1,34 +1,64 @@
 // In Chunk.h
 #pragma once
 
-#include "VoxelStructures.h"
 #include <vector>
 #include <glad/glad.h>
 
 namespace gl3 {
     struct Chunk {
-        // Core voxel data (CHUNK_SIZE + 2)^3 for padding
+        // Core voxel data
         Voxel voxels[CHUNK_SIZE + 2][CHUNK_SIZE + 2][CHUNK_SIZE + 2];
 
-        // Additional data
+        // Lighting data
         std::vector<VoxelLight> emissiveLights;
-        bool meshDirty = true;
         bool lightingDirty = true;
+
+        // Mesh data
         ChunkCoord coord;
-        uint32_t vertexCount = 0;
+        bool meshDirty = true;
+
+        // GPU CACHE - stored with the chunk!
+        struct GPUCache {
+            GLuint vao = 0;
+            GLuint vbo = 0;
+            GLuint triangleSSBO = 0; // <-- ADD THIS: Each chunk gets its own SSBO for triangles
+            uint32_t vertexCount = 0;
+            bool isValid = false;
+            uint64_t lastLightUpdateFrame = 0;
+            std::vector<VoxelLight*> nearbyLights; // Pointers to other chunks' lights
+        } gpuCache;
 
         // Helper methods
         void clear() {
-            // Initialize all voxels to air
             for (int x = 0; x < CHUNK_SIZE + 2; ++x) {
                 for (int y = 0; y < CHUNK_SIZE + 2; ++y) {
                     for (int z = 0; z < CHUNK_SIZE + 2; ++z) {
-                        voxels[x][y][z].type = 0; // Air
-                        voxels[x][y][z].density = -1000.0f; // Far outside
+                        voxels[x][y][z].type = 0;
+                        voxels[x][y][z].density = -1000.0f;
                         voxels[x][y][z].color = glm::vec3(0.0f);
                     }
                 }
             }
+
+            // Clean up GPU resources if they exist
+            if (gpuCache.vao != 0) {
+                glDeleteVertexArrays(1, &gpuCache.vao);
+                glDeleteBuffers(1, &gpuCache.vbo);
+                gpuCache.vao = 0;
+                gpuCache.vbo = 0;
+            }
+
+            if (gpuCache.triangleSSBO != 0) {
+                glDeleteBuffers(1, &gpuCache.triangleSSBO);
+                gpuCache.triangleSSBO = 0;
+            }
+
+            gpuCache.vertexCount = 0;
+            gpuCache.isValid = false;
+            gpuCache.nearbyLights.clear();
+            emissiveLights.clear();
+            meshDirty = true;
+            lightingDirty = true;
         }
     };
 }

@@ -22,7 +22,7 @@
 namespace gl3 {
 
     static constexpr int ChunkCount=30;
-    static constexpr int RenderingRange=20;
+    static constexpr int RenderingRange=50;
 
     class Game {
     public:
@@ -50,6 +50,33 @@ namespace gl3 {
         int worldToChunk(float worldPos) const;
 
         uint32_t makeLightID(int cx, int cy, int cz);
+        void markChunkModified(const ChunkCoord& coord);
+        void unloadChunk(const ChunkCoord& coord);
+        void updateChunkLights(Chunk* chunk);
+        void updateGlobalLightGrid();
+        void generateChunkMesh(Chunk* chunk);
+
+        // Frame counter for light update staggering
+        uint64_t frameCounter = 0;
+        const uint64_t LIGHT_UPDATE_INTERVAL = 10; // Update lights every 10 frames
+
+        // Global light spatial index (updated infrequently)
+        struct GridCell {
+            int gx, gy, gz;
+            bool operator==(const GridCell& other) const {
+                return gx == other.gx && gy == other.gy && gz == other.gz;
+            }
+        };
+
+        struct GridCellHash {
+            size_t operator()(const GridCell& cell) const {
+                return ((cell.gx * 73856093) ^ (cell.gy * 19349663) ^ (cell.gz * 83492791));
+            }
+        };
+
+        std::unordered_map<GridCell, std::vector<const VoxelLight*>, GridCellHash> globalLightGrid;
+        uint64_t lastGlobalLightGridUpdate = 0;
+
 
 
             // --- Generate planet transforms ---
@@ -66,7 +93,7 @@ namespace gl3 {
         void uploadVoxelChunk(const Chunk& chunk, const glm::vec3* overrideColor = nullptr);
         void resetAtomicCounter();
         void setComputeUniforms(const glm::vec3& position, const glm::vec3& objectScale, Shader& computeShader);
-        void dispatchCompute();
+        void dispatchCompute(Chunk* chunk);
         void drawTriangles(Shader& voxelShader);
 
         void handleCameraInput();

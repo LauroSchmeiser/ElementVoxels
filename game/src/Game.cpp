@@ -214,14 +214,14 @@ namespace gl3 {
     void Game::generateChunks() {
         std::mt19937 rng(std::random_device{}());
 
-        std::uniform_real_distribution<float> distPos(-100.0f, 100.0f);
+        std::uniform_real_distribution<float> distPos(-RenderingRange*10, RenderingRange*10); // Reduced range
         std::uniform_real_distribution<float> distScale(0.5f, 3.0f);
         std::uniform_real_distribution<float> distColor(0.3f, 1.0f);
 
         std::vector<WorldPlanet> worldPlanets;
 
         // Create solid planets (type 1)
-        int planetCount = 5;
+        int planetCount = 20;
         for (int i = 0; i < planetCount; ++i) {
             WorldPlanet p;
             p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
@@ -229,7 +229,6 @@ namespace gl3 {
             p.color = glm::vec3(distColor(rng), distColor(rng), distColor(rng));
             p.type = 1; // solid
             worldPlanets.push_back(p);
-
         }
 
         // Create suns (type 2 - fire)
@@ -237,7 +236,7 @@ namespace gl3 {
         std::uniform_real_distribution<float> lavaDistColorG(0.2f, 0.5f);
         std::uniform_real_distribution<float> lavaDistColorB(0.0f, 0.1f);
 
-        int lavaCount = 2   + (rng() % 2);
+        int lavaCount = 2 + (rng() % 2);
         for (int i = 0; i < lavaCount; ++i) {
             WorldPlanet p;
             p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
@@ -266,6 +265,9 @@ namespace gl3 {
         size_t solidVoxels = 0;
         size_t touchedChunks = 0;
 
+        // DEBUG: Track how many chunks we create
+        std::unordered_set<ChunkCoord, ChunkCoordHash> createdChunks;
+
         for (const auto& planet : worldPlanets) {
             // Determine which chunks this planet affects
             int minCX = worldToChunk(planet.worldPos.x - planet.radius);
@@ -292,6 +294,13 @@ namespace gl3 {
                             }
                             chunkManager->addChunk(coord, category);
                             chunk = chunkManager->getChunk(coord);
+
+                            if (chunk) {
+                                // Initialize the chunk if newly created
+                                chunk->coord = coord;
+                                chunk->clear(); // IMPORTANT: Initialize all densities to -1000
+                                createdChunks.insert(coord);
+                            }
                         }
 
                         if (!chunk) continue;
@@ -299,23 +308,35 @@ namespace gl3 {
                         glm::vec3 chunkOrigin(cx * CHUNK_SIZE, cy * CHUNK_SIZE, cz * CHUNK_SIZE);
                         bool chunkTouched = false;
 
-                        // Carve sphere into chunk
+                        // Carve sphere into chunk - FIXED: Use SDF union operation
                         for (int lx = 0; lx <= CHUNK_SIZE; ++lx) {
                             for (int ly = 0; ly <= CHUNK_SIZE; ++ly) {
                                 for (int lz = 0; lz <= CHUNK_SIZE; ++lz) {
                                     glm::vec3 worldPos = chunkOrigin + glm::vec3(lx, ly, lz);
                                     float dist = glm::distance(worldPos, planet.worldPos);
 
-                                    // Signed distance field: positive outside, negative inside
-                                    // IMPORTANT: Always set density, not just inside sphere!
-                                    chunk->voxels[lx][ly][lz].density = planet.radius - dist;
+                                    // Calculate this planet's SDF value
+                                    float planetDensity = planet.radius - dist; // Positive inside, negative outside
 
-                                    // Only set type if inside or near surface
-                                    if (dist <= planet.radius + 1.0f) { // Slightly beyond radius for surface
-                                        chunk->voxels[lx][ly][lz].type = planet.type;
-                                        chunk->voxels[lx][ly][lz].color = planet.color;
-                                        chunkTouched = true;
-                                        solidVoxels++;
+                                    // Get existing density (initialized to -1000 for air)
+                                    float existingDensity = chunk->voxels[lx][ly][lz].density;
+
+                                    // SDF UNION: Take the MAXIMUM density (most solid)
+                                    // For Marching Cubes, positive = inside, negative = outside
+                                    if (planetDensity > existingDensity) {
+                                        // This planet is "more solid" at this point
+                                        chunk->voxels[lx][ly][lz].density = planetDensity;
+
+                                        // Set type and color if we're inside or near the surface
+                                        if (planetDensity >= -1.0f) { // Near the isosurface (density ~0)
+                                            chunk->voxels[lx][ly][lz].type = planet.type;
+                                            chunk->voxels[lx][ly][lz].color = planet.color;
+
+                                            if (planetDensity >= 0) { // Actually inside the solid
+                                                solidVoxels++;
+                                                chunkTouched = true;
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -341,10 +362,143 @@ namespace gl3 {
         std::cout << "Touched " << touchedChunks << " chunks\n";
         std::cout << "Created " << solidVoxels << " solid voxels\n";
     }
-
-
     void Game::setupVEffects() {
         sunBillboards.init(12); // maxInstances, adjust based on max expected suns
+
+    }
+
+    void Game::generateChunkMesh(Chunk* chunk) {
+        // Clean up old GPU resources if they exist
+        if (chunk->gpuCache.vao != 0) {
+            glDeleteVertexArrays(1, &chunk->gpuCache.vao);
+            glDeleteBuffers(1, &chunk->gpuCache.vbo);
+            chunk->gpuCache.vao = 0;
+            chunk->gpuCache.vbo = 0;
+        }
+
+        if (chunk->gpuCache.triangleSSBO != 0) {
+            glDeleteBuffers(1, &chunk->gpuCache.triangleSSBO);
+            chunk->gpuCache.triangleSSBO = 0;
+        }
+
+        glm::vec3 chunkOrigin(
+                chunk->coord.x * CHUNK_SIZE,
+                chunk->coord.y * CHUNK_SIZE,
+                chunk->coord.z * CHUNK_SIZE
+        );
+
+        // DEBUG: Check if chunk has any solid voxels
+        bool hasSolid = false;
+        for (int x = 1; x <= CHUNK_SIZE; ++x) {
+            for (int y = 1; y <= CHUNK_SIZE; ++y) {
+                for (int z = 1; z <= CHUNK_SIZE; ++z) {
+                    if (chunk->voxels[x][y][z].type != 0) {
+                        hasSolid = true;
+
+                    }
+                }
+            }
+        }
+
+        // PHASE 1: Use COMPUTE SHADER to generate mesh
+        marchingCubesShader->use();  // Activate compute shader
+
+        // Upload voxel data to SSBOs
+        uploadVoxelChunk(*chunk, nullptr);
+
+        // Set compute shader uniforms
+        resetAtomicCounter();
+        setComputeUniforms(chunkOrigin, glm::vec3(1.0f), *marchingCubesShader);
+
+        // Create per-chunk triangle SSBO
+        const size_t maxVertices = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5 * 3;
+        const size_t triangleBufferSize = maxVertices * sizeof(OutVertex);
+
+        glGenBuffers(1, &chunk->gpuCache.triangleSSBO);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, chunk->gpuCache.triangleSSBO);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, triangleBufferSize, nullptr, GL_DYNAMIC_DRAW);
+
+
+
+        // DEBUG: Check compute shader uniform locations
+        GLint gridOriginLoc = glGetUniformLocation(marchingCubesShader->getProgramID(), "gridOrigin");
+        GLint voxelSizeLoc = glGetUniformLocation(marchingCubesShader->getProgramID(), "voxelSize");
+        GLint voxelGridDimLoc = glGetUniformLocation(marchingCubesShader->getProgramID(), "voxelGridDim");
+
+
+
+        // Bind SSBOs for compute shader
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssboVoxels);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ssboEdgeTable);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, ssboTriTable);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, ssboCounter);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, chunk->gpuCache.triangleSSBO);
+
+        // DEBUG: Print SSBO bindings
+        GLint boundSSBOs[5];
+        for (int i = 0; i < 5; i++) {
+            glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, i, &boundSSBOs[i]);
+        }
+
+        // Dispatch compute work
+        int groups = (CHUNK_SIZE - 1 + 7) / 8;
+
+
+        glDispatchCompute(groups, groups, groups);
+
+        // Wait for compute shader to finish
+        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT);
+
+        // Get vertex count
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
+        unsigned int vertexCount = 0;
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(unsigned int), &vertexCount);
+        chunk->gpuCache.vertexCount = vertexCount;
+
+// Actually, let's verify by reading the first few vertices from the SSBO
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, chunk->gpuCache.triangleSSBO);
+        OutVertex* mapped = (OutVertex*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0,
+                                                         std::min(vertexCount, 6U) * sizeof(OutVertex), GL_MAP_READ_BIT);
+        if (mapped) {
+            glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+        }
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        // PHASE 2: Create VAO/VBO for the generated vertices
+        glGenVertexArrays(1, &chunk->gpuCache.vao);
+        glGenBuffers(1, &chunk->gpuCache.vbo);
+
+        glBindVertexArray(chunk->gpuCache.vao);
+
+        // Use the SSBO as the VBO
+        glBindBuffer(GL_ARRAY_BUFFER, chunk->gpuCache.triangleSSBO);
+
+        // DEBUG: Check buffer size
+        GLint bufferSize;
+        glGetBufferParameteriv(GL_ARRAY_BUFFER, GL_BUFFER_SIZE, &bufferSize);
+
+
+        // Set vertex attributes
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, sizeof(OutVertex),
+                              (void*)offsetof(OutVertex, pos));
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(OutVertex),
+                              (void*)offsetof(OutVertex, normal));
+        glEnableVertexAttribArray(2);
+        glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(OutVertex),
+                              (void*)offsetof(OutVertex, color));
+
+        // DEBUG: Check vertex attribute setup
+        GLint attribEnabled[3];
+        for (int i = 0; i < 3; i++) {
+            glGetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_ENABLED, &attribEnabled[i]);
+        }
+
+        glBindVertexArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+        chunk->gpuCache.isValid = true;
+        chunk->meshDirty = false;
 
     }
 
@@ -354,6 +508,9 @@ namespace gl3 {
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), glm::vec3(0.0f, 1.0f, 0.0f));
         glm::mat4 pv = projection * view;
 
+        frameCounter++;
+
+        // Clear per-frame billboards
         emissiveBillboards.clear();
         usedLightIDs.clear();
 
@@ -364,18 +521,23 @@ namespace gl3 {
         const int R2 = RenderingRange * RenderingRange;
 
         int renderedChunks = 0;
+        int meshRegens = 0;
 
-        // Step 1: Process emissive chunks for lighting updates and billboards
+        // STEP 1: Update global light grid every 60 frames (infrequent)
+        if (frameCounter - lastGlobalLightGridUpdate > 60) {
+            updateGlobalLightGrid();
+            lastGlobalLightGridUpdate = frameCounter;
+        }
+
+        // STEP 2: Process emissive chunks for billboards
         chunkManager->forEachEmissiveChunk([this](Chunk* chunk) {
-            // Only update lighting if dirty
             if (chunk->lightingDirty) {
                 rebuildChunkLights(chunk->coord);
                 chunk->lightingDirty = false;
-                // IMPORTANT: Lighting changes might affect mesh (for emissive materials)
-                chunk->meshDirty = true;
+                chunk->meshDirty = true; // Mark mesh as dirty since lighting changed
             }
 
-            // Collect emissive lights for billboards
+            // Collect billboards
             for (const auto& light : chunk->emissiveLights) {
                 if (usedLightIDs.insert(light.id).second) {
                     SunInstance inst;
@@ -387,36 +549,44 @@ namespace gl3 {
             }
         });
 
-        // Step 2: Build light spatial index for fast lookup
-        struct GridCell {
-            int gx, gy, gz;
-            bool operator==(const GridCell& other) const {
-                return gx == other.gx && gy == other.gy && gz == other.gz;
-            }
-        };
-
-        struct GridCellHash {
-            size_t operator()(const GridCell& cell) const {
-                return ((cell.gx * 73856093) ^ (cell.gy * 19349663) ^ (cell.gz * 83492791));
-            }
-        };
-
-        std::unordered_map<GridCell, std::vector<const VoxelLight*>, GridCellHash> lightGrid;
-        const int LIGHT_GRID_SIZE = CHUNK_SIZE * 4; // Lights affect 4x4 chunk area
-
-        chunkManager->forEachEmissiveChunk([&](Chunk* chunk) {
-            for (const auto& light : chunk->emissiveLights) {
-                GridCell cell{
-                        (int)std::floor(light.pos.x / LIGHT_GRID_SIZE),
-                        (int)std::floor(light.pos.y / LIGHT_GRID_SIZE),
-                        (int)std::floor(light.pos.z / LIGHT_GRID_SIZE)
-                };
-                lightGrid[cell].push_back(&light);
-            }
-        });
-
-        // Step 3: Iterate through visible chunks
         const int renderRadius = RenderingRange;
+
+        // STEP 3: First, generate meshes for dirty chunks
+        //std::cout << "Camera at chunk: " << camCX << "," << camCY << "," << camCZ << std::endl;
+
+        for (int cx = camCX - renderRadius; cx <= camCX + renderRadius; ++cx) {
+            for (int cy = camCY - renderRadius; cy <= camCY + renderRadius; ++cy) {
+                for (int cz = camCZ - renderRadius; cz <= camCZ + renderRadius; ++cz) {
+                    // Distance culling
+                    int dx = cx - camCX;
+                    int dy = cy - camCY;
+                    int dz = cz - camCZ;
+                    if (dx*dx + dy*dy + dz*dz > R2) continue;
+
+                    ChunkCoord coord{cx, cy, cz};
+
+                    Chunk* chunk = chunkManager->getChunk(coord);
+
+                    if (!chunk) {
+                        continue;
+                    }
+
+                    if (chunk->meshDirty || !chunk->gpuCache.isValid) {
+                        generateChunkMesh(chunk);
+                        meshRegens++;
+                    }
+                }
+            }
+        }
+
+        // STEP 4: Now RENDER all visible chunks
+        voxelShader->use();  // Activate RENDER shader
+
+        // Set common uniforms that don't change per chunk
+        voxelShader->setMatrix("mvp", pv);
+        voxelShader->setVec3("viewPos", cameraPos);
+        voxelShader->setVec3("ambientColor", glm::vec3(0.22f));
+        voxelShader->setFloat("emission", 1.0f);
 
         for (int cx = camCX - renderRadius; cx <= camCX + renderRadius; ++cx) {
             for (int cy = camCY - renderRadius; cy <= camCY + renderRadius; ++cy) {
@@ -429,108 +599,35 @@ namespace gl3 {
 
                     ChunkCoord coord{cx, cy, cz};
                     Chunk* chunk = chunkManager->getChunk(coord);
-                    if (!chunk) continue;
+                    if (!chunk || !hasSolidVoxels(*chunk)) continue;
 
-                    glm::vec3 chunkOrigin(cx * CHUNK_SIZE, cy * CHUNK_SIZE, cz * CHUNK_SIZE);
-
-                    // Skip empty chunks early
-                    if (!hasSolidVoxels(*chunk)) {
-                        chunk->vertexCount = 0;
+                    // Skip if no geometry
+                    if (chunk->gpuCache.vertexCount == 0 || !chunk->gpuCache.isValid) {
+                        //std::cout<<"no geometry saved, error";
                         continue;
                     }
 
-                    // Step 4: Collect nearby lights efficiently
-                    std::vector<const VoxelLight*> nearbyLights;
-                    nearbyLights.reserve(MAX_LIGHTS * 2);
-
-                    glm::vec3 chunkCenter = chunkOrigin + glm::vec3(CHUNK_SIZE * 0.5f);
-
-                    // Check 2x2x2 light grid cells around chunk
-                    GridCell chunkCell{
-                            (int)std::floor(chunkCenter.x / LIGHT_GRID_SIZE),
-                            (int)std::floor(chunkCenter.y / LIGHT_GRID_SIZE),
-                            (int)std::floor(chunkCenter.z / LIGHT_GRID_SIZE)
-                    };
-
-                    for (int gx = -1; gx <= 1; ++gx) {
-                        for (int gy = -1; gy <= 1; ++gy) {
-                            for (int gz = -1; gz <= 1; ++gz) {
-                                GridCell checkCell{chunkCell.gx + gx, chunkCell.gy + gy, chunkCell.gz + gz};
-                                auto it = lightGrid.find(checkCell);
-                                if (it != lightGrid.end()) {
-                                    for (const VoxelLight* light : it->second) {
-                                        glm::vec3 d = light->pos - chunkCenter;
-                                        if (glm::dot(d, d) <= LIGHT_RADIUS_SQ) {
-                                            nearbyLights.push_back(light);
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                    // Update lights if needed
+                    if (frameCounter - chunk->gpuCache.lastLightUpdateFrame > LIGHT_UPDATE_INTERVAL ||
+                        chunk->gpuCache.nearbyLights.empty()) {
+                        updateChunkLights(chunk);
                     }
 
-                    // Step 5: Sort and limit lights
-                    std::sort(nearbyLights.begin(), nearbyLights.end(),
-                              [chunkCenter](const VoxelLight* a, const VoxelLight* b) {
-                                  return glm::dot(a->pos - chunkCenter, a->pos - chunkCenter) <
-                                         glm::dot(b->pos - chunkCenter, b->pos - chunkCenter);
-                              }
-                    );
-
-                    if (nearbyLights.size() > MAX_LIGHTS) {
-                        nearbyLights.resize(MAX_LIGHTS);
-                    }
-
-                    // Step 6: Generate mesh if needed
-                    if (true) {
-                        // Upload voxel data to GPU
-                        uploadVoxelChunk(*chunk, nullptr);
-
-                        // Reset counters and dispatch compute shader
-                        resetAtomicCounter();
-                        setComputeUniforms(chunkOrigin, glm::vec3(1.0f), *marchingCubesShader);
-                        dispatchCompute();
-
-                        // Get vertex count back from GPU
-                        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
-                        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
-                                           sizeof(unsigned int), &chunk->vertexCount);
-
-                        // Only clear dirty flag if we successfully generated geometry
-                        if (chunk->vertexCount > 0) {
-                            chunk->meshDirty = false;
-                        } else {
-                            // If no geometry but chunk has solid voxels, something's wrong
-                            // with density values - check your Marching Cubes threshold
-                            std::cout << "Warning: Chunk at " << cx << "," << cy << "," << cz
-                                      << " has solid voxels but generated 0 vertices\n";
-                        }
-                    }
-
-                    // Step 7: Render if we have geometry
-                    if (chunk->vertexCount == 0) {
-                        continue;
-                    }
-
-                    // Setup shader
-                    voxelShader->use();
-                    voxelShader->setMatrix("model", glm::mat4(1.0f));
-                    voxelShader->setMatrix("mvp", pv);
-                    voxelShader->setVec3("viewPos", cameraPos);
-                    voxelShader->setVec3("ambientColor", glm::vec3(0.02f));
-                    voxelShader->setFloat("emission", 0.1f);
-
-                    // Set lights
-                    voxelShader->setInt("numLights", (int)nearbyLights.size());
-                    for (int i = 0; i < (int)nearbyLights.size(); ++i) {
-                        const VoxelLight* light = nearbyLights[i];
+                    // Set per-chunk uniforms (lights)
+                    voxelShader->setInt("numLights", (int)chunk->gpuCache.nearbyLights.size());
+                    for (int i = 0; i < (int)chunk->gpuCache.nearbyLights.size(); ++i) {
+                        const VoxelLight* light = chunk->gpuCache.nearbyLights[i];
                         voxelShader->setVec3("lightPos[" + std::to_string(i) + "]", light->pos);
                         voxelShader->setVec3("lightColor[" + std::to_string(i) + "]", light->color);
                         voxelShader->setFloat("lightIntensity[" + std::to_string(i) + "]", light->intensity);
                     }
 
-                    // Draw
-                    drawTriangles(*voxelShader);
+                    // Draw from chunk's VAO (which uses the SSBO as VBO)
+                    glBindVertexArray(chunk->gpuCache.vao);
+                    //drawTriangles(*voxelShader);
+                    glDrawArrays(GL_TRIANGLES, 0, chunk->gpuCache.vertexCount);
+                    glBindVertexArray(0);
+
                     renderedChunks++;
                 }
             }
@@ -538,10 +635,103 @@ namespace gl3 {
 
         // Render billboards
         if (!emissiveBillboards.empty()) {
-            sunBillboards.render(emissiveBillboards, view, projection, (float)glfwGetTime());
+           // sunBillboards.render(emissiveBillboards, view, projection, (float)glfwGetTime());
         }
 
-        std::cout << "Rendered " << renderedChunks << " chunks\n";
+       std::cout << "Rendered " << renderedChunks << " chunks (Regenerated: " << meshRegens << ")\n";
+    }
+
+    void Game::updateGlobalLightGrid() {
+        globalLightGrid.clear();
+
+        chunkManager->forEachEmissiveChunk([this](Chunk* chunk) {
+            for (const auto& light : chunk->emissiveLights) {
+                GridCell cell{
+                        (int)std::floor(light.pos.x / (CHUNK_SIZE * 4)),
+                        (int)std::floor(light.pos.y / (CHUNK_SIZE * 4)),
+                        (int)std::floor(light.pos.z / (CHUNK_SIZE * 4))
+                };
+                globalLightGrid[cell].push_back(&light);
+            }
+        });
+    }
+
+    void Game::updateChunkLights(Chunk* chunk) {
+        chunk->gpuCache.nearbyLights.clear();
+
+        glm::vec3 chunkOrigin(
+                chunk->coord.x * CHUNK_SIZE,
+                chunk->coord.y * CHUNK_SIZE,
+                chunk->coord.z * CHUNK_SIZE
+        );
+        glm::vec3 chunkCenter = chunkOrigin + glm::vec3(CHUNK_SIZE * 0.5f);
+
+        GridCell chunkCell{
+                (int)std::floor(chunkCenter.x / (CHUNK_SIZE * 4)),
+                (int)std::floor(chunkCenter.y / (CHUNK_SIZE * 4)),
+                (int)std::floor(chunkCenter.z / (CHUNK_SIZE * 4))
+        };
+
+        // Check 3x3x3 grid cells around chunk
+        for (int gx = -1; gx <= 1; ++gx) {
+            for (int gy = -1; gy <= 1; ++gy) {
+                for (int gz = -1; gz <= 1; ++gz) {
+                    GridCell checkCell{chunkCell.gx + gx, chunkCell.gy + gy, chunkCell.gz + gz};
+                    auto it = globalLightGrid.find(checkCell);
+                    if (it != globalLightGrid.end()) {
+                        for (const VoxelLight* light : it->second) {
+                            glm::vec3 d = light->pos - chunkCenter;
+                            if (glm::dot(d, d) <= LIGHT_RADIUS_SQ) {
+                                chunk->gpuCache.nearbyLights.push_back(const_cast<VoxelLight*>(light));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Sort and limit
+        std::sort(chunk->gpuCache.nearbyLights.begin(), chunk->gpuCache.nearbyLights.end(),
+                  [chunkCenter](const VoxelLight* a, const VoxelLight* b) {
+                      return glm::dot(a->pos - chunkCenter, a->pos - chunkCenter) <
+                             glm::dot(b->pos - chunkCenter, b->pos - chunkCenter);
+                  }
+        );
+
+        if (chunk->gpuCache.nearbyLights.size() > MAX_LIGHTS) {
+            chunk->gpuCache.nearbyLights.resize(MAX_LIGHTS);
+        }
+
+        chunk->gpuCache.lastLightUpdateFrame = frameCounter;
+    }
+
+
+    void Game::markChunkModified(const ChunkCoord& coord) {
+        Chunk* chunk = chunkManager->getChunk(coord);
+        if (chunk) {
+            chunk->meshDirty = true;
+
+            // Also mark neighboring chunks because Marching Cubes needs padding
+            for (int dx = -1; dx <= 1; ++dx) {
+                for (int dy = -1; dy <= 1; ++dy) {
+                    for (int dz = -1; dz <= 1; ++dz) {
+                        ChunkCoord neighbor{coord.x + dx, coord.y + dy, coord.z + dz};
+                        Chunk* neighborChunk = chunkManager->getChunk(neighbor);
+                        if (neighborChunk) {
+                            neighborChunk->meshDirty = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    void Game::unloadChunk(const ChunkCoord& coord) {
+        Chunk* chunk = chunkManager->getChunk(coord);
+        if (chunk) {
+            // GPU resources get cleaned up in chunk destructor or clear() method
+            chunk->clear(); // This deletes VAO/VBO
+        }
     }
 
     void Game::buildLightSpatialHash(
@@ -834,13 +1024,8 @@ namespace gl3 {
         marchingCubesShader->setVec3("gridOrigin", planet.worldPos - 0.5f * glm::vec3(GRID_X,GRID_Y,GRID_Z));
         marchingCubesShader->setFloat("voxelSize", 0.25f);
 
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, fieldBitsSSBO);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, ssboTriangles);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, ssboCounter);
-
         resetAtomicCounter();
-        dispatchCompute();
-        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT);
+        //dispatchCompute();
 
         // -------------------------
         // Lighting (no emission)
@@ -1041,19 +1226,17 @@ namespace gl3 {
     }
 
 
-    void Game::dispatchCompute()
-    {
-        int groups = (CHUNK_SIZE - 1 + 7) / 8; // local_size = 8 in compute shader
+    void Game::dispatchCompute(Chunk* chunk) {
+        int groups = (CHUNK_SIZE - 1 + 7) / 8;
 
-        // Bind SSBOs to match compute shader bindings:
+        // Bind the chunk's triangle SSBO instead of the shared one
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssboVoxels);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ssboEdgeTable);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, ssboTriTable);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, ssboCounter);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, ssboTriangles);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, chunk->gpuCache.triangleSSBO); // <-- CHUNK'S SSBO
 
         glDispatchCompute(groups, groups, groups);
-
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT);
     }
     void Game::drawTriangles(Shader& voxelShader)
