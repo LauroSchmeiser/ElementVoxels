@@ -13,7 +13,8 @@ namespace gl3 {
         char infoLog[GL_INFO_LOG_LENGTH];
     };
 
-    Shader::Shader(const fs::path &vertexShaderPath, const fs::path &fragmentShaderPath) {
+    Shader::Shader(const fs::path &vertexShaderPath, const fs::path &fragmentShaderPath)
+            : shaderProgram(0), vertexShader(0), fragmentShader(0), computeShader(0){
         vertexShader = loadAndCompileShader(GL_VERTEX_SHADER, vertexShaderPath);
         fragmentShader = loadAndCompileShader(GL_FRAGMENT_SHADER, fragmentShaderPath);
         shaderProgram = glCreateProgram();
@@ -37,7 +38,8 @@ namespace gl3 {
         glDetachShader(shaderProgram, fragmentShader);
     }
 
-    Shader::Shader(const fs::path &computeShaderPath) {
+    Shader::Shader(const fs::path &computeShaderPath)
+            : shaderProgram(0), vertexShader(0), fragmentShader(0), computeShader(0){
         vertexShader = 0;
         fragmentShader = 0;
         computeShader = loadAndCompileShader(GL_COMPUTE_SHADER, computeShaderPath);
@@ -163,7 +165,20 @@ namespace gl3 {
     }
 
     Shader::~Shader() {
-        glDeleteShader(vertexShader);
-        glDeleteShader(fragmentShader);
+        // Delete all shader objects that were created
+        if (vertexShader != 0) {
+            glDeleteShader(vertexShader);
+        }
+        if (fragmentShader != 0) {
+            glDeleteShader(fragmentShader);
+        }
+        if (computeShader != 0) {
+            glDeleteShader(computeShader);
+        }
+
+        // Also delete the program
+        if (shaderProgram != 0) {
+            glDeleteProgram(shaderProgram);
+        }
     }
 }

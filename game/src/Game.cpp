@@ -138,7 +138,6 @@ namespace gl3 {
             //Post-Prod Steps?
 
             //Rendering Steps
-            marchingCubesShader->use();
             renderChunks();
             //renderSuns();
             //renderFluidPlanets();
@@ -214,7 +213,7 @@ namespace gl3 {
     void Game::generateChunks() {
         std::mt19937 rng(std::random_device{}());
 
-        std::uniform_real_distribution<float> distPos(-RenderingRange*10, RenderingRange*10); // Reduced range
+        std::uniform_real_distribution<float> distPos(-(ChunkCount*4), (ChunkCount*4)); // Reduced range
         std::uniform_real_distribution<float> distScale(0.5f, 3.0f);
         std::uniform_real_distribution<float> distColor(0.3f, 1.0f);
 
@@ -387,19 +386,6 @@ namespace gl3 {
                 chunk->coord.z * CHUNK_SIZE
         );
 
-        // DEBUG: Check if chunk has any solid voxels
-        bool hasSolid = false;
-        for (int x = 1; x <= CHUNK_SIZE; ++x) {
-            for (int y = 1; y <= CHUNK_SIZE; ++y) {
-                for (int z = 1; z <= CHUNK_SIZE; ++z) {
-                    if (chunk->voxels[x][y][z].type != 0) {
-                        hasSolid = true;
-
-                    }
-                }
-            }
-        }
-
         // PHASE 1: Use COMPUTE SHADER to generate mesh
         marchingCubesShader->use();  // Activate compute shader
 
@@ -443,16 +429,33 @@ namespace gl3 {
         // Dispatch compute work
         int groups = (CHUNK_SIZE - 1 + 7) / 8;
 
+        // ADD THIS: Create a fence before compute dispatch
+        //GLsync computeFence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 
         glDispatchCompute(groups, groups, groups);
+        debugComputeShaderState();
 
         // Wait for compute shader to finish
-        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT);
+        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT |
+                        GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT |
+                        GL_BUFFER_UPDATE_BARRIER_BIT);
+
+        // ADD THIS: Wait for compute to finish
+       // glClientWaitSync(computeFence, GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000); // 1 second timeout
+        //glDeleteSync(computeFence);
 
         // Get vertex count
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
         unsigned int vertexCount = 0;
-        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(unsigned int), &vertexCount);
+
+        // ADD THIS: Use glMapBuffer instead of glGetBufferSubData (more reliable)
+        void* counterData = glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY);
+        if (counterData) {
+            vertexCount = *static_cast<unsigned int*>(counterData);
+            glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+        }
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
         chunk->gpuCache.vertexCount = vertexCount;
 
 // Actually, let's verify by reading the first few vertices from the SSBO
@@ -502,6 +505,90 @@ namespace gl3 {
 
     }
 
+    void Game::debugComputeShaderState() {
+        std::cout << "\n=== COMPUTE SHADER DIAGNOSTICS ===\n";
+
+        // 1. Check if shader exists
+        if (!marchingCubesShader) {
+            std::cerr << "ERROR: marchingCubesShader is nullptr!\n";
+            return;
+        }
+
+        // 2. Get program ID
+        GLuint program = marchingCubesShader->getProgramID();
+        std::cout << "Shader program ID: " << program << std::endl;
+
+        if (program == 0) {
+            std::cerr << "ERROR: Shader program ID is 0!\n";
+            return;
+        }
+
+        // 3. Check if program is linked
+        GLint linkStatus;
+        glGetProgramiv(program, GL_LINK_STATUS, &linkStatus);
+        std::cout << "Program link status: " << (linkStatus == GL_TRUE ? "SUCCESS" : "FAILED") << std::endl;
+
+        if (linkStatus != GL_TRUE) {
+            GLchar infoLog[1024];
+            glGetProgramInfoLog(program, sizeof(infoLog), nullptr, infoLog);
+            std::cerr << "Link error: " << infoLog << std::endl;
+        }
+
+        // 4. Check if program is valid for current GL state
+        glValidateProgram(program);
+        GLint validateStatus;
+        glGetProgramiv(program, GL_VALIDATE_STATUS, &validateStatus);
+        std::cout << "Program validate status: " << (validateStatus == GL_TRUE ? "VALID" : "INVALID") << std::endl;
+
+        if (validateStatus != GL_TRUE) {
+            GLchar infoLog[1024];
+            glGetProgramInfoLog(program, sizeof(infoLog), nullptr, infoLog);
+            std::cerr << "Validation error: " << infoLog << std::endl;
+        }
+
+        // 5. Check what shader is currently bound
+        GLint currentProgram;
+        glGetIntegerv(GL_CURRENT_PROGRAM, &currentProgram);
+        std::cout << "Currently bound program: " << currentProgram << std::endl;
+
+        // 6. Check compute shader work group limits
+        GLint maxWorkGroupSize[3];
+        glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_SIZE, 0, &maxWorkGroupSize[0]);
+        glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_SIZE, 1, &maxWorkGroupSize[1]);
+        glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_SIZE, 2, &maxWorkGroupSize[2]);
+
+        std::cout << "Max work group size: ["
+                  << maxWorkGroupSize[0] << ", "
+                  << maxWorkGroupSize[1] << ", "
+                  << maxWorkGroupSize[2] << "]\n";
+
+        GLint maxWorkGroupInvocations;
+        glGetIntegerv(GL_MAX_COMPUTE_WORK_GROUP_INVOCATIONS, &maxWorkGroupInvocations);
+        std::cout << "Max work group invocations: " << maxWorkGroupInvocations << std::endl;
+
+        // 7. Check if it's actually a compute shader program
+        GLint numShaders;
+        glGetProgramiv(program, GL_ATTACHED_SHADERS, &numShaders);
+        std::cout << "Number of attached shaders: " << numShaders << std::endl;
+
+        GLuint shaders[10];
+        GLsizei count;
+        glGetAttachedShaders(program, 10, &count, shaders);
+
+        for (int i = 0; i < count; i++) {
+            GLint shaderType;
+            glGetShaderiv(shaders[i], GL_SHADER_TYPE, &shaderType);
+            const char* typeStr = "Unknown";
+            if (shaderType == GL_COMPUTE_SHADER) typeStr = "COMPUTE";
+            else if (shaderType == GL_VERTEX_SHADER) typeStr = "VERTEX";
+            else if (shaderType == GL_FRAGMENT_SHADER) typeStr = "FRAGMENT";
+
+            std::cout << "  Shader " << i << ": ID=" << shaders[i] << ", Type=" << typeStr << std::endl;
+        }
+
+        std::cout << "=== END DIAGNOSTICS ===\n\n";
+    }
+
     void Game::renderChunks() {
         float aspect = (windowHeight == 0) ? (float)windowWidth / 1.0f : (float)windowWidth / (float)windowHeight;
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
@@ -523,36 +610,13 @@ namespace gl3 {
         int renderedChunks = 0;
         int meshRegens = 0;
 
-        // STEP 1: Update global light grid every 60 frames (infrequent)
-        if (frameCounter - lastGlobalLightGridUpdate > 60) {
-            updateGlobalLightGrid();
-            lastGlobalLightGridUpdate = frameCounter;
+        // STEP 1: Update global light spatial hash (replaces grid)
+        if (frameCounter % 30 == 0) { // Update every 30 frames
+            updateLightSpatialHash();
         }
 
-        // STEP 2: Process emissive chunks for billboards
-        chunkManager->forEachEmissiveChunk([this](Chunk* chunk) {
-            if (chunk->lightingDirty) {
-                rebuildChunkLights(chunk->coord);
-                chunk->lightingDirty = false;
-                chunk->meshDirty = true; // Mark mesh as dirty since lighting changed
-            }
-
-            // Collect billboards
-            for (const auto& light : chunk->emissiveLights) {
-                if (usedLightIDs.insert(light.id).second) {
-                    SunInstance inst;
-                    inst.position = light.pos;
-                    inst.scale = std::sqrt(light.intensity) * 0.5f;
-                    inst.color = light.color * 2.5f;
-                    emissiveBillboards.push_back(inst);
-                }
-            }
-        });
-
+        // STEP 2: First, generate meshes for dirty chunks
         const int renderRadius = RenderingRange;
-
-        // STEP 3: First, generate meshes for dirty chunks
-        //std::cout << "Camera at chunk: " << camCX << "," << camCY << "," << camCZ << std::endl;
 
         for (int cx = camCX - renderRadius; cx <= camCX + renderRadius; ++cx) {
             for (int cy = camCY - renderRadius; cy <= camCY + renderRadius; ++cy) {
@@ -564,13 +628,17 @@ namespace gl3 {
                     if (dx*dx + dy*dy + dz*dz > R2) continue;
 
                     ChunkCoord coord{cx, cy, cz};
-
                     Chunk* chunk = chunkManager->getChunk(coord);
 
-                    if (!chunk) {
-                        continue;
+                    if (!chunk) continue;
+
+                    // Rebuild lighting if dirty
+                    if (chunk->lightingDirty) {
+                        rebuildChunkLights(coord);
+                        chunk->lightingDirty = false;
                     }
 
+                    // Regenerate mesh if dirty
                     if (chunk->meshDirty || !chunk->gpuCache.isValid) {
                         generateChunkMesh(chunk);
                         meshRegens++;
@@ -579,14 +647,14 @@ namespace gl3 {
             }
         }
 
-        // STEP 4: Now RENDER all visible chunks
+        // STEP 3: Now RENDER all visible chunks
         voxelShader->use();  // Activate RENDER shader
 
         // Set common uniforms that don't change per chunk
         voxelShader->setMatrix("mvp", pv);
         voxelShader->setVec3("viewPos", cameraPos);
-        voxelShader->setVec3("ambientColor", glm::vec3(0.22f));
-        voxelShader->setFloat("emission", 1.0f);
+        voxelShader->setVec3("ambientColor", glm::vec3(0.13f));
+        voxelShader->setFloat("emission", 0.1f);
 
         for (int cx = camCX - renderRadius; cx <= camCX + renderRadius; ++cx) {
             for (int cy = camCY - renderRadius; cy <= camCY + renderRadius; ++cy) {
@@ -603,28 +671,51 @@ namespace gl3 {
 
                     // Skip if no geometry
                     if (chunk->gpuCache.vertexCount == 0 || !chunk->gpuCache.isValid) {
-                        //std::cout<<"no geometry saved, error";
                         continue;
                     }
 
-                    // Update lights if needed
+                    // Update lights for this chunk (check if outdated)
                     if (frameCounter - chunk->gpuCache.lastLightUpdateFrame > LIGHT_UPDATE_INTERVAL ||
                         chunk->gpuCache.nearbyLights.empty()) {
                         updateChunkLights(chunk);
                     }
 
+                    // Collect billboards from emissive chunks
+                    for (const auto& light : chunk->emissiveLights) {
+                        if (usedLightIDs.insert(light.id).second) {
+                            SunInstance inst;
+                            inst.position = light.pos;
+                            inst.scale = std::sqrt(light.intensity) * 0.5f;
+                            inst.color = light.color * 2.5f;
+                            emissiveBillboards.push_back(inst);
+                        }
+                    }
+
+                    //std::cout<<(chunk->gpuCache.nearbyLights.size())<<"\n";
+
                     // Set per-chunk uniforms (lights)
-                    voxelShader->setInt("numLights", (int)chunk->gpuCache.nearbyLights.size());
-                    for (int i = 0; i < (int)chunk->gpuCache.nearbyLights.size(); ++i) {
+                    /*if((chunk->gpuCache.nearbyLights.size()>0)) {
+                        std::cout << "lights exist for this chunk: "<< chunk->gpuCache.nearbyLights.size() << "\n";
+                    }*/
+
+                    int numLights = std::min((int)chunk->gpuCache.nearbyLights.size(), MAX_LIGHTS);
+                    voxelShader->setInt("numLights", numLights);
+                    for (int i = 0; i < numLights; ++i) {
                         const VoxelLight* light = chunk->gpuCache.nearbyLights[i];
                         voxelShader->setVec3("lightPos[" + std::to_string(i) + "]", light->pos);
                         voxelShader->setVec3("lightColor[" + std::to_string(i) + "]", light->color);
                         voxelShader->setFloat("lightIntensity[" + std::to_string(i) + "]", light->intensity);
                     }
 
-                    // Draw from chunk's VAO (which uses the SSBO as VBO)
+                    // For remaining light slots, set them to zero
+                    for (int i = numLights; i < MAX_LIGHTS; ++i) {
+                        voxelShader->setVec3("lightPos[" + std::to_string(i) + "]", glm::vec3(0.0f));
+                        voxelShader->setVec3("lightColor[" + std::to_string(i) + "]", glm::vec3(0.0f));
+                        voxelShader->setFloat("lightIntensity[" + std::to_string(i) + "]", 0.0f);
+                    }
+
+                    // Draw from chunk's VAO
                     glBindVertexArray(chunk->gpuCache.vao);
-                    //drawTriangles(*voxelShader);
                     glDrawArrays(GL_TRIANGLES, 0, chunk->gpuCache.vertexCount);
                     glBindVertexArray(0);
 
@@ -635,27 +726,34 @@ namespace gl3 {
 
         // Render billboards
         if (!emissiveBillboards.empty()) {
-           // sunBillboards.render(emissiveBillboards, view, projection, (float)glfwGetTime());
+            sunBillboards.render(emissiveBillboards, view, projection, (float)glfwGetTime());
         }
 
-       std::cout << "Rendered " << renderedChunks << " chunks (Regenerated: " << meshRegens << ")\n";
+        std::cout << "Rendered " << renderedChunks << " chunks (Regenerated: " << meshRegens << ")\n";
     }
 
-    void Game::updateGlobalLightGrid() {
-        globalLightGrid.clear();
+    // Replace updateGlobalLightGrid with a spatial hash approach
+    void Game::updateLightSpatialHash() {
+        lightSpatialHash.clear();
 
         chunkManager->forEachEmissiveChunk([this](Chunk* chunk) {
-            for (const auto& light : chunk->emissiveLights) {
-                GridCell cell{
-                        (int)std::floor(light.pos.x / (CHUNK_SIZE * 4)),
-                        (int)std::floor(light.pos.y / (CHUNK_SIZE * 4)),
-                        (int)std::floor(light.pos.z / (CHUNK_SIZE * 4))
+            for (auto& light : chunk->emissiveLights) {
+                // Create a spatial hash key (2x2 chunk grid cells)
+                ChunkCoord gridCell{
+                        (int)std::floor(light.pos.x / (CHUNK_SIZE * 2)),
+                        (int)std::floor(light.pos.y / (CHUNK_SIZE * 2)),
+                        (int)std::floor(light.pos.z / (CHUNK_SIZE * 2))
                 };
-                globalLightGrid[cell].push_back(&light);
+                lightSpatialHash[gridCell].push_back(&light);
+                //std::cout<<"intensity:"<<(light.intensity>=0)<<"\n";
+                //std::cout<<"color:"<<(light.color.x>0||light.color.y>0||light.color.z>0)<<"\n";
             }
         });
+
+        std::cout << "Light spatial hash updated: " << lightSpatialHash.size() << " grid cells\n";
     }
 
+// Simplify updateChunkLights to use the spatial hash
     void Game::updateChunkLights(Chunk* chunk) {
         chunk->gpuCache.nearbyLights.clear();
 
@@ -666,22 +764,24 @@ namespace gl3 {
         );
         glm::vec3 chunkCenter = chunkOrigin + glm::vec3(CHUNK_SIZE * 0.5f);
 
-        GridCell chunkCell{
-                (int)std::floor(chunkCenter.x / (CHUNK_SIZE * 4)),
-                (int)std::floor(chunkCenter.y / (CHUNK_SIZE * 4)),
-                (int)std::floor(chunkCenter.z / (CHUNK_SIZE * 4))
+        // Determine which spatial hash cell this chunk belongs to
+        ChunkCoord gridCell{
+                (int)std::floor(chunkCenter.x / (CHUNK_SIZE * 2)),
+                (int)std::floor(chunkCenter.y / (CHUNK_SIZE * 2)),
+                (int)std::floor(chunkCenter.z / (CHUNK_SIZE * 2))
         };
 
-        // Check 3x3x3 grid cells around chunk
+        // Check 3x3x3 grid cells around the chunk's cell
         for (int gx = -1; gx <= 1; ++gx) {
             for (int gy = -1; gy <= 1; ++gy) {
                 for (int gz = -1; gz <= 1; ++gz) {
-                    GridCell checkCell{chunkCell.gx + gx, chunkCell.gy + gy, chunkCell.gz + gz};
-                    auto it = globalLightGrid.find(checkCell);
-                    if (it != globalLightGrid.end()) {
+                    ChunkCoord checkCell{gridCell.x + gx, gridCell.y + gy, gridCell.z + gz};
+                    auto it = lightSpatialHash.find(checkCell);
+                    if (it != lightSpatialHash.end()) {
                         for (const VoxelLight* light : it->second) {
                             glm::vec3 d = light->pos - chunkCenter;
-                            if (glm::dot(d, d) <= LIGHT_RADIUS_SQ) {
+                            float distSq = glm::dot(d, d);
+                            if (distSq <= LIGHT_RADIUS_SQ) {
                                 chunk->gpuCache.nearbyLights.push_back(const_cast<VoxelLight*>(light));
                             }
                         }
@@ -690,21 +790,26 @@ namespace gl3 {
             }
         }
 
-        // Sort and limit
+        // Sort by distance and limit
         std::sort(chunk->gpuCache.nearbyLights.begin(), chunk->gpuCache.nearbyLights.end(),
                   [chunkCenter](const VoxelLight* a, const VoxelLight* b) {
-                      return glm::dot(a->pos - chunkCenter, a->pos - chunkCenter) <
-                             glm::dot(b->pos - chunkCenter, b->pos - chunkCenter);
-                  }
-        );
+                      float distA = glm::dot(a->pos - chunkCenter, a->pos - chunkCenter);
+                      float distB = glm::dot(b->pos - chunkCenter, b->pos - chunkCenter);
+                      return distA < distB;
+                  });
 
         if (chunk->gpuCache.nearbyLights.size() > MAX_LIGHTS) {
             chunk->gpuCache.nearbyLights.resize(MAX_LIGHTS);
         }
 
         chunk->gpuCache.lastLightUpdateFrame = frameCounter;
-    }
 
+        // Debug output
+        /*if (!chunk->gpuCache.nearbyLights.empty()) {
+            std::cout << "Chunk at " << chunk->coord.x << "," << chunk->coord.y << "," << chunk->coord.z
+                      << " has " << chunk->gpuCache.nearbyLights.size() << " nearby lights\n";
+        }*/
+    }
 
     void Game::markChunkModified(const ChunkCoord& coord) {
         Chunk* chunk = chunkManager->getChunk(coord);
@@ -732,58 +837,6 @@ namespace gl3 {
             // GPU resources get cleaned up in chunk destructor or clear() method
             chunk->clear(); // This deletes VAO/VBO
         }
-    }
-
-    void Game::buildLightSpatialHash(
-            std::unordered_map<ChunkCoord, std::vector<VoxelLight*>, ChunkCoordHash>& hash) {
-
-        chunkManager->forEachEmissiveChunk([&hash](Chunk* chunk) {
-            for (auto& light : chunk->emissiveLights) {
-                // Determine which chunk grid cell this light belongs to
-                ChunkCoord gridCell{
-                        (int)std::floor(light.pos.x / (CHUNK_SIZE * 2)),  // 2x2 chunk grid
-                        (int)std::floor(light.pos.y / (CHUNK_SIZE * 2)),
-                        (int)std::floor(light.pos.z / (CHUNK_SIZE * 2))
-                };
-                hash[gridCell].push_back(&light);
-            }
-        });
-    }
-
-    std::vector<VoxelLight*> Game::collectNearbyLightsFast(
-            const ChunkCoord& chunkCoord,
-            const glm::vec3& chunkOrigin,
-            const std::unordered_map<ChunkCoord, std::vector<VoxelLight*>, ChunkCoordHash>& hash) {
-
-        std::vector<VoxelLight*> result;
-        result.reserve(MAX_LIGHTS * 8); // Reserve enough space
-
-        glm::vec3 chunkCenter = chunkOrigin + glm::vec3(CHUNK_SIZE * 0.5f);
-
-        // Check 3x3x3 grid cells around the chunk
-        for (int gx = -1; gx <= 1; ++gx) {
-            for (int gy = -1; gy <= 1; ++gy) {
-                for (int gz = -1; gz <= 1; ++gz) {
-                    ChunkCoord gridCell{
-                            chunkCoord.x / 2 + gx,
-                            chunkCoord.y / 2 + gy,
-                            chunkCoord.z / 2 + gz
-                    };
-
-                    auto it = hash.find(gridCell);
-                    if (it != hash.end()) {
-                        for (VoxelLight* light : it->second) {
-                            glm::vec3 d = light->pos - chunkCenter;
-                            if (glm::dot(d, d) <= LIGHT_RADIUS_SQ) {
-                                result.push_back(light);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        return result;
     }
 
     void Game::processEmissiveChunks() {
@@ -1041,7 +1094,7 @@ namespace gl3 {
         voxelShader->setVec3("emissionColor", {0,0,0});   // no glow in mesh
         voxelShader->setVec3("uniformColor", planetColor);
 
-        drawTriangles(*voxelShader);
+        //drawTriangles(*voxelShader);
 
         // -------------------------
         // Billboard glow (fluid look)
@@ -1239,14 +1292,12 @@ namespace gl3 {
         glDispatchCompute(groups, groups, groups);
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT);
     }
-    void Game::drawTriangles(Shader& voxelShader)
+    void Game::drawTriangles(Shader& voxelShader, Chunk* chunk)
     {
-        GLuint vao;
-        glGenVertexArrays(1, &vao);
-        glBindVertexArray(vao);
 
-        // Use SSBO as VBO
-        glBindBuffer(GL_ARRAY_BUFFER, ssboTriangles);
+        glBindVertexArray(chunk->gpuCache.vao);
+        glDrawArrays(GL_TRIANGLES, 0, chunk->gpuCache.vertexCount);
+        glBindVertexArray(0);
 
         // Stride for OutVertex
         constexpr GLsizei stride = sizeof(gl3::OutVertex);
@@ -1284,8 +1335,6 @@ namespace gl3 {
         voxelShader.use();
 
         glDrawArrays(GL_TRIANGLES, 0, vertexCount);
-
-        glDeleteVertexArrays(1, &vao);
     }
 
 

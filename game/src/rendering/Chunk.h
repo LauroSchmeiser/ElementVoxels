@@ -8,7 +8,6 @@ namespace gl3 {
     struct Chunk {
         // Core voxel data
         Voxel voxels[CHUNK_SIZE + 2][CHUNK_SIZE + 2][CHUNK_SIZE + 2];
-
         // Lighting data
         std::vector<VoxelLight> emissiveLights;
         bool lightingDirty = true;
@@ -21,7 +20,7 @@ namespace gl3 {
         struct GPUCache {
             GLuint vao = 0;
             GLuint vbo = 0;
-            GLuint triangleSSBO = 0; // <-- ADD THIS: Each chunk gets its own SSBO for triangles
+            GLuint triangleSSBO = 0;
             uint32_t vertexCount = 0;
             bool isValid = false;
             uint64_t lastLightUpdateFrame = 0;

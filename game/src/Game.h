@@ -21,8 +21,8 @@
 
 namespace gl3 {
 
-    static constexpr int ChunkCount=30;
-    static constexpr int RenderingRange=50;
+    static constexpr int ChunkCount=50;
+    static constexpr int RenderingRange=35;
 
     class Game {
     public:
@@ -53,35 +53,15 @@ namespace gl3 {
         void markChunkModified(const ChunkCoord& coord);
         void unloadChunk(const ChunkCoord& coord);
         void updateChunkLights(Chunk* chunk);
-        void updateGlobalLightGrid();
         void generateChunkMesh(Chunk* chunk);
 
         // Frame counter for light update staggering
         uint64_t frameCounter = 0;
-        const uint64_t LIGHT_UPDATE_INTERVAL = 10; // Update lights every 10 frames
 
-        // Global light spatial index (updated infrequently)
-        struct GridCell {
-            int gx, gy, gz;
-            bool operator==(const GridCell& other) const {
-                return gx == other.gx && gy == other.gy && gz == other.gz;
-            }
-        };
-
-        struct GridCellHash {
-            size_t operator()(const GridCell& cell) const {
-                return ((cell.gx * 73856093) ^ (cell.gy * 19349663) ^ (cell.gz * 83492791));
-            }
-        };
-
-        std::unordered_map<GridCell, std::vector<const VoxelLight*>, GridCellHash> globalLightGrid;
-        uint64_t lastGlobalLightGridUpdate = 0;
-
-
+        std::unordered_map<ChunkCoord, std::vector<VoxelLight*>, ChunkCoordHash> lightSpatialHash;
+        static constexpr int LIGHT_UPDATE_INTERVAL = 15; // Update lights every 15 frames
 
             // --- Generate planet transforms ---
-
-
         struct WorldPlanet {
             glm::vec3 worldPos;   // world-space center
             float radius;         // world-space radius
@@ -89,12 +69,15 @@ namespace gl3 {
             int type;             // 1=rock, 2=lava, 3=water
         };
 
+
         // Updated signatures
+        void updateLightSpatialHash();
+        void debugComputeShaderState();
         void uploadVoxelChunk(const Chunk& chunk, const glm::vec3* overrideColor = nullptr);
         void resetAtomicCounter();
         void setComputeUniforms(const glm::vec3& position, const glm::vec3& objectScale, Shader& computeShader);
         void dispatchCompute(Chunk* chunk);
-        void drawTriangles(Shader& voxelShader);
+        void drawTriangles(Shader& voxelShader,Chunk* chunk);
 
         void handleCameraInput();
         float getVoxelPlanetRadius(const glm::vec3& scale, float baseChunkRadius);
@@ -150,7 +133,7 @@ namespace gl3 {
         GLuint ssboVoxels = 0, ssboEdgeTable = 0, ssboTriTable = 0, ssboCounter = 0, ssboTriangles = 0, particleSSBO=0, fieldBitsSSBO=0;
 
         const int MAX_LIGHTS = 4;       // matches shader
-        const float LIGHT_RADIUS = 10000.0f*CHUNK_SIZE;
+        const float LIGHT_RADIUS = 1000.0f*CHUNK_SIZE;
         const float LIGHT_RADIUS_SQ = LIGHT_RADIUS * LIGHT_RADIUS;
 
         std::unordered_set<uint32_t> usedLightIDs;

@@ -13,8 +13,8 @@ namespace gl3 {
     enum class VoxelCategory : uint8_t {
         STATIC = 0,    // Regular terrain - rarely changes
         DYNAMIC = 1,   // Physics objects - moderate changes
-        FLUID = 2,     // Fluids - frequent updates
-        EMISSIVE = 3,  // Light sources
+        EMISSIVE = 2,     // Fluids - frequent updates
+        FLUID = 3,  // Light sources
         INTERACTIVE = 4 // Player-modified
     };
 
