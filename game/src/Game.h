@@ -58,8 +58,6 @@ namespace gl3 {
         // Frame counter for light update staggering
         uint64_t frameCounter = 0;
 
-        std::unordered_map<ChunkCoord, std::vector<VoxelLight*>, ChunkCoordHash> lightSpatialHash;
-        static constexpr int LIGHT_UPDATE_INTERVAL = 15; // Update lights every 15 frames
 
             // --- Generate planet transforms ---
         struct WorldPlanet {
@@ -133,8 +131,11 @@ namespace gl3 {
         GLuint ssboVoxels = 0, ssboEdgeTable = 0, ssboTriTable = 0, ssboCounter = 0, ssboTriangles = 0, particleSSBO=0, fieldBitsSSBO=0;
 
         const int MAX_LIGHTS = 4;       // matches shader
-        const float LIGHT_RADIUS = 1000.0f*CHUNK_SIZE;
+        const float LIGHT_RADIUS = 100.0f*CHUNK_SIZE;
         const float LIGHT_RADIUS_SQ = LIGHT_RADIUS * LIGHT_RADIUS;
+        std::vector<const gl3::VoxelLight*> flatEmissiveLightList;
+        std::unordered_map<ChunkCoord, std::vector<VoxelLight*>, ChunkCoordHash> lightSpatialHash;
+        static constexpr int LIGHT_UPDATE_INTERVAL = 15; // Update lights every 15 frames
 
         std::unordered_set<uint32_t> usedLightIDs;
 

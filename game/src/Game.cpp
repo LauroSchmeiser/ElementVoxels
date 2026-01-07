@@ -593,6 +593,7 @@ namespace gl3 {
         float aspect = (windowHeight == 0) ? (float)windowWidth / 1.0f : (float)windowWidth / (float)windowHeight;
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), glm::vec3(0.0f, 1.0f, 0.0f));
+
         glm::mat4 pv = projection * view;
 
         frameCounter++;
@@ -644,6 +645,7 @@ namespace gl3 {
                         generateChunkMesh(chunk);
                         meshRegens++;
                     }
+
                 }
             }
         }
@@ -652,9 +654,11 @@ namespace gl3 {
         voxelShader->use();  // Activate RENDER shader
 
         // Set common uniforms that don't change per chunk
+
+        voxelShader->setMatrix("model", glm::mat4(1.0f));
         voxelShader->setMatrix("mvp", pv);
         voxelShader->setVec3("viewPos", cameraPos);
-        voxelShader->setVec3("ambientColor", glm::vec3(0.13f));
+        voxelShader->setVec3("ambientColor", glm::vec3(0.02f));
         voxelShader->setFloat("emission", 0.1f);
 
         for (int cx = camCX - renderRadius; cx <= camCX + renderRadius; ++cx) {
@@ -730,33 +734,40 @@ namespace gl3 {
             sunBillboards.render(emissiveBillboards, view, projection, (float)glfwGetTime());
         }
 
-        std::cout << "Rendered " << renderedChunks << " chunks (Regenerated: " << meshRegens << ")\n";
+        //std::cout << "Rendered " << renderedChunks << " chunks (Regenerated: " << meshRegens << ")\n";
     }
 
-    // Replace updateGlobalLightGrid with a spatial hash approach
+    // Replace updateGlobalLightGrid with a spatial hash approach and a flat list
     void Game::updateLightSpatialHash() {
         lightSpatialHash.clear();
+        flatEmissiveLightList.clear();
 
+        // Build spatial hash as before, but also fill a flat list of pointers for fast scans
         chunkManager->forEachEmissiveChunk([this](Chunk* chunk) {
-            for (auto& light : chunk->emissiveLights) {
-                // Create a spatial hash key (2x2 chunk grid cells)
+            for (auto &light : chunk->emissiveLights) {
+                // Create a spatial hash key (2x2 chunk grid cells) as you had it
                 ChunkCoord gridCell{
                         (int)std::floor(light.pos.x / (CHUNK_SIZE * 2)),
                         (int)std::floor(light.pos.y / (CHUNK_SIZE * 2)),
                         (int)std::floor(light.pos.z / (CHUNK_SIZE * 2))
                 };
                 lightSpatialHash[gridCell].push_back(&light);
-                //std::cout<<"intensity:"<<(light.intensity>=0)<<"\n";
-                //std::cout<<"color:"<<(light.color.x>0||light.color.y>0||light.color.z>0)<<"\n";
+
+                // Also keep flat list; useful for small-K nearest scans
+                flatEmissiveLightList.push_back(&light);
             }
         });
 
-        std::cout << "Light spatial hash updated: " << lightSpatialHash.size() << " grid cells\n";
+        std::cout << "Light spatial hash updated: " << lightSpatialHash.size() << " grid cells; "
+                  << flatEmissiveLightList.size() << " emissive blobs\n";
     }
 
-// Simplify updateChunkLights to use the spatial hash
+
+    // New updateChunkLights: select up to MAX_LIGHTS by score = intensity / (distSq + 1)
+// This prefers strong lights even at larger distance, while still penalizing distance.
     void Game::updateChunkLights(Chunk* chunk) {
         chunk->gpuCache.nearbyLights.clear();
+        chunk->gpuCache.nearbyLights.reserve(MAX_LIGHTS);
 
         glm::vec3 chunkOrigin(
                 chunk->coord.x * CHUNK_SIZE,
@@ -765,51 +776,83 @@ namespace gl3 {
         );
         glm::vec3 chunkCenter = chunkOrigin + glm::vec3(CHUNK_SIZE * 0.5f);
 
-        // Determine which spatial hash cell this chunk belongs to
-        ChunkCoord gridCell{
-                (int)std::floor(chunkCenter.x / (CHUNK_SIZE * 2)),
-                (int)std::floor(chunkCenter.y / (CHUNK_SIZE * 2)),
-                (int)std::floor(chunkCenter.z / (CHUNK_SIZE * 2))
-        };
+        // Fast path
+        if (flatEmissiveLightList.empty()) {
+            chunk->gpuCache.lastLightUpdateFrame = frameCounter;
+            return;
+        }
 
-        // Check 3x3x3 grid cells around the chunk's cell
-        for (int gx = -1; gx <= 1; ++gx) {
-            for (int gy = -1; gy <= 1; ++gy) {
-                for (int gz = -1; gz <= 1; ++gz) {
-                    ChunkCoord checkCell{gridCell.x + gx, gridCell.y + gy, gridCell.z + gz};
-                    auto it = lightSpatialHash.find(checkCell);
-                    if (it != lightSpatialHash.end()) {
-                        for (const VoxelLight* light : it->second) {
-                            glm::vec3 d = light->pos - chunkCenter;
-                            float distSq = glm::dot(d, d);
-                            if (distSq <= LIGHT_RADIUS_SQ) {
-                                chunk->gpuCache.nearbyLights.push_back(const_cast<VoxelLight*>(light));
-                            }
+        const float radiusSq = LIGHT_RADIUS_SQ;
+        const int K = MAX_LIGHTS;
+
+        // small stack arrays (K is tiny)
+        std::array<const VoxelLight*, 8> bestPtrs{};   // pointer candidates
+        std::array<float, 8> bestScore{};              // score = intensity / (distSq + 1)
+        int bestCount = 0;
+
+        // keep track of the current worst score index (min score)
+        float worstScore = std::numeric_limits<float>::infinity();
+        int worstIndex = -1;
+
+        for (const VoxelLight* light : flatEmissiveLightList) {
+            glm::vec3 d = light->pos - chunkCenter;
+            float distSq = glm::dot(d, d);
+
+            if (distSq > radiusSq) continue; // skip out-of-range lights
+
+            // Score uses shader-like falloff (intensity divided by squared distance + 1)
+            // +1 avoids division by zero and keeps near-zero distance finite
+            float score = light->intensity / (distSq + 1.0f);
+
+            if (bestCount < K) {
+                // append
+                bestPtrs[bestCount] = light;
+                bestScore[bestCount] = score;
+                ++bestCount;
+
+                // find new worst
+                worstScore = bestScore[0];
+                worstIndex = 0;
+                for (int i = 1; i < bestCount; ++i) {
+                    if (bestScore[i] < worstScore) {
+                        worstScore = bestScore[i];
+                        worstIndex = i;
+                    }
+                }
+            } else {
+                // replace worst if this one has a higher score
+                if (score > worstScore) {
+                    bestPtrs[worstIndex] = light;
+                    bestScore[worstIndex] = score;
+
+                    // recompute worst (small K)
+                    worstScore = bestScore[0];
+                    worstIndex = 0;
+                    for (int i = 1; i < K; ++i) {
+                        if (bestScore[i] < worstScore) {
+                            worstScore = bestScore[i];
+                            worstIndex = i;
                         }
                     }
                 }
             }
         }
 
-        // Sort by distance and limit
-        std::sort(chunk->gpuCache.nearbyLights.begin(), chunk->gpuCache.nearbyLights.end(),
-                  [chunkCenter](const VoxelLight* a, const VoxelLight* b) {
-                      float distA = glm::dot(a->pos - chunkCenter, a->pos - chunkCenter);
-                      float distB = glm::dot(b->pos - chunkCenter, b->pos - chunkCenter);
-                      return distA < distB;
-                  });
+        // Move found lights into chunk->gpuCache.nearbyLights sorted by descending score
+        if (bestCount > 0) {
+            std::vector<int> idx(bestCount);
+            for (int i = 0; i < bestCount; ++i) idx[i] = i;
+            // sort so highest score first
+            std::sort(idx.begin(), idx.end(), [&](int a, int b) {
+                return bestScore[a] > bestScore[b];
+            });
 
-        if (chunk->gpuCache.nearbyLights.size() > MAX_LIGHTS) {
-            chunk->gpuCache.nearbyLights.resize(MAX_LIGHTS);
+            for (int i = 0; i < bestCount; ++i) {
+                chunk->gpuCache.nearbyLights.push_back(const_cast<VoxelLight*>(bestPtrs[idx[i]]));
+            }
         }
 
         chunk->gpuCache.lastLightUpdateFrame = frameCounter;
-
-        // Debug output
-        /*if (!chunk->gpuCache.nearbyLights.empty()) {
-            std::cout << "Chunk at " << chunk->coord.x << "," << chunk->coord.y << "," << chunk->coord.z
-                      << " has " << chunk->gpuCache.nearbyLights.size() << " nearby lights\n";
-        }*/
     }
 
     void Game::markChunkModified(const ChunkCoord& coord) {
