@@ -35,6 +35,7 @@ namespace gl3 {
     private:
         bool DebugMode1=false;
         bool DebugMode2=false;
+        int activeDebugMode=0;
 
         //std::unique_ptr<ChunkManager> chunkManager = std::make_unique<ChunkManager>(); // NEW
 

@@ -643,9 +643,16 @@ namespace gl3 {
         voxelShader->setMatrix("mvp", pv);
         voxelShader->setVec3("viewPos", cameraPos);
         voxelShader->setVec3("ambientColor", glm::vec3(0.0002f));
-        voxelShader->setFloat("emission", 0.0f);
+
 // or show signed N·L for the strongest light (index 0)
-        voxelShader->setInt("debugMode", 0);
+        if(DebugMode1)
+        {
+            voxelShader->setInt("debugMode", activeDebugMode%5);
+        }
+        else
+        {
+            voxelShader->setFloat("emission", 0.0f);
+        }
 
         for (int cx = camCX - renderRadius; cx <= camCX + renderRadius; ++cx) {
             for (int cy = camCY - renderRadius; cy <= camCY + renderRadius; ++cy) {
@@ -1228,20 +1235,33 @@ namespace gl3 {
             {
                 voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel_debug.frag");
                 DebugMode1= true;
+                activeDebugMode=0;
             }
         }
+        if(glfwGetKey(window,GLFW_KEY_1)==GLFW_PRESS)
+        {
+            activeDebugMode=1;
+        }
+        if(glfwGetKey(window,GLFW_KEY_2)==GLFW_PRESS)
+        {
+            activeDebugMode=2;
+        }
+        if(glfwGetKey(window,GLFW_KEY_3)==GLFW_PRESS)
+        {
+            activeDebugMode=3;
+        }
+        if(glfwGetKey(window,GLFW_KEY_4)==GLFW_PRESS)
+        {
+            activeDebugMode=4;
+        }if(glfwGetKey(window,GLFW_KEY_5)==GLFW_PRESS)
+        {
+            activeDebugMode=5;
+        }
+
         if(glfwGetKey(window,GLFW_KEY_CAPS_LOCK)==GLFW_PRESS)
         {
             DebugMode2=(!DebugMode2);
         }
-
-
-            // Update lighting only for dirty chunks
-            /*chunkManager->forEachEmissiveChunk([this](Chunk *chunk) {
-                if (chunk->lightingDirty) {
-                    rebuildChunkLights(chunk->coord);
-                }
-            });*/
 
             // Update dynamic chunks
             // chunkManager->forEachDynamicChunk([this](Chunk* chunk) {
