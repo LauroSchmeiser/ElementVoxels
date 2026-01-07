@@ -131,7 +131,7 @@ namespace gl3 {
         GLuint ssboVoxels = 0, ssboEdgeTable = 0, ssboTriTable = 0, ssboCounter = 0, ssboTriangles = 0, particleSSBO=0, fieldBitsSSBO=0;
 
         const int MAX_LIGHTS = 4;       // matches shader
-        const float LIGHT_RADIUS = 100.0f*CHUNK_SIZE;
+        const float LIGHT_RADIUS = 220.0f*CHUNK_SIZE;
         const float LIGHT_RADIUS_SQ = LIGHT_RADIUS * LIGHT_RADIUS;
         std::vector<const gl3::VoxelLight*> flatEmissiveLightList;
         std::unordered_map<ChunkCoord, std::vector<VoxelLight*>, ChunkCoordHash> lightSpatialHash;

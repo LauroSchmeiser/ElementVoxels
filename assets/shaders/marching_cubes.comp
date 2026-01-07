@@ -112,7 +112,7 @@ vec3 computeNormal(vec3 worldPos) {
     vec3 g = vec3(dX1 - dX0, dY1 - dY0, dZ1 - dZ0);
     float len = length(g);
     // return outward normal; you may flip sign if you prefer
-    return (len > 0.0001) ? normalize(g) : vec3(0.0, 1.0, 0.0);
+    return (len > 0.0001) ? -normalize(g) : vec3(0.0, 1.0, 0.0);
 }
 
 // helper to read triTable row: triTable is flattened as [case*16 + j]
