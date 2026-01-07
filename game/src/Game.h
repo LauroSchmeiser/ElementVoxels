@@ -135,6 +135,9 @@ namespace gl3 {
         const float LIGHT_RADIUS_SQ = LIGHT_RADIUS * LIGHT_RADIUS;
         std::vector<const gl3::VoxelLight*> flatEmissiveLightList;
         std::unordered_map<ChunkCoord, std::vector<VoxelLight*>, ChunkCoordHash> lightSpatialHash;
+        // After building chunk-local lights we create a small merged pool to avoid seams.
+        // Merged pool holds stable VoxelLight objects we point to from flatEmissiveLightList.
+        std::vector<gl3::VoxelLight> mergedEmissiveLightPool;
         static constexpr int LIGHT_UPDATE_INTERVAL = 15; // Update lights every 15 frames
 
         std::unordered_set<uint32_t> usedLightIDs;

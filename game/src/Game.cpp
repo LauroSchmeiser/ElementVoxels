@@ -658,8 +658,8 @@ namespace gl3 {
         voxelShader->setMatrix("model", glm::mat4(1.0f));
         voxelShader->setMatrix("mvp", pv);
         voxelShader->setVec3("viewPos", cameraPos);
-        voxelShader->setVec3("ambientColor", glm::vec3(0.02f));
-        voxelShader->setFloat("emission", 0.1f);
+        voxelShader->setVec3("ambientColor", glm::vec3(0.0002f));
+        voxelShader->setFloat("emission", 0.0f);
 
         for (int cx = camCX - renderRadius; cx <= camCX + renderRadius; ++cx) {
             for (int cy = camCY - renderRadius; cy <= camCY + renderRadius; ++cy) {
@@ -737,29 +737,93 @@ namespace gl3 {
         //std::cout << "Rendered " << renderedChunks << " chunks (Regenerated: " << meshRegens << ")\n";
     }
 
-    // Replace updateGlobalLightGrid with a spatial hash approach and a flat list
+    // Replace updateGlobalLightGrid with a spatial hash approach and a flat list and performs
+    // a simple greedy merging of lights that are close to each other.
     void Game::updateLightSpatialHash() {
         lightSpatialHash.clear();
         flatEmissiveLightList.clear();
+        mergedEmissiveLightPool.clear();
 
-        // Build spatial hash as before, but also fill a flat list of pointers for fast scans
-        chunkManager->forEachEmissiveChunk([this](Chunk* chunk) {
+        // 1) Gather raw pointers (lights stored inside chunks) and fill spatial-hash as before
+        std::vector<const VoxelLight*> rawLights;
+        chunkManager->forEachEmissiveChunk([this, &rawLights](Chunk* chunk) {
             for (auto &light : chunk->emissiveLights) {
-                // Create a spatial hash key (2x2 chunk grid cells) as you had it
+                // coarse bucket size (same as before)
                 ChunkCoord gridCell{
                         (int)std::floor(light.pos.x / (CHUNK_SIZE * 2)),
                         (int)std::floor(light.pos.y / (CHUNK_SIZE * 2)),
                         (int)std::floor(light.pos.z / (CHUNK_SIZE * 2))
                 };
                 lightSpatialHash[gridCell].push_back(&light);
-
-                // Also keep flat list; useful for small-K nearest scans
-                flatEmissiveLightList.push_back(&light);
+                rawLights.push_back(&light);
             }
         });
 
-        std::cout << "Light spatial hash updated: " << lightSpatialHash.size() << " grid cells; "
-                  << flatEmissiveLightList.size() << " emissive blobs\n";
+        // 2) If no lights, done
+        if (rawLights.empty()) {
+            std::cout << "Light spatial hash updated: 0 grid cells; 0 emissive blobs\n";
+            return;
+        }
+
+        // 3) Simple greedy clustering (merge lights that are spatially close)
+        // Tune this merge radius. Using CHUNK_SIZE * 1.5 means lights that spill over
+        // into adjacent chunks are folded into a single logical emitter.
+        const float MERGE_RADIUS = CHUNK_SIZE * 12.0f;
+        const float MERGE_RADIUS_SQ = MERGE_RADIUS * MERGE_RADIUS;
+
+        std::vector<char> used(rawLights.size(), 0);
+        for (size_t i = 0; i < rawLights.size(); ++i) {
+            if (used[i]) continue;
+            used[i] = 1;
+
+            // accumulate weighted by intensity (so stronger lights dominate)
+            float totalIntensity = 0.0f;
+            glm::vec3 accumPos(0.0f);
+            glm::vec3 accumColor(0.0f);
+            uint32_t mergedId = rawLights[i]->id; // base id
+            int amountMerged=0;
+
+            // merge any other lights that lie within MERGE_RADIUS of rawLights[i]
+            for (size_t j = i; j < rawLights.size(); ++j) {
+                if (used[j]) continue;
+                float d2 = glm::dot(rawLights[i]->pos - rawLights[j]->pos, rawLights[i]->pos - rawLights[j]->pos);
+                if (d2 <= MERGE_RADIUS_SQ) {
+                    used[j] = 1;
+                    const VoxelLight* L = rawLights[j];
+                    float w = glm::max(1.0f, L->intensity); // weight (avoid zero)
+                    accumPos += L->pos * w;
+                    accumColor += L->color * w;
+                    totalIntensity += L->intensity;
+                    amountMerged++;
+                    // You can combine ids in a deterministic way if needed; keep first for now
+                }
+            }
+
+            // construct merged light (fallbacks)
+            VoxelLight merged;
+            if (totalIntensity > 0.0f) {
+                merged.intensity = (totalIntensity/amountMerged);
+                merged.pos = accumPos / (totalIntensity > 0.0f ? totalIntensity : 1.0f);
+                merged.color = accumColor / (totalIntensity > 0.0f ? totalIntensity : 1.0f);
+            } else {
+                // fallback: single entry (should not typically occur)
+                merged = *rawLights[i];
+            }
+            merged.id = mergedId;
+
+            // store into pool and push pointer into flat list
+            mergedEmissiveLightPool.push_back(merged);
+        }
+
+        // 4) Build final flat list of pointers into mergedEmissiveLightPool
+        flatEmissiveLightList.reserve(mergedEmissiveLightPool.size());
+        for (auto &m : mergedEmissiveLightPool) {
+            flatEmissiveLightList.push_back(&m);
+        }
+
+        std::cout << "Light spatial hash updated: " << lightSpatialHash.size()
+                  << " grid cells; raw=" << rawLights.size()
+                  << " merged=" << mergedEmissiveLightPool.size() << " emissive blobs\n";
     }
 
 
@@ -954,7 +1018,7 @@ namespace gl3 {
                 VoxelLight light;
                 light.pos = sumPos / float(count);
                 light.color = sumColor / float(count);
-                light.intensity = float(count) * 15.0f; // Scale intensity
+                light.intensity = float(count) * 35.0f; // Scale intensity
                 light.id = makeLightID(coord.x, coord.y, coord.z);
 
                 chunk->emissiveLights.push_back(light);
