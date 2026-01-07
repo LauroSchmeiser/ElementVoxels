@@ -433,7 +433,7 @@ namespace gl3 {
         //GLsync computeFence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 
         glDispatchCompute(groups, groups, groups);
-        debugComputeShaderState();
+        //debugComputeShaderState();
 
         // Wait for compute shader to finish
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT |
@@ -631,6 +631,7 @@ namespace gl3 {
                     Chunk* chunk = chunkManager->getChunk(coord);
 
                     if (!chunk) continue;
+                    if(!hasSolidVoxels(*chunk)) continue;
 
                     // Rebuild lighting if dirty
                     if (chunk->lightingDirty) {
