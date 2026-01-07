@@ -235,7 +235,7 @@ namespace gl3 {
         std::uniform_real_distribution<float> lavaDistColorG(0.2f, 0.5f);
         std::uniform_real_distribution<float> lavaDistColorB(0.0f, 0.1f);
 
-        int lavaCount = 2 + (rng() % 2);
+        int lavaCount = 2 + (rng() % 5);
         for (int i = 0; i < lavaCount; ++i) {
             WorldPlanet p;
             p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
@@ -389,121 +389,97 @@ namespace gl3 {
         // PHASE 1: Use COMPUTE SHADER to generate mesh
         marchingCubesShader->use();  // Activate compute shader
 
-        // Upload voxel data to SSBOs
+        // Upload voxel data to SSBOs (uses member DIM)
         uploadVoxelChunk(*chunk, nullptr);
 
-        // Set compute shader uniforms
+        // Reset counter and set compute shader uniforms (gridOrigin aligns with chunkOrigin)
         resetAtomicCounter();
         setComputeUniforms(chunkOrigin, glm::vec3(1.0f), *marchingCubesShader);
 
-        // Create per-chunk triangle SSBO
-        const size_t maxVertices = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5 * 3;
+        // Determine cells per axis and buffer sizes using DIM
+        const int cellsPerAxis = DIM - 1; // marching cubes operates on (voxelGridDim - 1) cells
+        const size_t maxVertices = size_t(cellsPerAxis) * cellsPerAxis * cellsPerAxis * 5 * 3; // conservative upper bound
         const size_t triangleBufferSize = maxVertices * sizeof(OutVertex);
 
+        // Create per-chunk triangle SSBO
         glGenBuffers(1, &chunk->gpuCache.triangleSSBO);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, chunk->gpuCache.triangleSSBO);
         glBufferData(GL_SHADER_STORAGE_BUFFER, triangleBufferSize, nullptr, GL_DYNAMIC_DRAW);
 
-
-
-        // DEBUG: Check compute shader uniform locations
-        GLint gridOriginLoc = glGetUniformLocation(marchingCubesShader->getProgramID(), "gridOrigin");
-        GLint voxelSizeLoc = glGetUniformLocation(marchingCubesShader->getProgramID(), "voxelSize");
-        GLint voxelGridDimLoc = glGetUniformLocation(marchingCubesShader->getProgramID(), "voxelGridDim");
-
-
-
-        // Bind SSBOs for compute shader
+        // Bind SSBOs for compute shader (voxel SSBO already filled)
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssboVoxels);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ssboEdgeTable);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, ssboTriTable);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, ssboCounter);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, chunk->gpuCache.triangleSSBO);
 
-        // DEBUG: Print SSBO bindings
-        GLint boundSSBOs[5];
-        for (int i = 0; i < 5; i++) {
-            glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, i, &boundSSBOs[i]);
-        }
-
-        // Dispatch compute work
-        int groups = (CHUNK_SIZE - 1 + 7) / 8;
-
-        // ADD THIS: Create a fence before compute dispatch
-        //GLsync computeFence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-
+        // Dispatch compute work: groups based on number of cells (DIM-1)
+        int groups = (cellsPerAxis + 7) / 8;
         glDispatchCompute(groups, groups, groups);
-        //debugComputeShaderState();
 
-        // Wait for compute shader to finish
-        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT |
-                        GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT |
-                        GL_BUFFER_UPDATE_BARRIER_BIT);
+        // Ensure compute writes are visible to subsequent operations
+        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT | GL_BUFFER_UPDATE_BARRIER_BIT);
 
-        // ADD THIS: Wait for compute to finish
-       // glClientWaitSync(computeFence, GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000); // 1 second timeout
-        //glDeleteSync(computeFence);
-
-        // Get vertex count
+        // Read vertex count from the atomic counter SSBO (counter stores vertex count)
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
-        unsigned int vertexCount = 0;
-
-        // ADD THIS: Use glMapBuffer instead of glGetBufferSubData (more reliable)
-        void* counterData = glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY);
-        if (counterData) {
-            vertexCount = *static_cast<unsigned int*>(counterData);
+        unsigned int producedVertexCount = 0;
+        void* counterPtr = glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY);
+        if (counterPtr) {
+            producedVertexCount = *static_cast<unsigned int*>(counterPtr);
             glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
         }
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
-        chunk->gpuCache.vertexCount = vertexCount;
+        // Store vertex count into the chunk cache
+        chunk->gpuCache.vertexCount = producedVertexCount;
 
-// Actually, let's verify by reading the first few vertices from the SSBO
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, chunk->gpuCache.triangleSSBO);
-        OutVertex* mapped = (OutVertex*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0,
-                                                         std::min(vertexCount, 6U) * sizeof(OutVertex), GL_MAP_READ_BIT);
-        if (mapped) {
-            glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+        // Optional debug read: map the triangle SSBO for the first N vertices (safe-read)
+        if (producedVertexCount > 0) {
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, chunk->gpuCache.triangleSSBO);
+            size_t readCount = std::min<unsigned int>(producedVertexCount, 6u);
+            void* vertMap = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, readCount * sizeof(OutVertex), GL_MAP_READ_BIT);
+            if (vertMap) {
+                // could inspect some values while debugging
+                glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+            }
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
         }
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-        // PHASE 2: Create VAO/VBO for the generated vertices
+
+        // PHASE 2: Create VAO that reads directly from the triangle SSBO.
+        // We set attribute sizes to 3 to match the vertex shader's vec3 inputs.
         glGenVertexArrays(1, &chunk->gpuCache.vao);
-        glGenBuffers(1, &chunk->gpuCache.vbo);
+        glGenBuffers(1, &chunk->gpuCache.vbo); // vbo remains unused but created for cleanup parity
 
         glBindVertexArray(chunk->gpuCache.vao);
 
-        // Use the SSBO as the VBO
+        // Use the triangle SSBO as the ARRAY_BUFFER for vertex fetch
         glBindBuffer(GL_ARRAY_BUFFER, chunk->gpuCache.triangleSSBO);
 
-        // DEBUG: Check buffer size
-        GLint bufferSize;
-        glGetBufferParameteriv(GL_ARRAY_BUFFER, GL_BUFFER_SIZE, &bufferSize);
+        constexpr GLsizei stride = sizeof(OutVertex);
+        const void* posOffset    = (void*)offsetof(OutVertex, pos);
+        const void* normalOffset = (void*)offsetof(OutVertex, normal);
+        const void* colorOffset  = (void*)offsetof(OutVertex, color);
 
-
-        // Set vertex attributes
+        // aPos (vec3 in shader) <- OutVertex.pos (vec4 in buffer, we read first 3 components)
         glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, sizeof(OutVertex),
-                              (void*)offsetof(OutVertex, pos));
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, posOffset);
+
+        // aNormal (vec3) <- OutVertex.normal
         glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(OutVertex),
-                              (void*)offsetof(OutVertex, normal));
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, normalOffset);
+
+        // aColor (vec3) <- OutVertex.color
         glEnableVertexAttribArray(2);
-        glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(OutVertex),
-                              (void*)offsetof(OutVertex, color));
+        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, stride, colorOffset);
 
-        // DEBUG: Check vertex attribute setup
-        GLint attribEnabled[3];
-        for (int i = 0; i < 3; i++) {
-            glGetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_ENABLED, &attribEnabled[i]);
-        }
-
+        // Unbind VAO/ARRAY_BUFFER
         glBindVertexArray(0);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
 
         chunk->gpuCache.isValid = true;
         chunk->meshDirty = false;
-
     }
+
 
     void Game::debugComputeShaderState() {
         std::cout << "\n=== COMPUTE SHADER DIAGNOSTICS ===\n";
@@ -590,6 +566,14 @@ namespace gl3 {
     }
 
     void Game::renderChunks() {
+
+        if(DebugMode2)
+        {
+            glPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
+        } else
+        {
+            glPolygonMode( GL_FRONT_AND_BACK, GL_FILL );
+        }
         float aspect = (windowHeight == 0) ? (float)windowWidth / 1.0f : (float)windowWidth / (float)windowHeight;
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), glm::vec3(0.0f, 1.0f, 0.0f));
@@ -660,6 +644,8 @@ namespace gl3 {
         voxelShader->setVec3("viewPos", cameraPos);
         voxelShader->setVec3("ambientColor", glm::vec3(0.0002f));
         voxelShader->setFloat("emission", 0.0f);
+// or show signed N·L for the strongest light (index 0)
+        voxelShader->setInt("debugMode", 0);
 
         for (int cx = camCX - renderRadius; cx <= camCX + renderRadius; ++cx) {
             for (int cy = camCY - renderRadius; cy <= camCY + renderRadius; ++cy) {
@@ -730,7 +716,7 @@ namespace gl3 {
         }
 
         // Render billboards
-        if (!emissiveBillboards.empty()) {
+        if (!emissiveBillboards.empty()&&!DebugMode1) {
             sunBillboards.render(emissiveBillboards, view, projection, (float)glfwGetTime());
         }
 
@@ -750,9 +736,9 @@ namespace gl3 {
             for (auto &light : chunk->emissiveLights) {
                 // coarse bucket size (same as before)
                 ChunkCoord gridCell{
-                        (int)std::floor(light.pos.x / (CHUNK_SIZE * 2)),
-                        (int)std::floor(light.pos.y / (CHUNK_SIZE * 2)),
-                        (int)std::floor(light.pos.z / (CHUNK_SIZE * 2))
+                        (int)std::floor(light.pos.x / (DIM * 2)),
+                        (int)std::floor(light.pos.y / (DIM * 2)),
+                        (int)std::floor(light.pos.z / (DIM * 2))
                 };
                 lightSpatialHash[gridCell].push_back(&light);
                 rawLights.push_back(&light);
@@ -768,7 +754,7 @@ namespace gl3 {
         // 3) Simple greedy clustering (merge lights that are spatially close)
         // Tune this merge radius. Using CHUNK_SIZE * 1.5 means lights that spill over
         // into adjacent chunks are folded into a single logical emitter.
-        const float MERGE_RADIUS = CHUNK_SIZE * 12.0f;
+        const float MERGE_RADIUS = DIM * 12.0f;
         const float MERGE_RADIUS_SQ = MERGE_RADIUS * MERGE_RADIUS;
 
         std::vector<char> used(rawLights.size(), 0);
@@ -834,11 +820,11 @@ namespace gl3 {
         chunk->gpuCache.nearbyLights.reserve(MAX_LIGHTS);
 
         glm::vec3 chunkOrigin(
-                chunk->coord.x * CHUNK_SIZE,
-                chunk->coord.y * CHUNK_SIZE,
-                chunk->coord.z * CHUNK_SIZE
+                chunk->coord.x * DIM,
+                chunk->coord.y * DIM,
+                chunk->coord.z * DIM
         );
-        glm::vec3 chunkCenter = chunkOrigin + glm::vec3(CHUNK_SIZE * 0.5f);
+        glm::vec3 chunkCenter = chunkOrigin + glm::vec3(DIM * 0.5f);
 
         // Fast path
         if (flatEmissiveLightList.empty()) {
@@ -1219,7 +1205,10 @@ namespace gl3 {
     }
 
     // Draw all billboards
-    sunBillboards.render(billboardInstances, view, projection, float(glfwGetTime()));
+    if(!DebugMode1)
+    {
+        sunBillboards.render(billboardInstances, view, projection, float(glfwGetTime()));
+    }
 }
 
 
@@ -1228,13 +1217,31 @@ namespace gl3 {
         if(glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
             glfwSetWindowShouldClose(window, true);
         }
+        if(glfwGetKey(window,GLFW_KEY_TAB)==GLFW_PRESS)
+        {
+            if(DebugMode1)
+            {
+                voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel.frag");
+                DebugMode1= false;
+            }
+            else
+            {
+                voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel_debug.frag");
+                DebugMode1= true;
+            }
+        }
+        if(glfwGetKey(window,GLFW_KEY_CAPS_LOCK)==GLFW_PRESS)
+        {
+            DebugMode2=(!DebugMode2);
+        }
+
 
             // Update lighting only for dirty chunks
-            chunkManager->forEachEmissiveChunk([this](Chunk *chunk) {
+            /*chunkManager->forEachEmissiveChunk([this](Chunk *chunk) {
                 if (chunk->lightingDirty) {
                     rebuildChunkLights(chunk->coord);
                 }
-            });
+            });*/
 
             // Update dynamic chunks
             // chunkManager->forEachDynamicChunk([this](Chunk* chunk) {
@@ -1320,46 +1327,33 @@ namespace gl3 {
 // debug version: if doColorByDensity==true, set per-voxel color from density (visualize SDF)
     void Game::uploadVoxelChunk(const Chunk& chunk, const glm::vec3* overrideColor)
     {
-        // Debug toggle: set to true to upload grayscale colors based on density (visualize SDF)
-        // Set false to use overrideColor / chunk colors.
-        bool doColorByDensity = false;
+        const int localDIM = DIM; // use class member
+        const size_t total = size_t(localDIM) * localDIM * localDIM;
+        std::vector<CpuVoxel> voxels;
+        voxels.resize(total);
 
-        const int DIM = CHUNK_SIZE + 1;
-        size_t voxelCount = DIM * DIM * DIM;
-        std::vector<CpuVoxel> voxels(voxelCount);
-
-
-        // find min/max density for normalization (optional, fast)
-        float minD = FLT_MAX, maxD = -FLT_MAX;
-        if (doColorByDensity) {
-            for(int x=0;x<CHUNK_SIZE;x++) for(int y=0;y<CHUNK_SIZE;y++) for(int z=0;z<CHUNK_SIZE;z++) {
-                        float d = chunk.voxels[x][y][z].density;
-                        if (d < minD) minD = d;
-                        if (d > maxD) maxD = d;
+        // Copy samples [0 .. DIM-1] from chunk.voxels (Chunk stores CHUNK_SIZE+2 alloc, so this is safe).
+        for (int x = 0; x < localDIM; ++x) {
+            for (int y = 0; y < localDIM; ++y) {
+                for (int z = 0; z < localDIM; ++z) {
+                    int idx = x + y * localDIM + z * localDIM * localDIM;
+                    const auto &src = chunk.voxels[x][y][z];
+                    voxels[idx].density = src.density;
+                    if (overrideColor) {
+                        voxels[idx].color = glm::vec4(*overrideColor, 1.0f);
+                    } else {
+                        voxels[idx].color = glm::vec4(src.color, 1.0f);
                     }
-            // avoid degenerate range
-            if (maxD - minD < 1e-6f) { maxD = minD + 1.0f; }
-        }
-
-        for(int x=0;x<=CHUNK_SIZE;x++) {
-            for(int y=0;y<=CHUNK_SIZE;y++) {
-                for(int z=0;z<=CHUNK_SIZE;z++) {
-                    int sx = std::min(x, CHUNK_SIZE+1 );
-                    int sy = std::min(y, CHUNK_SIZE+1 );
-                    int sz = std::min(z, CHUNK_SIZE+1 );
-
-                    const auto &v = chunk.voxels[sx][sy][sz];
-                    int idx = x + y * DIM + z * DIM * DIM;
-
-                    voxels[idx].density = v.density;
-                    voxels[idx].color = overrideColor ? glm::vec4(*overrideColor, 1.0f) : glm::vec4(v.color, 1.0f);
                 }
             }
         }
 
+        // Upload to SSBO binding 0 (ssboVoxels was created with size voxelCount * sizeof(CpuVoxel))
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboVoxels);
-        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, voxels.size()*sizeof(CpuVoxel), voxels.data());
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, voxels.size() * sizeof(CpuVoxel), voxels.data());
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     }
+
     void Game::resetAtomicCounter()
     {
         unsigned int zero = 0;
@@ -1368,6 +1362,7 @@ namespace gl3 {
 
     }
 
+    // Set compute shader uniforms consistently (use member DIM and chunkOrigin -> gridOrigin)
     void Game::setComputeUniforms(const glm::vec3& chunkOrigin,
                                   const glm::vec3& /*objectScale*/,
                                   Shader& computeShader)
@@ -1375,17 +1370,11 @@ namespace gl3 {
         computeShader.use();
 
         const float voxelSize = 1.0f;
-        const int DIM = CHUNK_SIZE + 1;
-
-        // Shift grid so voxel corners are centered correctly
-        glm::vec3 gridOrigin = chunkOrigin; // no -0.5f * voxelSize
-
-
-        computeShader.setVec3("gridOrigin", gridOrigin);
+        // voxelGridDim equals DIM (number of sample points along each axis)
+        computeShader.setVec3("gridOrigin", chunkOrigin); // index (0,0,0) maps to chunkOrigin
         computeShader.setFloat("voxelSize", voxelSize);
         computeShader.setIVec3("voxelGridDim", glm::ivec3(DIM, DIM, DIM));
     }
-
 
     void Game::dispatchCompute(Chunk* chunk) {
         int groups = (CHUNK_SIZE - 1 + 7) / 8;
@@ -1400,51 +1389,63 @@ namespace gl3 {
         glDispatchCompute(groups, groups, groups);
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT);
     }
+
+    // Replace your existing drawTriangles() with this chunk-aware version.
+
     void Game::drawTriangles(Shader& voxelShader, Chunk* chunk)
     {
+        if (!chunk || !chunk->gpuCache.isValid) return;
 
-        glBindVertexArray(chunk->gpuCache.vao);
-        glDrawArrays(GL_TRIANGLES, 0, chunk->gpuCache.vertexCount);
-        glBindVertexArray(0);
+        // Ensure compute writes are visible to vertex fetch and buffer readbacks
+        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT | GL_BUFFER_UPDATE_BARRIER_BIT);
 
-        // Stride for OutVertex
+        // Read the triangle/vertex count from the atomic counter SSBO (binding 3)
+        unsigned int triCount = 0;
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(unsigned int), &triCount);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+        // Each triangle has 3 vertices
+        unsigned int vertexCount = triCount * 3u;
+        // Store to chunk cache so renderChunks() can also use it
+        chunk->gpuCache.vertexCount = vertexCount;
+
+        if (vertexCount == 0) return;
+
+        // Bind the chunk's triangle buffer as ARRAY_BUFFER (it was allocated as SSBO)
+        glBindBuffer(GL_ARRAY_BUFFER, chunk->gpuCache.triangleSSBO);
+
+        // Ensure VAO is set up to read from this buffer. If you created the VAO
+        // at mesh generation time using this buffer, you can skip re-specifying attributes.
+        // For robustness, we set them here (no harm if they're already set).
         constexpr GLsizei stride = sizeof(gl3::OutVertex);
 
-        // Attribute offsets (use offsetof for safety)
         const void* posOffset    = (void*)offsetof(gl3::OutVertex, pos);
         const void* normalOffset = (void*)offsetof(gl3::OutVertex, normal);
         const void* colorOffset  = (void*)offsetof(gl3::OutVertex, color);
 
-        // -- IMPORTANT --
-        // All are vec4 (4 floats), not vec3.
+        glBindVertexArray(chunk->gpuCache.vao);
 
+        // Match the vertex shader (aPos/aNormal/aColor are vec3) -> use size=3
         glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, stride, posOffset);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, posOffset);
 
         glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, stride, normalOffset);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, normalOffset);
 
         glEnableVertexAttribArray(2);
-        glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, stride, colorOffset);
+        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, stride, colorOffset);
 
-        // Ensure compute writes are visible
-        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT);
-
-        // Read counter (triangles)
-        unsigned int triCount = 0;
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
-        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(unsigned int), &triCount);
-
-        //std::cout << "Triangles: " << triCount << "\n";
-
-        // Each triangle has 3 vertices
-        unsigned int vertexCount = triCount * 3;
-
+        // Use the voxel shader program
         voxelShader.use();
 
-        glDrawArrays(GL_TRIANGLES, 0, vertexCount);
-    }
+        // Draw the generated vertices
+        glDrawArrays(GL_TRIANGLES, 0, (GLsizei)vertexCount);
 
+        // Unbind VAO/ARRAY_BUFFER to avoid accidental state leaks
+        glBindVertexArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
 
     float Game::getVoxelPlanetRadius(const glm::vec3& scale, float baseChunkRadius) {
         return baseChunkRadius * std::max(scale.x, std::max(scale.y, scale.z));

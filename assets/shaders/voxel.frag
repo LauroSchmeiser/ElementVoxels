@@ -64,6 +64,7 @@ void main() {
     vec3 color = hdr / (hdr + vec3(1.0));
 
     FragColor = vec4(hdr, 1.0);
+    FragColor = vec4(diffuse,1.0);
     // debug: show normals as color
     //FragColor = vec4(normalize(normal) * 0.5 + 0.5, 1.0);
 }

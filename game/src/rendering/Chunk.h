@@ -23,7 +23,7 @@ namespace gl3 {
             GLuint triangleSSBO = 0;
             uint32_t vertexCount = 0;
             bool isValid = false;
-            uint64_t lastLightUpdateFrame = 0;
+            uint64_t lastLightUpdateFrame = 15;
             std::vector<VoxelLight*> nearbyLights; // Pointers to other chunks' lights
         } gpuCache;
 

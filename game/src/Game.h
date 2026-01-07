@@ -33,6 +33,8 @@ namespace gl3 {
         GLFWwindow *getWindow() { return window; }
 
     private:
+        bool DebugMode1=false;
+        bool DebugMode2=false;
 
         //std::unique_ptr<ChunkManager> chunkManager = std::make_unique<ChunkManager>(); // NEW
 
@@ -56,7 +58,7 @@ namespace gl3 {
         void generateChunkMesh(Chunk* chunk);
 
         // Frame counter for light update staggering
-        uint64_t frameCounter = 0;
+        uint64_t frameCounter = 29;
 
 
             // --- Generate planet transforms ---
