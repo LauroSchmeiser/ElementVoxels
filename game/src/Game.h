@@ -11,7 +11,6 @@
 #include <array>
 #include <unordered_set>
 #include <unordered_map>
-#include "entities//Entity.h"
 #include "rendering/VoxelStructures.h"
 #include "rendering/SunBillboard.h"
 #include "rendering/VoxelStructures.h"
@@ -20,157 +19,79 @@
 #include "rendering/MultiGridChunkManager.h"
 
 namespace gl3 {
-
-    static constexpr int ChunkCount=100;
-    static constexpr int RenderingRange=50;
-
     class Game {
     public:
-        Game(int width, int height, const std::string &title);
-        virtual ~Game();
-        void run();
-        glm::mat4 calculateMvpMatrix(glm::vec3 position, float zRotationInDegrees, glm::vec3 scale);
-        GLFWwindow *getWindow() { return window; }
+        ////basics (public):
+          Game(int width, int height, const std::string &title);
+          virtual ~Game();
+          void run();
+          GLFWwindow *getWindow() { return window; }
 
     private:
-        bool DebugMode1=false;
-        bool DebugMode2=false;
-        int activeDebugMode=0;
+        ////basics (private):
+          static void framebuffer_size_callback(GLFWwindow *window, int width, int height);
 
-        //std::unique_ptr<ChunkManager> chunkManager = std::make_unique<ChunkManager>(); // NEW
-
-        // Or if using MultiGridChunkManager:
-        std::unique_ptr<MultiGridChunkManager> chunkManager = std::make_unique<MultiGridChunkManager>();
-        static void framebuffer_size_callback(GLFWwindow *window, int width, int height);
-        void update();
-        void draw();
-        void updateDeltaTime();
-        void updatePhysics();
-        bool hasSolidVoxels(const gl3::Chunk& chunk);
-
-        glm::vec3 getChunkWorldPosition(const ChunkCoord &coord);
-        ChunkCoord worldToChunkCoord(const glm::vec3 &worldPos) const;
-        int worldToChunk(float worldPos) const;
-
-        uint32_t makeLightID(int cx, int cy, int cz);
-        void markChunkModified(const ChunkCoord& coord);
-        void unloadChunk(const ChunkCoord& coord);
-        void updateChunkLights(Chunk* chunk);
-        void generateChunkMesh(Chunk* chunk);
-
-        // Frame counter for light update staggering
-        uint64_t frameCounter = 29;
+        ////Chunk Management:
+          //std::unique_ptr<ChunkManager> chunkManager = std::make_unique<ChunkManager>(); // other manager (old)
+          std::unique_ptr<MultiGridChunkManager> chunkManager = std::make_unique<MultiGridChunkManager>();
+          bool hasSolidVoxels(const gl3::Chunk& chunk);
+          int worldToChunk(float worldPos) const;
+          void markChunkModified(const ChunkCoord& coord);
+          void unloadChunk(const ChunkCoord& coord);
 
 
-            // --- Generate planet transforms ---
-        struct WorldPlanet {
-            glm::vec3 worldPos;   // world-space center
-            float radius;         // world-space radius
-            glm::vec3 color;
-            int type;             // 1=rock, 2=lava, 3=water
-        };
+        ////Debugging:
+          void debugComputeShaderState();
+          bool DebugMode1=false;
+          bool DebugMode2=false;
+          int activeDebugMode=0;
 
 
-        // Updated signatures
-        void updateLightSpatialHash();
-        void debugComputeShaderState();
-        void uploadVoxelChunk(const Chunk& chunk, const glm::vec3* overrideColor = nullptr);
-        void resetAtomicCounter();
-        void setComputeUniforms(const glm::vec3& position, const glm::vec3& objectScale, Shader& computeShader);
-        void dispatchCompute(Chunk* chunk);
-        void drawTriangles(Shader& voxelShader,Chunk* chunk);
-
-        void handleCameraInput();
-        float getVoxelPlanetRadius(const glm::vec3& scale, float baseChunkRadius);
-        bool isOverlapping(const glm::vec3 &pos, float rad, const std::vector<gl3::Game::WorldPlanet> &others);
+        ////Initialization-Steps
+          void setupSSBOsAndTables();
+          void setupCamera();
+          void generateChunks();
+          void setupVEffects();
 
 
-            //Initialization-Steps
-        void setupSSBOsAndTables();
-        void setupCamera();
-        void generateChunks();
-        void fillChunks();
-        void setSimulationVariables();
-        void setupVEffects();
-        void findBestParent();
+        ////Simulation-Steps
+          //Physics:
+          void updatePhysics();
+          void updateDeltaTime();
+
+          //Lighting:
+          void updateLightSpatialHash();
+          void rebuildChunkLights(const ChunkCoord &coord);
+          void updateChunkLights(Chunk* chunk);
+          void processEmissiveChunks();
+          uint32_t makeLightID(int cx, int cy, int cz);
 
 
-        //Simulation-Steps
-        //void updateWorldLighting();
-        void rebuildChunkLights(const ChunkCoord &coord);
-        std::vector<VoxelLight*> collectNearbyLightsFast(
-                const ChunkCoord& chunkCoord,
-                const glm::vec3& chunkOrigin,
-                const std::unordered_map<ChunkCoord, std::vector<VoxelLight*>, ChunkCoordHash>& hash);
-        void buildLightSpatialHash(
-                std::unordered_map<ChunkCoord, std::vector<VoxelLight*>, ChunkCoordHash>& hash);
-        //Input-Steps
-
-        //Post-Prod Steps?
-
-        //Rendering-Steps
-        void renderChunks();
-        void processEmissiveChunks();
-        void renderSuns();
-        void renderPlanets();
-        void renderFluidPlanets();
-
-        glm::vec3 getCameraFront() const;
-        GLFWwindow *window = nullptr;
-        std::vector<std::unique_ptr<Entity>> entities;
-        SoLoud::Soloud audio;
-        std::unique_ptr<SoLoud::Wav> backgroundMusic;
-        float lastFrameTime = 1.0f/60;
-        float deltaTime = 1.0f/60;
-        float accumulator = 0.1f;
-        glm::vec3 cameraPos = glm::vec3(0.0f, 0.0f, 50.0f);
-        glm::vec2 cameraRotation = glm::vec2(-90.0f, 0.0f); // pitch, yaw
-        int windowWidth = 800, windowHeight = 600;
-        const int DIM = CHUNK_SIZE + 1;
-        size_t voxelCount = DIM * DIM * DIM;
-        size_t maxVerts = CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE * 5 * 3;
-
-        //SSBOs for marching cubes
-        GLuint ssboVoxels = 0, ssboEdgeTable = 0, ssboTriTable = 0, ssboCounter = 0, ssboTriangles = 0, particleSSBO=0, fieldBitsSSBO=0;
-
-        const int MAX_LIGHTS = 4;       // matches shader
-        const float LIGHT_RADIUS = 220.0f*CHUNK_SIZE;
-        const float LIGHT_RADIUS_SQ = LIGHT_RADIUS * LIGHT_RADIUS;
-        std::vector<const gl3::VoxelLight*> flatEmissiveLightList;
-        std::unordered_map<ChunkCoord, std::vector<VoxelLight*>, ChunkCoordHash> lightSpatialHash;
-        // After building chunk-local lights we create a small merged pool to avoid seams.
-        // Merged pool holds stable VoxelLight objects we point to from flatEmissiveLightList.
-        std::vector<gl3::VoxelLight> mergedEmissiveLightPool;
-        static constexpr int LIGHT_UPDATE_INTERVAL = 15; // Update lights every 15 frames
-
-        std::unordered_set<uint32_t> usedLightIDs;
+        ////Input-Steps
+          void update();
+          void handleCameraInput();
+          glm::vec3 getCameraFront() const;
 
 
-        //Chunks:
-        //Chunk meteorChunk;
-        //Chunk baseChunk;
-        //Chunk sunChunk;
-        Chunk fluidPlanetChunk;
+        ////Post-Prod Steps?
 
 
-        //std::vector<Planet> suns;
-        //std::vector<Planet> planets;
-        //std::vector<Planet> meteors;
-        std::vector<WorldPlanet> fluidPlanets;
+        ////Rendering-Steps::
+          //General Rendering:
+          void renderChunks();
+          void renderFluidPlanets();
 
-        std::vector<WorldPlanet> CollisionEntities;
+          //marching cubes Shader:
+          void generateChunkMesh(Chunk* chunk);
+          void uploadVoxelChunk(const Chunk& chunk, const glm::vec3* overrideColor = nullptr);
+          void resetAtomicCounter();
+          void setComputeUniforms(const glm::vec3& position, const glm::vec3& objectScale, Shader& computeShader);
 
-        //vEffects
-        SunBillboard sunBillboards;
-
-
-        std::unique_ptr<Shader> voxelShader;
-        std::unique_ptr<Shader> marchingCubesShader;
-
-        // inside Game class:
-        std::unique_ptr<Shader> voxelSplatShader;
+          //vertex/frag Shader:
+          void drawTriangles(Shader& voxelShader,Chunk* chunk);
 
 
+        ////Structs::
         struct Particle {
             glm::vec3 position;
             glm::vec3 velocity;
@@ -179,11 +100,78 @@ namespace gl3 {
             unsigned int  type;       // 0=water,1=fire,2=smoke...
         };
 
-        std::vector<SunInstance> emissiveBillboards;
+        // --- Generate planet transforms ---
+        struct WorldPlanet {
+            glm::vec3 worldPos;   // world-space center
+            float radius;         // world-space radius
+            glm::vec3 color;
+            int type;             // 1=rock, 2=lava, 3=water
+        };
 
-        std::vector<Particle> particles;
 
-        int maxParticles =100;
-        //helper function
+        ////Basic-variables:
+          GLFWwindow *window = nullptr;
+          int windowWidth = 800, windowHeight = 600;
+          SoLoud::Soloud audio;
+          std::unique_ptr<SoLoud::Wav> backgroundMusic;
+
+
+        ////Simultation-Variables:
+          //Physics-Variables:
+          float lastFrameTime = 1.0f/60;
+          float deltaTime = 1.0f/60;
+          float accumulator = 0.1f;
+          std::vector<WorldPlanet> CollisionEntities;
+          std::vector<Particle> particles;
+          int maxParticles =100;
+
+        //Lighting-Variables:
+          const int MAX_LIGHTS = 4; // has to match marching cubes shader
+          const float LIGHT_RADIUS = 220.0f*CHUNK_SIZE;
+          uint64_t frameCounter = 29; // Frame counter for light update staggering
+          const float LIGHT_RADIUS_SQ = LIGHT_RADIUS * LIGHT_RADIUS;
+          std::vector<const gl3::VoxelLight*> flatEmissiveLightList;
+          std::unordered_map<ChunkCoord, std::vector<VoxelLight*>, ChunkCoordHash> lightSpatialHash;
+          // After building chunk-local lights we create a small merged pool to avoid seams.
+          // Merged pool holds stable VoxelLight objects we point to from flatEmissiveLightList.
+          std::vector<gl3::VoxelLight> mergedEmissiveLightPool;
+          static constexpr int LIGHT_UPDATE_INTERVAL = 15; // Update lights every 15 frames
+          std::unordered_set<uint32_t> usedLightIDs;
+
+
+        ////Camera-Variables:
+          glm::vec3 cameraPos = glm::vec3(0.0f, 0.0f, 50.0f);
+          glm::vec2 cameraRotation = glm::vec2(-90.0f, 0.0f); // pitch, yaw
+
+
+        ////Rendering-Variables:
+          //World-Variables:
+          const int DIM = CHUNK_SIZE + 1; //Chunk Size with a bit off padding for marching cubes
+          size_t voxelCount = DIM * DIM * DIM; //How many voxels can be in one Chunk
+          static constexpr int ChunkCount=100; //Total size of the Game World
+          static constexpr int RenderingRange=50; //Range around Camera that is rendered
+
+          //Marching-cubes Shader Variables:
+          size_t maxVerts = CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE * 5 * 3; //Max amount of vertices marching cubes can create
+          //SSBOs for marching cubes:
+          GLuint ssboVoxels = 0, ssboEdgeTable = 0, ssboTriTable = 0,
+          ssboCounter = 0, ssboTriangles = 0, particleSSBO=0, fieldBitsSSBO=0;
+
+          //vEffects
+          SunBillboard sunBillboards;
+          std::vector<SunInstance> emissiveBillboards;
+
+
+        ////Lists (deprecated)
+          std::vector<WorldPlanet> fluidPlanets;
+
+
+        ////Shader:
+          std::unique_ptr<Shader> voxelShader;
+          std::unique_ptr<Shader> marchingCubesShader;
+          std::unique_ptr<Shader> voxelSplatShader;
+
+
+        ////helper functions:
     };
 }

@@ -22,7 +22,6 @@ add_executable(${EXE_FILE} ${SOURCE_FILES}
         src/rendering/SunBillboard.cpp
         src/rendering/SunBillboard.h
         ../extern/robin_hood.h
-        src/rendering/MultiGridChunkManager.cpp
         src/rendering/MultiGridChunkManager.h
         src/rendering/ChunkManager.cpp
         src/rendering/ChunkManager.h
