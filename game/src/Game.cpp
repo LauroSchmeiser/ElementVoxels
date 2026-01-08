@@ -4,10 +4,10 @@
 #include <iostream>
 #include <amp_short_vectors.h>
 #include "Assets.h"
-#include "rendering/VoxelMesher.h"
 #include "rendering/Shader.h"
 #include "rendering/marchingTables.h"
 #include "rendering/SunBillboard.h"
+
 
 namespace gl3 {
 
@@ -23,6 +23,19 @@ namespace gl3 {
         glm::vec4 color;
     };
     static_assert(sizeof(CpuVoxel) == 32, "CpuVoxel size must be 32 bytes to match std430 layout");
+
+    struct CpuTimer {
+        const char* name;
+        std::chrono::high_resolution_clock::time_point start;
+
+        CpuTimer(const char* n) : name(n), start(std::chrono::high_resolution_clock::now()) {}
+        ~CpuTimer() {
+            auto end = std::chrono::high_resolution_clock::now();
+            double ms = std::chrono::duration<double, std::milli>(end - start).count();
+            std::cout << name << ": " << ms << " ms\n";
+        }
+    };
+
 
     void Game::framebuffer_size_callback(GLFWwindow *window, int width, int height) {
         if (height == 0) height = 1; // prevent divide-by-zero
@@ -92,8 +105,10 @@ namespace gl3 {
 
     void Game::run() {
         ////Initialization-Steps
+        CpuTimer t0("ssbos");
         setupSSBOsAndTables();
         setupCamera();
+        CpuTimer t1("generateChunks");
         generateChunks();
         setupVEffects();
 
@@ -113,7 +128,11 @@ namespace gl3 {
             ////Post-Prod Steps?
 
             ////Rendering Steps
+            CpuTimer t2("renderChunks");
             renderChunks();
+
+            ////UI
+            DisplayFPSCount();
 
             ////SwapBuffer
             glfwSwapBuffers(window);
@@ -267,6 +286,23 @@ namespace gl3 {
         }
     */
 
+    void Game::DisplayFPSCount()
+    {
+        static double lastTime = 0.0;
+        static int frames = 0;
+
+        double currentTime = glfwGetTime();
+        frames++;
+
+        if (currentTime - lastTime >= 1.0) {
+            double fps = frames / (currentTime - lastTime);
+            frames = 0;
+            lastTime = currentTime;
+
+            std::string title = "Voxel Engine | FPS: " + std::to_string((int)fps);
+            glfwSetWindowTitle(getWindow(), title.c_str());
+        }
+    }
 
 ////----Initialization Code---------------------------------------------------------------------------------------------------------------------
 
@@ -858,7 +894,9 @@ namespace gl3 {
 //------General Rendering-Code------------------------------------------------------------------------------------------------------------------
 
     void Game::renderChunks() {
+        int built = 0;
 
+        std::cout<<"\nFrame:"<<(frameCounter-29)<<"\n";
         if (DebugMode2) {
             glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
         } else {
@@ -887,12 +925,13 @@ namespace gl3 {
 
         // STEP 1: Update global light spatial hash (replaces grid)
         if (frameCounter % 30 == 0) { // Update every 30 frames
+            CpuTimer t7("\n Update Light Spacial Hash");
             updateLightSpatialHash();
         }
 
         // STEP 2: First, generate meshes for dirty chunks
         const int renderRadius = RenderingRange;
-
+        CpuTimer t8("Generate Meshes");
         for (int cx = camCX - renderRadius; cx <= camCX + renderRadius; ++cx) {
             for (int cy = camCY - renderRadius; cy <= camCY + renderRadius; ++cy) {
                 for (int cz = camCZ - renderRadius; cz <= camCZ + renderRadius; ++cz) {
@@ -908,16 +947,29 @@ namespace gl3 {
                     if (!chunk) continue;
                     if (!hasSolidVoxels(*chunk)) continue;
 
-                    // Rebuild lighting if dirty
-                    if (chunk->lightingDirty) {
-                        rebuildChunkLights(coord);
-                        chunk->lightingDirty = false;
+                    // Regenerate mesh if dirty
+                    if (chunk->meshDirty&&++built < MAX_CHUNKS_PER_FRAME || !chunk->gpuCache.isValid&&++built < MAX_CHUNKS_PER_FRAME) {
+                        if(built<=1)
+                        {
+                            CpuTimer t5("generateChunkMesh");
+                        }
+                        generateChunkMesh(chunk);
+                        if(built<=1) {
+                            std::cout << "Progress: "
+                                      << ((float) (frameCounter - 29) * MAX_CHUNKS_PER_FRAME / 1000.0f) * 100.0f
+                                      << "% \n";
+                        }
+                        meshRegens++;
                     }
 
-                    // Regenerate mesh if dirty
-                    if (chunk->meshDirty || !chunk->gpuCache.isValid) {
-                        generateChunkMesh(chunk);
-                        meshRegens++;
+                    // Rebuild lighting if dirty
+                    if (built<MAX_CHUNKS_PER_FRAME&&chunk->lightingDirty) {
+                        if(built==1)
+                        {
+                            CpuTimer t4("rebuildChunkLights");
+                        }
+                        rebuildChunkLights(coord);
+                        chunk->lightingDirty = false;
                     }
 
                 }
@@ -941,6 +993,7 @@ namespace gl3 {
             voxelShader->setFloat("emission", 0.0f);
         }
 
+        CpuTimer t6("ChunkLighting");
         for (int cx = camCX - renderRadius; cx <= camCX + renderRadius; ++cx) {
             for (int cy = camCY - renderRadius; cy <= camCY + renderRadius; ++cy) {
                 for (int cz = camCZ - renderRadius; cz <= camCZ + renderRadius; ++cz) {

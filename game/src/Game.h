@@ -42,6 +42,7 @@ namespace gl3 {
 
         ////Debugging:
           void debugComputeShaderState();
+          void DisplayFPSCount();
           bool DebugMode1=false;
           bool DebugMode2=false;
           int activeDebugMode=0;
@@ -135,7 +136,7 @@ namespace gl3 {
           // After building chunk-local lights we create a small merged pool to avoid seams.
           // Merged pool holds stable VoxelLight objects we point to from flatEmissiveLightList.
           std::vector<gl3::VoxelLight> mergedEmissiveLightPool;
-          static constexpr int LIGHT_UPDATE_INTERVAL = 15; // Update lights every 15 frames
+          static constexpr int LIGHT_UPDATE_INTERVAL = 15; // Update lights every 30 frames
           std::unordered_set<uint32_t> usedLightIDs;
 
 
@@ -149,10 +150,12 @@ namespace gl3 {
           const int DIM = CHUNK_SIZE + 1; //Chunk Size with a bit off padding for marching cubes
           size_t voxelCount = DIM * DIM * DIM; //How many voxels can be in one Chunk
           static constexpr int ChunkCount=100; //Total size of the Game World
-          static constexpr int RenderingRange=50; //Range around Camera that is rendered
+          static constexpr int RenderingRange=30; //Range around Camera that is rendered
 
-          //Marching-cubes Shader Variables:
+          //Marching-
           size_t maxVerts = CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE * 5 * 3; //Max amount of vertices marching cubes can create
+          const int MAX_CHUNKS_PER_FRAME = 20;
+          //std::vector<Chunk> dirtyChunks;
           //SSBOs for marching cubes:
           GLuint ssboVoxels = 0, ssboEdgeTable = 0, ssboTriTable = 0,
           ssboCounter = 0, ssboTriangles = 0, particleSSBO=0, fieldBitsSSBO=0;

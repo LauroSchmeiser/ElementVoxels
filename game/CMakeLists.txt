@@ -14,10 +14,7 @@ file(GLOB_RECURSE SOURCE_FILES CONFIGURE_DEPENDS
 )
 add_executable(${EXE_FILE} ${SOURCE_FILES}
         src/rendering/VoxelStructures.h
-        src/rendering/VoxelMesher.h
         ../main.cpp
-        src/entities/VoxelEntity.cpp
-        src/entities/VoxelEntity.h
         src/rendering/marchingTables.h
         src/rendering/SunBillboard.cpp
         src/rendering/SunBillboard.h

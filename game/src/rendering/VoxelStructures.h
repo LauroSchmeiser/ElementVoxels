@@ -4,7 +4,7 @@
 #include "glm/glm.hpp"
 
 namespace gl3 {
-    constexpr int CHUNK_SIZE = 12;
+    constexpr int CHUNK_SIZE = 10;
 
     struct Voxel {
         uint8_t type = 0;
