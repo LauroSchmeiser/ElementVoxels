@@ -1,13 +1,14 @@
 // In Chunk.h
 #pragma once
-
+#undef NEAR;
+#undef FAR;
 #include <vector>
 #include <glad/glad.h>
 
 namespace gl3 {
     struct Chunk {
         // Core voxel data
-        Voxel voxels[CHUNK_SIZE + 2][CHUNK_SIZE + 2][CHUNK_SIZE + 2];
+        Voxel voxels[CHUNK_SIZE + 1][CHUNK_SIZE + 1][CHUNK_SIZE + 1];
         // Lighting data
         std::vector<VoxelLight> emissiveLights;
         bool lightingDirty = true;
@@ -29,9 +30,9 @@ namespace gl3 {
 
         // Helper methods
         void clear() {
-            for (int x = 0; x < CHUNK_SIZE + 2; ++x) {
-                for (int y = 0; y < CHUNK_SIZE + 2; ++y) {
-                    for (int z = 0; z < CHUNK_SIZE + 2; ++z) {
+            for (int x = 0; x < CHUNK_SIZE + 1; ++x) {
+                for (int y = 0; y < CHUNK_SIZE + 1; ++y) {
+                    for (int z = 0; z < CHUNK_SIZE + 1; ++z) {
                         voxels[x][y][z].type = 0;
                         voxels[x][y][z].density = -1000.0f;
                         voxels[x][y][z].color = glm::vec3(0.0f);

@@ -128,7 +128,10 @@ namespace gl3 {
             ////Post-Prod Steps?
 
             ////Rendering Steps
-            CpuTimer t2("renderChunks");
+            if(DebugMode1)
+            {
+                CpuTimer t2("renderChunks");
+            }
             renderChunks();
 
             ////UI
@@ -182,6 +185,42 @@ namespace gl3 {
             // GPU resources get cleaned up in chunk destructor or clear() method
             chunk->clear(); // This deletes VAO/VBO
         }
+    }
+
+    // Get chunk bounding box in world space
+    glm::vec3 Game::getChunkMin(const ChunkCoord& coord) const {
+        return glm::vec3(coord.x * CHUNK_SIZE,
+                         coord.y * CHUNK_SIZE,
+                         coord.z * CHUNK_SIZE);
+    }
+
+    glm::vec3 Game::getChunkMax(const ChunkCoord& coord) const {
+        return glm::vec3((coord.x + 1) * CHUNK_SIZE,
+                         (coord.y + 1) * CHUNK_SIZE,
+                         (coord.z + 1) * CHUNK_SIZE);
+    }
+
+    // Check if chunk is visible (combination of distance and frustum culling)
+    bool Game::isChunkVisible(const ChunkCoord& coord) const {
+        // Quick distance check first (cheaper)
+        const int camCX = worldToChunk(cameraPos.x);
+        const int camCY = worldToChunk(cameraPos.y);
+        const int camCZ = worldToChunk(cameraPos.z);
+
+        int dx = coord.x - camCX;
+        int dy = coord.y - camCY;
+        int dz = coord.z - camCZ;
+
+        // Distance culling
+        if (dx * dx + dy * dy + dz * dz > RenderingRange * RenderingRange) {
+            return false;
+        }
+
+        // Frustum culling
+        glm::vec3 chunkMin = getChunkMin(coord);
+        glm::vec3 chunkMax = getChunkMax(coord);
+
+        return currentFrustum.isAABBVisible(chunkMin, chunkMax);
     }
 
 
@@ -408,7 +447,6 @@ namespace gl3 {
 
         // Carve planets into chunks
         size_t solidVoxels = 0;
-        size_t touchedChunks = 0;
 
         // DEBUG: Track how many chunks we create
         std::unordered_set<ChunkCoord, ChunkCoordHash> createdChunks;
@@ -496,7 +534,7 @@ namespace gl3 {
                         if (chunkTouched) {
                             chunk->meshDirty = true;
                             chunk->lightingDirty = true;
-                            touchedChunks++;
+                            FilledChunks++;
 
                             // Rebuild lights for this chunk if it contains fire
                             if (planet.type == 2) {
@@ -510,7 +548,7 @@ namespace gl3 {
 
         // Statistics
         std::cout << "Generated " << worldPlanets.size() << " planets\n";
-        std::cout << "Touched " << touchedChunks << " chunks\n";
+        std::cout << "Touched " << FilledChunks << " chunks\n";
         std::cout << "Created " << solidVoxels << " solid voxels\n";
     }
 
@@ -895,17 +933,19 @@ namespace gl3 {
 
     void Game::renderChunks() {
         int built = 0;
+        int lighted = 0;
+        int culledChunks=0;
 
         std::cout<<"\nFrame:"<<(frameCounter-29)<<"\n";
         if (DebugMode2) {
             glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-        } else {
+        }
+        else {
             glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
         }
         float aspect = (windowHeight == 0) ? (float) windowWidth / 1.0f : (float) windowWidth / (float) windowHeight;
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), glm::vec3(0.0f, 1.0f, 0.0f));
-
         glm::mat4 pv = projection * view;
 
         frameCounter++;
@@ -918,10 +958,12 @@ namespace gl3 {
         const int camCX = worldToChunk(cameraPos.x);
         const int camCY = worldToChunk(cameraPos.y);
         const int camCZ = worldToChunk(cameraPos.z);
-        const int R2 = RenderingRange * RenderingRange;
+        const int totalChunks = (2 * RenderingRange + 1) * (2 * RenderingRange + 1) * (2 * RenderingRange + 1);
 
         int renderedChunks = 0;
         int meshRegens = 0;
+        int totalChecked = 0;
+
 
         // STEP 1: Update global light spatial hash (replaces grid)
         if (frameCounter % 30 == 0) { // Update every 30 frames
@@ -931,17 +973,17 @@ namespace gl3 {
 
         // STEP 2: First, generate meshes for dirty chunks
         const int renderRadius = RenderingRange;
-        CpuTimer t8("Generate Meshes");
+        if(DebugMode1) {CpuTimer t8("Generate Meshes");}
         for (int cx = camCX - renderRadius; cx <= camCX + renderRadius; ++cx) {
             for (int cy = camCY - renderRadius; cy <= camCY + renderRadius; ++cy) {
                 for (int cz = camCZ - renderRadius; cz <= camCZ + renderRadius; ++cz) {
-                    // Distance culling
-                    int dx = cx - camCX;
-                    int dy = cy - camCY;
-                    int dz = cz - camCZ;
-                    if (dx * dx + dy * dy + dz * dz > R2) continue;
-
+                    totalChecked++;
                     ChunkCoord coord{cx, cy, cz};
+                    if(!isChunkVisible(coord))
+                    {
+                        culledChunks++;
+                        continue;
+                    }
                     Chunk *chunk = chunkManager->getChunk(coord);
 
                     if (!chunk) continue;
@@ -949,33 +991,41 @@ namespace gl3 {
 
                     // Regenerate mesh if dirty
                     if (chunk->meshDirty&&++built < MAX_CHUNKS_PER_FRAME || !chunk->gpuCache.isValid&&++built < MAX_CHUNKS_PER_FRAME) {
-                        if(built<=1)
+                        if(built<=1&&DebugMode1)
                         {
                             CpuTimer t5("generateChunkMesh");
                         }
                         generateChunkMesh(chunk);
                         if(built<=1) {
                             std::cout << "Progress: "
-                                      << ((float) (frameCounter - 29) * MAX_CHUNKS_PER_FRAME / 1000.0f) * 100.0f
+                                      << ((float) (frameCounter - 29) * MAX_CHUNKS_PER_FRAME / FilledChunks) * 100.0f
                                       << "% \n";
                         }
                         meshRegens++;
                     }
 
                     // Rebuild lighting if dirty
-                    if (built<MAX_CHUNKS_PER_FRAME&&chunk->lightingDirty) {
-                        if(built==1)
+                    if (chunk->lightingDirty&&++lighted<MAX_CHUNKS_PER_FRAME) {
+                        if(lighted==1&&DebugMode1)
                         {
                             CpuTimer t4("rebuildChunkLights");
                         }
                         rebuildChunkLights(coord);
+                        if(lighted<=1) {
+                            std::cout << "Progress: "
+                                      << ((float)(100.0f * (totalChunks - (frameCounter - 29) * MAX_CHUNKS_PER_FRAME ) / totalChunks) * 100.0f)
+                                      << "% \n";
+                        }
                         chunk->lightingDirty = false;
                     }
 
                 }
             }
         }
-
+        if(DebugMode1) {std::cout << "Mesh generation: culled " << culledChunks << " of " << totalChecked
+                  << " chunks (" << (100.0f * culledChunks / totalChecked) << "% culled)\n";}
+        culledChunks = 0;
+        totalChecked = 0;
         // STEP 3: Now RENDER all visible chunks
         voxelShader->use();  // Activate RENDER shader
 
@@ -993,17 +1043,17 @@ namespace gl3 {
             voxelShader->setFloat("emission", 0.0f);
         }
 
-        CpuTimer t6("ChunkLighting");
+        if(DebugMode1) {CpuTimer t6("ChunkLighting");}
         for (int cx = camCX - renderRadius; cx <= camCX + renderRadius; ++cx) {
             for (int cy = camCY - renderRadius; cy <= camCY + renderRadius; ++cy) {
                 for (int cz = camCZ - renderRadius; cz <= camCZ + renderRadius; ++cz) {
-                    // Distance culling
-                    int dx = cx - camCX;
-                    int dy = cy - camCY;
-                    int dz = cz - camCZ;
-                    if (dx * dx + dy * dy + dz * dz > R2) continue;
-
+                    totalChecked++;
                     ChunkCoord coord{cx, cy, cz};
+                    if(!isChunkVisible(coord))
+                    {
+                        culledChunks++;
+                        continue;
+                    }
                     Chunk *chunk = chunkManager->getChunk(coord);
                     if (!chunk || !hasSolidVoxels(*chunk)) continue;
 
@@ -1024,7 +1074,7 @@ namespace gl3 {
                             SunInstance inst;
                             inst.position = light.pos;
                             inst.scale = std::sqrt(light.intensity) * 0.5f;
-                            inst.color = light.color * 2.5f;
+                            inst.color = light.color * 1.0f;
                             emissiveBillboards.push_back(inst);
                         }
                     }
@@ -1062,6 +1112,15 @@ namespace gl3 {
             }
         }
 
+        if(DebugMode1) {
+            std::cout << "Lighting/Rendering: culled " << culledChunks << " of " << totalChecked
+                      << " chunks (" << (100.0f * culledChunks / totalChecked) << "% culled)\n";
+
+            // Also add frustum culling statistics
+            std::cout << "Frustum culling effectiveness: "
+                      << (100.0f * (totalChunks - totalChecked + culledChunks) / totalChunks)
+                      << "% of chunks were culled\n";
+        }
         // Render billboards
         if (!emissiveBillboards.empty() && !DebugMode1) {
             sunBillboards.render(emissiveBillboards, view, projection, (float) glfwGetTime());
@@ -1324,7 +1383,6 @@ namespace gl3 {
         unsigned int zero = 0;
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
         glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(unsigned int), &zero);
-
     }
 
     // Set compute shader uniforms consistently (use member DIM and chunkOrigin -> gridOrigin)

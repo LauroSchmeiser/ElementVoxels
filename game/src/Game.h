@@ -38,6 +38,9 @@ namespace gl3 {
           int worldToChunk(float worldPos) const;
           void markChunkModified(const ChunkCoord& coord);
           void unloadChunk(const ChunkCoord& coord);
+          glm::vec3 getChunkMin(const ChunkCoord& coord) const;
+          glm::vec3 getChunkMax(const ChunkCoord& coord) const;
+          bool isChunkVisible(const ChunkCoord& coord) const;
 
 
         ////Debugging:
@@ -46,7 +49,7 @@ namespace gl3 {
           bool DebugMode1=false;
           bool DebugMode2=false;
           int activeDebugMode=0;
-
+          int FilledChunks=0;
 
         ////Initialization-Steps
           void setupSSBOsAndTables();
@@ -109,12 +112,116 @@ namespace gl3 {
             int type;             // 1=rock, 2=lava, 3=water
         };
 
+        struct Plane {
+            glm::vec3 normal;
+            float distance;
 
-        ////Basic-variables:
+            Plane() : normal(0, 0, 0), distance(0) {}
+            Plane(const glm::vec3& n, const glm::vec3& point) {
+                normal = glm::normalize(n);
+                distance = glm::dot(normal, point);
+            }
+
+            float distanceToPoint(const glm::vec3& point) const {
+                return glm::dot(normal, point) - distance;
+            }
+        };
+        struct Frustum {
+            Plane planes[6]; // left, right, bottom, top, near, far
+
+            enum PlaneSide {
+                LEFT = 0,
+                RIGHT = 1,
+                BOTTOM = 2,
+                TOP = 3,
+                NEAR = 4,
+                FAR = 5
+            };
+
+            // Extract frustum planes from view-projection matrix
+            void extractFromMatrix(const glm::mat4& mvp) {
+                // Left plane
+                planes[LEFT].normal.x = mvp[0][3] + mvp[0][0];
+                planes[LEFT].normal.y = mvp[1][3] + mvp[1][0];
+                planes[LEFT].normal.z = mvp[2][3] + mvp[2][0];
+                planes[LEFT].distance = mvp[3][3] + mvp[3][0];
+
+                // Right plane
+                planes[RIGHT].normal.x = mvp[0][3] - mvp[0][0];
+                planes[RIGHT].normal.y = mvp[1][3] - mvp[1][0];
+                planes[RIGHT].normal.z = mvp[2][3] - mvp[2][0];
+                planes[RIGHT].distance = mvp[3][3] - mvp[3][0];
+
+                // Bottom plane
+                planes[BOTTOM].normal.x = mvp[0][3] + mvp[0][1];
+                planes[BOTTOM].normal.y = mvp[1][3] + mvp[1][1];
+                planes[BOTTOM].normal.z = mvp[2][3] + mvp[2][1];
+                planes[BOTTOM].distance = mvp[3][3] + mvp[3][1];
+
+                // Top plane
+                planes[TOP].normal.x = mvp[0][3] - mvp[0][1];
+                planes[TOP].normal.y = mvp[1][3] - mvp[1][1];
+                planes[TOP].normal.z = mvp[2][3] - mvp[2][1];
+                planes[TOP].distance = mvp[3][3] - mvp[3][1];
+
+                // Near plane
+                planes[NEAR].normal.x = mvp[0][3] + mvp[0][2];
+                planes[NEAR].normal.y = mvp[1][3] + mvp[1][2];
+                planes[NEAR].normal.z = mvp[2][3] + mvp[2][2];
+                planes[NEAR].distance = mvp[3][3] + mvp[3][2];
+
+                // Far plane
+                planes[FAR].normal.x = mvp[0][3] - mvp[0][2];
+                planes[FAR].normal.y = mvp[1][3] - mvp[1][2];
+                planes[FAR].normal.z = mvp[2][3] - mvp[2][2];
+                planes[FAR].distance = mvp[3][3] - mvp[3][2];
+
+                // Normalize all planes
+                for (int i = 0; i < 6; i++) {
+                    float length = glm::length(planes[i].normal);
+                    planes[i].normal /= length;
+                    planes[i].distance /= length;
+                }
+            }
+            // Test if an AABB is inside the frustum
+            bool isAABBVisible(const glm::vec3& min, const glm::vec3& max) const {
+                for (int i = 0; i < 6; i++) {
+                    const Plane& plane = planes[i];
+
+                    // Find the positive vertex (farthest in the direction of the plane normal)
+                    glm::vec3 positiveVertex = min;
+                    if (plane.normal.x >= 0) positiveVertex.x = max.x;
+                    if (plane.normal.y >= 0) positiveVertex.y = max.y;
+                    if (plane.normal.z >= 0) positiveVertex.z = max.z;
+
+                    // If the positive vertex is outside (behind) the plane, the AABB is not visible
+                    if (plane.distanceToPoint(positiveVertex) < 0) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            // Test if a sphere is inside the frustum
+            bool isSphereVisible(const glm::vec3& center, float radius) const {
+                for (int i = 0; i < 6; i++) {
+                    const Plane& plane = planes[i];
+                    float distance = plane.distanceToPoint(center);
+                    if (distance < -radius) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        };
+
+
+            ////Basic-variables:
           GLFWwindow *window = nullptr;
           int windowWidth = 800, windowHeight = 600;
           SoLoud::Soloud audio;
           std::unique_ptr<SoLoud::Wav> backgroundMusic;
+          Frustum currentFrustum;
+
 
 
         ////Simultation-Variables:
@@ -126,7 +233,7 @@ namespace gl3 {
           std::vector<Particle> particles;
           int maxParticles =100;
 
-        //Lighting-Variables:
+          //Lighting-Variables:
           const int MAX_LIGHTS = 4; // has to match marching cubes shader
           const float LIGHT_RADIUS = 220.0f*CHUNK_SIZE;
           uint64_t frameCounter = 29; // Frame counter for light update staggering
@@ -149,10 +256,10 @@ namespace gl3 {
           //World-Variables:
           const int DIM = CHUNK_SIZE + 1; //Chunk Size with a bit off padding for marching cubes
           size_t voxelCount = DIM * DIM * DIM; //How many voxels can be in one Chunk
-          static constexpr int ChunkCount=100; //Total size of the Game World
-          static constexpr int RenderingRange=30; //Range around Camera that is rendered
+          static constexpr int ChunkCount=50; //Total size of the Game World
+          static constexpr int RenderingRange=20; //Range around Camera that is rendered
 
-          //Marching-
+          //Marching-cubes Variables
           size_t maxVerts = CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE * 5 * 3; //Max amount of vertices marching cubes can create
           const int MAX_CHUNKS_PER_FRAME = 20;
           //std::vector<Chunk> dirtyChunks;
