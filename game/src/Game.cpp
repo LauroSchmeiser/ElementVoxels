@@ -457,8 +457,52 @@ namespace gl3 {
         newFormation.color = color;
         newFormation.type = 1; // Solid
 
-        // Carve this formation into chunks
+        // NEW: Ensure all affected chunks are loaded BEFORE carving
+        int minCX = worldToChunk(center.x - radius);
+        int maxCX = worldToChunk(center.x + radius);
+        int minCY = worldToChunk(center.y - radius);
+        int maxCY = worldToChunk(center.y + radius);
+        int minCZ = worldToChunk(center.z - radius);
+        int maxCZ = worldToChunk(center.z + radius);
+
+        // Load all chunks first
+        for (int cx = minCX; cx <= maxCX; ++cx) {
+            for (int cy = minCY; cy <= maxCY; ++cy) {
+                for (int cz = minCZ; cz <= maxCZ; ++cz) {
+                    ChunkCoord coord{cx, cy, cz};
+
+                    // Force chunk creation if it doesn't exist
+                    if (!chunkManager->getChunk(coord)) {
+                        chunkManager->addChunk(coord, VoxelCategory::DYNAMIC);
+                        Chunk* chunk = chunkManager->getChunk(coord);
+                        if (chunk) {
+                            // Initialize chunk properly
+                            chunk->coord = coord;
+                            chunk->clear();
+                        }
+                    }
+                }
+            }
+        }
+
+        // Now carve into chunks
         carveFormationIntoChunks(newFormation, material);
+
+        // NEW: Force immediate mesh regeneration for affected chunks
+        for (int cx = minCX; cx <= maxCX; ++cx) {
+            for (int cy = minCY; cy <= maxCY; ++cy) {
+                for (int cz = minCZ; cz <= maxCZ; ++cz) {
+                    ChunkCoord coord{cx, cy, cz};
+                    Chunk* chunk = chunkManager->getChunk(coord);
+                    if (chunk) {
+                        // Force immediate mesh generation (bypassing MAX_CHUNKS_PER_FRAME)
+                        if (chunk->meshDirty) {
+                            generateChunkMesh(chunk);
+                        }
+                    }
+                }
+            }
+        }
     }
 
 
@@ -476,44 +520,39 @@ namespace gl3 {
                 for (int cz = minCZ; cz <= maxCZ; ++cz) {
                     ChunkCoord coord{cx, cy, cz};
 
-                    // Get or create chunk
+                    // Get chunk - should exist after pre-loading
                     Chunk* chunk = chunkManager->getChunk(coord);
                     if (!chunk) {
+                        // Emergency fallback
                         chunkManager->addChunk(coord, VoxelCategory::DYNAMIC);
                         chunk = chunkManager->getChunk(coord);
-                        if (chunk) {
+                        if (!chunk) continue;
+
+                        if (chunk->coord != coord) { // New chunk
                             chunk->coord = coord;
                             chunk->clear();
                         }
                     }
 
-                    if (!chunk) continue;
-
                     glm::vec3 chunkOrigin = getChunkMin(coord);
                     bool chunkTouched = false;
 
-                    // Carve sphere into chunk - BUT MAKE IT SOLID
+                    // Carve sphere into chunk
                     for (int lx = 0; lx <= CHUNK_SIZE; ++lx) {
                         for (int ly = 0; ly <= CHUNK_SIZE; ++ly) {
                             for (int lz = 0; lz <= CHUNK_SIZE; ++lz) {
                                 glm::vec3 worldPos = chunkOrigin + glm::vec3(lx, ly, lz);
                                 float dist = glm::distance(worldPos, formation.worldPos);
 
-                                // Calculate SDF value - CRITICAL: Make interior positive
                                 float formationDensity = formation.radius - dist;
 
-                                // For solid objects, interior should be positive
-                                // Exterior (beyond radius) is negative
-                                // Surface is near 0
-
-                                // Get existing density
                                 float existingDensity = chunk->voxels[lx][ly][lz].density;
 
                                 // SDF UNION: Take the MAXIMUM density
                                 if (formationDensity > existingDensity) {
                                     chunk->voxels[lx][ly][lz].density = formationDensity;
 
-                                    // Set type and color - IMPORTANT: Set ALL interior to solid
+                                    // Set type and color
                                     if (formationDensity >= -1.0f) {
                                         chunk->voxels[lx][ly][lz].type = formation.type;
                                         chunk->voxels[lx][ly][lz].color = formation.color;
@@ -531,6 +570,8 @@ namespace gl3 {
                     if (chunkTouched) {
                         chunk->meshDirty = true;
                         chunk->lightingDirty = true;
+                        // Force mark as modified
+                        markChunkModified(coord);
                     }
                 }
             }
@@ -538,31 +579,25 @@ namespace gl3 {
     }
 
     void Game::updateSpells(float deltaTime) {
-        // Update each active spell
         for (auto spellIt = activeSpells.begin(); spellIt != activeSpells.end(); ) {
-            // Track which voxels have arrived this frame
-            std::vector<size_t> newlyArrivedIndices;
+            // NEW: Track newly arrived voxels per frame
+            int arrivedThisFrame = 0;
+            int totalVoxels = spellIt->animatedVoxelIndices.size();
 
-            // Check each voxel in this spell
             for (size_t idx : spellIt->animatedVoxelIndices) {
                 if (idx < animatedVoxels.size()) {
                     AnimatedVoxel& voxel = animatedVoxels[idx];
-
                     if (voxel.isAnimating) {
-                        // Update animation
                         glm::vec3 toTarget = voxel.targetPos - voxel.currentPos;
                         float distance = glm::length(toTarget);
 
                         if (distance < 0.35f) {
-                            // Arrived!
                             voxel.isAnimating = false;
-                            newlyArrivedIndices.push_back(idx);
+                            arrivedThisFrame++;
                         } else {
-                            // Continue moving
                             glm::vec3 dir = glm::normalize(toTarget);
                             float speed = voxel.animationSpeed;
                             float slowdown = glm::clamp(distance / 3.0f, 0.2f, 1.0f);
-
                             voxel.velocity = dir * speed * slowdown;
                             voxel.currentPos += voxel.velocity * deltaTime;
                         }
@@ -570,38 +605,44 @@ namespace gl3 {
                 }
             }
 
-            // Create partial geometry for newly arrived voxels
-            if (!newlyArrivedIndices.empty() && !spellIt->geometryCreated) {
-                // For a simple approach, create the full geometry when enough voxels arrive
-                int arrivedCount = 0;
+            // NEW: Create geometry immediately when ANY voxels arrive
+            if (!spellIt->geometryCreated) {
+                int totalArrived = 0;
                 for (size_t idx : spellIt->animatedVoxelIndices) {
                     if (idx < animatedVoxels.size() && !animatedVoxels[idx].isAnimating) {
-                        arrivedCount++;
+                        totalArrived++;
                     }
                 }
 
-                float arrivalRatio = (float)arrivedCount / spellIt->animatedVoxelIndices.size();
+                // Create formation when at least 25% have arrived (or after 2 seconds)
+                static std::unordered_map<size_t, float> spellTimers;
+                size_t spellId = std::distance(activeSpells.begin(), spellIt);
 
-                // Create geometry when a certain percentage has arrived (e.g., 80%)
-                if (arrivalRatio >= 0.8f) {
-                    std::cout << arrivedCount << "/" << spellIt->animatedVoxelIndices.size()
-                              << " voxels arrived. Creating final geometry...\n";
+                if (!spellTimers.count(spellId)) {
+                    spellTimers[spellId] = 0.0f;
+                }
+                spellTimers[spellId] += deltaTime;
+
+                float arrivalRatio = (float)totalArrived / totalVoxels;
+
+                // Create if enough voxels arrived OR if timer exceeded
+                if (arrivalRatio >= 0.25f) {
+                    std::cout << "Creating final geometry for spell ("
+                              << totalArrived << "/" << totalVoxels
+                              << " voxels arrived after " << spellTimers[spellId] << "s)\n";
 
                     createSpellFormation(spellIt->center, spellIt->formationRadius,
                                          spellIt->strength, spellIt->targetMaterial,
                                          spellIt->formationColor);
                     spellIt->geometryCreated = true;
-                } else if (arrivalRatio > 0.3f) {
-                    // Optional: Create partial/weaker geometry as voxels arrive
-                    // This gives a "building up" effect
-                     //float partialRadius = spellIt->formationRadius * (arrivalRatio * 0.7f + 0.3f);
-                     //createPartialFormation(*spellIt, arrivalRatio);
+
+                    // Remove timer
+                    spellTimers.erase(spellId);
                 }
             }
 
             // Check if spell is complete
             if (spellIt->geometryCreated) {
-                // Count how many voxels are still animating
                 int stillAnimating = 0;
                 for (size_t idx : spellIt->animatedVoxelIndices) {
                     if (idx < animatedVoxels.size() && animatedVoxels[idx].isAnimating) {
@@ -610,7 +651,6 @@ namespace gl3 {
                 }
 
                 if (stillAnimating == 0) {
-                    // All done, remove spell
                     spellIt = activeSpells.erase(spellIt);
                     continue;
                 }
@@ -620,13 +660,11 @@ namespace gl3 {
         }
 
         // Clean up non-animating voxels
-        for (auto voxelIt = animatedVoxels.begin(); voxelIt != animatedVoxels.end(); ) {
-            if (!voxelIt->isAnimating) {
-                voxelIt = animatedVoxels.erase(voxelIt);
-            } else {
-                ++voxelIt;
-            }
-        }
+        animatedVoxels.erase(
+                std::remove_if(animatedVoxels.begin(), animatedVoxels.end(),
+                               [](const AnimatedVoxel& v) { return !v.isAnimating; }),
+                animatedVoxels.end()
+        );
     }
 
     void Game::createPartialFormation(const SpellEffect& spell, float completionRatio) {
@@ -2118,4 +2156,5 @@ namespace gl3 {
         }
         return glm::vec3(0, 1, 0);
     }
+
 }

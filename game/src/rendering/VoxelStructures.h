@@ -44,6 +44,10 @@ namespace gl3 {
                    y == other.y &&
                    z == other.z;
         }
+
+        bool operator!=(const ChunkCoord &other) const {
+            return !(*this == other);
+        }
     };
 
     // Better hash function for ChunkCoord
@@ -78,12 +82,16 @@ namespace gl3 {
         glm::vec3 center;
         float radius;
         float strength;
-        bool geometryCreated = false;
         uint64_t targetMaterial;
-        glm::vec3 formationColor;
-        float formationRadius = 0.0f;
 
+        // Formation properties
+        float formationRadius;
+        glm::vec3 formationColor;
+
+        // Animation tracking
         std::vector<size_t> animatedVoxelIndices;
+        bool geometryCreated = false;
+        int completionDelayFrames = 2; // NEW: Wait 2 frames after geometry creation
     };
 
     struct AnimatedVoxel {
