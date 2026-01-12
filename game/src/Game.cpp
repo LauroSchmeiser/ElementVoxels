@@ -118,8 +118,13 @@ namespace gl3 {
 
             ////Simulation Steps
             updateDeltaTime();
-            updateSpells(deltaTime);
-            //cleanupFinishedSpells();
+            if(DebugMode1) {
+                CpuTimer t7("updateSpells");
+                updateSpells(deltaTime);
+            } else
+            {
+                updateSpells(deltaTime);
+            }
 
             ////Input-Steps
             handleCameraInput();
@@ -133,9 +138,18 @@ namespace gl3 {
             if(DebugMode1)
             {
                 CpuTimer t2("renderChunks");
+                renderChunks();
+            } else
+            {
+                renderChunks();
             }
-            renderChunks();
-            renderAnimatedVoxels();
+            if(DebugMode1) {
+                CpuTimer t7("renderAnimatedVoxels");
+                renderAnimatedVoxels();
+            } else
+            {
+                renderAnimatedVoxels();
+            }
 
             ////UI
             DisplayFPSCount();
@@ -175,6 +189,7 @@ namespace gl3 {
                         Chunk *neighborChunk = chunkManager->getChunk(neighbor);
                         if (neighborChunk) {
                             neighborChunk->meshDirty = true;
+                            neighborChunk->lightingDirty=true;
                         }
                     }
                 }
@@ -382,30 +397,93 @@ namespace gl3 {
 
             AnimatedVoxel animVoxel;
             animVoxel.currentPos = candidate.worldPos;
-            animVoxel.color = candidate.color;
             animVoxel.isAnimating = true;
             animVoxel.animationSpeed = strength * 1.5f;
             animVoxel.hasArrived = false;
 
-            // Create crater at this voxel position
+            // --- NEW: approximate lit color at the voxel's position (cheap CPU shading) ---
+            // Start with base/albedo color from the voxel
+            glm::vec3 baseColor = candidate.color;
+            glm::vec3 litColor = glm::vec3(0.0f);
+
+            // 1) Ambient term (global low ambient)
+            const float ambientStrength = 0.06f;
+            litColor += baseColor * ambientStrength;
+
+            // 2) Directional "sun" (cheap approximation so things look shaded)
+            // You can tweak this direction and intensity to match your world lighting.
+            glm::vec3 sunDir = glm::normalize(glm::vec3(-0.6f, -0.7f, -0.3f)); // direction TOWARDS light source
+            glm::vec3 normal = calculateNormalAt(candidate.chunk, candidate.localPos);
+            float ndotl = glm::max(glm::dot(normal, sunDir), 0.0f);
+            const glm::vec3 sunColor = glm::vec3(1.0f, 0.98f, 0.92f);
+            const float sunIntensity = 0.9f;
+            litColor += baseColor * (sunColor * sunIntensity * ndotl);
+
+            // 3) Add cheap contribution from emissive lights (use merged pool if available).
+            // mergedEmissiveLightPool is updated periodically (every ~30 frames), stale data is OK.
+            // Limit how many lights we accumulate for perf; usually this pool is small.
+            const int MAX_POINT_LIGHTS = 4;
+            int usedLights = 0;
+            for (const auto &L : mergedEmissiveLightPool) {
+                if (usedLights >= MAX_POINT_LIGHTS) break;
+                glm::vec3 toLight = L.pos - candidate.worldPos;
+                float distSq = glm::dot(toLight, toLight);
+                if (distSq < 1e-6f) distSq = 1e-6f;
+                float att = L.intensity / (distSq + 1.0f); // simple attenuation
+                glm::vec3 Ldir = glm::normalize(toLight);
+                float nDotL = glm::max(glm::dot(normal, Ldir), 0.0f);
+                if (nDotL <= 0.0f) continue;
+                // scale factor tuned so point lights don't blow out color
+                const float POINT_LIGHT_SCALE = 0.025f;
+                litColor += baseColor * (L.color * att * nDotL * POINT_LIGHT_SCALE);
+                ++usedLights;
+            }
+
+            // 4) Fallback: if no merged lights and chunk-local emissive lights exist, use them
+            if (usedLights == 0 && !candidate.chunk->emissiveLights.empty()) {
+                for (const auto &L : candidate.chunk->emissiveLights) {
+                    glm::vec3 toLight = L.pos - candidate.worldPos;
+                    float distSq = glm::dot(toLight, toLight);
+                    if (distSq < 1e-6f) distSq = 1e-6f;
+                    float att = L.intensity / (distSq + 1.0f);
+                    glm::vec3 Ldir = glm::normalize(toLight);
+                    float nDotL = glm::max(glm::dot(normal, Ldir), 0.0f);
+                    const float POINT_LIGHT_SCALE = 0.03f;
+                    litColor += baseColor * (L.color * att * nDotL * POINT_LIGHT_SCALE);
+                    ++usedLights;
+                    if (usedLights >= MAX_POINT_LIGHTS) break;
+                }
+            }
+
+            // 5) Clamp to reasonable range and ensure color remains in [0,1]
+            litColor = glm::clamp(litColor, glm::vec3(0.0f), glm::vec3(1.0f));
+
+            // Save the lit color into the animated voxel so the renderer can just use it directly.
+            animVoxel.color = litColor;
+            // --- END lit color calculation ---
+
+            animVoxel.normal = calculateNormalAt(candidate.chunk, candidate.localPos);
+
+            // Create crater at this voxel position (removes voxel from world)
             createExteriorSmoothCrater(candidate.chunk, candidate.localPos, candidate.worldPos);
 
             // Mark chunk as modified
             candidate.chunk->meshDirty = true;
             candidate.chunk->lightingDirty = true;
             markChunkModified(candidate.chunkCoord);
-
             results.push_back(animVoxel);
         }
 
         // Debug output
         if (takeCount > 0) {
+            processEmissiveChunks();
             float minDist = std::sqrt(candidates[0].distanceSq);
             float maxDist = std::sqrt(candidates[takeCount-1].distanceSq);
             std::cout << "Taking " << takeCount << " closest voxels (distances: "
                       << minDist << " to " << maxDist << " units)\n";
         }
     }
+
 
     void Game::createExteriorSmoothCrater(Chunk* chunk, const glm::ivec3& voxelPos,
                                           const glm::vec3& worldPos) {
@@ -484,16 +562,16 @@ namespace gl3 {
 
         // --- Compute effective radius from collected voxels (volume preserving) ---
         // Treat each voxel as unit volume. Tune VOXEL_VOLUME and packingEfficiency to taste.
-        constexpr float VOXEL_VOLUME = 1.0f;
+        constexpr float VOXEL_VOLUME = 0.5f;
         constexpr float PI = 3.14159265358979323846f;
-        const float packingEfficiency = 0.6f; // <1.0 -> looser packing -> bigger radius for same N
+        const float packingEfficiency = 1.0f; // <1.0 -> looser packing -> bigger radius for same N
 
         float desiredVolume = static_cast<float>(collectedVoxels) * VOXEL_VOLUME;
         // radius from sphere volume: r = cbrt((3/(4*PI)) * (V / packingEfficiency))
         float computedRadius = std::cbrt((3.0f / (4.0f * PI)) * (desiredVolume / packingEfficiency));
 
         // Clamp/min/max so very small pulls are still visible and we don't explode beyond the spell's search radius.
-        float minFormationRadius = 0.25f;
+        float minFormationRadius = 0.05f;
         // Don't allow carving a formation larger than the spell's nominal radius (prevents creating material)
         float maxFormationRadius = std::max(minFormationRadius, radius);
 
@@ -552,6 +630,7 @@ namespace gl3 {
                         // Force immediate mesh generation (bypassing MAX_CHUNKS_PER_FRAME)
                         if (chunk->meshDirty) {
                             generateChunkMesh(chunk);
+
                         }
                     }
                 }
@@ -1572,7 +1651,7 @@ namespace gl3 {
 
         // STEP 2: First, generate meshes for dirty chunks
         const int renderRadius = RenderingRange;
-        if(DebugMode1) {CpuTimer t8("Generate Meshes");}
+        //if(DebugMode1) {CpuTimer t8("Generate Meshes");}
         for (int cx = camCX - renderRadius; cx <= camCX + renderRadius; ++cx) {
             for (int cy = camCY - renderRadius; cy <= camCY + renderRadius; ++cy) {
                 for (int cz = camCZ - renderRadius; cz <= camCZ + renderRadius; ++cz) {
@@ -1589,14 +1668,18 @@ namespace gl3 {
                     if (!hasSolidVoxels(*chunk)) continue;
 
                     // Regenerate mesh if dirty
-                    if (chunk->meshDirty&&++built < MAX_CHUNKS_PER_FRAME || !chunk->gpuCache.isValid&&++built < MAX_CHUNKS_PER_FRAME) {
+                    if (chunk->meshDirty&&built < MAX_CHUNKS_PER_FRAME || !chunk->gpuCache.isValid&&built < MAX_CHUNKS_PER_FRAME) {
+                        built++;
                         if(built<=1&&DebugMode1)
                         {
                             CpuTimer t5("generateChunkMesh");
+                            generateChunkMesh(chunk);
                         }
+                        else{
                         generateChunkMesh(chunk);
+                        }
                         if(built<=1) {
-                            std::cout << "Progress: "
+                            std::cout << "approximate Mesh Progress: "
                                       << ((float) (frameCounter - 29) * MAX_CHUNKS_PER_FRAME / FilledChunks) * 100.0f
                                       << "% \n";
                         }
@@ -1604,16 +1687,20 @@ namespace gl3 {
                     }
 
                     // Rebuild lighting if dirty
-                    if (chunk->lightingDirty&&++lighted<MAX_CHUNKS_PER_FRAME) {
+                    if (chunk->lightingDirty&&lighted<MAX_CHUNKS_PER_FRAME) {
+                        lighted++;
                         if(lighted==1&&DebugMode1)
                         {
                             CpuTimer t4("rebuildChunkLights");
+                            rebuildChunkLights(coord);
                         }
-                        rebuildChunkLights(coord);
+                        else {
+                            rebuildChunkLights(coord);
+                        }
                         if(lighted<=1) {
-                            std::cout << "Progress: "
-                                      << ((float)(100.0f * (totalChunks - (frameCounter - 29) * MAX_CHUNKS_PER_FRAME ) / totalChunks) * 100.0f)
-                                      << "% \n";
+                            std::cout << "approximate Lighting Progress: "
+                                    <<((float) (frameCounter - 29) * MAX_CHUNKS_PER_FRAME / FilledChunks) * 100.0f
+                                    << "% \n";
                         }
                         chunk->lightingDirty = false;
                     }
@@ -1642,7 +1729,7 @@ namespace gl3 {
             voxelShader->setFloat("emission", 0.0f);
         }
 
-        if(DebugMode1) {CpuTimer t6("ChunkLighting");}
+        //if(DebugMode1) {CpuTimer t6("ChunkLighting");}
         for (int cx = camCX - renderRadius; cx <= camCX + renderRadius; ++cx) {
             for (int cy = camCY - renderRadius; cy <= camCY + renderRadius; ++cy) {
                 for (int cz = camCZ - renderRadius; cz <= camCZ + renderRadius; ++cz) {
@@ -1731,111 +1818,166 @@ namespace gl3 {
     void Game::renderAnimatedVoxels() {
         if (animatedVoxels.empty()) return;
 
-        // Count how many are actually animating
-        int animatingCount = 0;
-        for (const auto& voxel : animatedVoxels) {
-            if (voxel.isAnimating) animatingCount++;
+        // Collect instances (include animating ones; optionally include arrived ones)
+        std::vector<const AnimatedVoxel*> instances;
+        instances.reserve(animatedVoxels.size());
+        for (const auto &v : animatedVoxels) {
+            if (v.isAnimating || v.hasArrived) instances.push_back(&v);
         }
-        if (animatingCount == 0) return;
+        int instanceCount = (int)instances.size();
+        if (instanceCount == 0) return;
 
-        // Use a simple shader
-        static Shader voxelAnimShader("shaders/voxel_anim.vert", "shaders/voxel_anim.frag");
-        voxelAnimShader.use();
+        // Use the same fragment shader (lighting) but an instanced vertex shader.
+        static Shader instancedShader(resolveAssetPath("shaders/voxel_anim.vert"),
+                                      resolveAssetPath("shaders/voxel.frag"));
+        instancedShader.use();
 
-        // Set up camera matrices
-        float aspect = (float)windowWidth / (float)windowHeight;
+        float aspect = (windowHeight == 0) ? (float) windowWidth / 1.0f : (float) windowWidth / (float) windowHeight;
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), glm::vec3(0.0f, 1.0f, 0.0f));
+        glm::mat4 pv = projection * view;
 
-        voxelAnimShader.setMatrix("projection", projection);
-        voxelAnimShader.setMatrix("view", view);
-        voxelAnimShader.setVec3("viewPos", cameraPos);
+        instancedShader.setMatrix("pv", pv);
+        instancedShader.setVec3("viewPos", cameraPos);
+        instancedShader.setVec3("ambientColor", glm::vec3(0.0002f)); // match your chunk ambient
 
-        // Create a simple cube VAO if not already created
-        static GLuint cubeVAO = 0, cubeVBO = 0;
+        // Choose lights for animated voxels:
+        // Use mergedEmissiveLightPool (already kept up to date) and pick up to MAX_LIGHTS
+        int numLights = std::min((int)mergedEmissiveLightPool.size(), MAX_LIGHTS);
+        instancedShader.setInt("numLights", numLights);
+        for (int i = 0; i < numLights; ++i) {
+            const VoxelLight &L = mergedEmissiveLightPool[i];
+            instancedShader.setVec3("lightPos[" + std::to_string(i) + "]", L.pos);
+            instancedShader.setVec3("lightColor[" + std::to_string(i) + "]", L.color);
+            instancedShader.setFloat("lightIntensity[" + std::to_string(i) + "]", L.intensity);
+        }
+        // Zero out remaining lights
+        for (int i = numLights; i < MAX_LIGHTS; ++i) {
+            instancedShader.setVec3("lightPos[" + std::to_string(i) + "]", glm::vec3(0.0f));
+            instancedShader.setVec3("lightColor[" + std::to_string(i) + "]", glm::vec3(0.0f));
+            instancedShader.setFloat("lightIntensity[" + std::to_string(i) + "]", 0.0f);
+        }
+
+        // Build instance arrays
+        std::vector<float> posScaleData; posScaleData.reserve(instanceCount * 4);
+        std::vector<float> colorData;    colorData.reserve(instanceCount * 3);
+        std::vector<float> normalData;   normalData.reserve(instanceCount * 3);
+
+        for (int i = 0; i < instanceCount; ++i) {
+            const AnimatedVoxel* v = instances[i];
+
+            // optionally apply a small pulse scale
+            float pulse = 1.0f;
+            if (v->hasArrived) {
+                pulse = 1.0f + 0.08f * std::sin(glfwGetTime() * 3.0f);
+            } else {
+                pulse = 1.0f + 0.16f * std::sin(glfwGetTime() * 8.0f + v->currentPos.x);
+            }
+
+            posScaleData.push_back(v->currentPos.x);
+            posScaleData.push_back(v->currentPos.y);
+            posScaleData.push_back(v->currentPos.z);
+            posScaleData.push_back(pulse * 0.5f); // cube half-size; tweak to taste
+
+            colorData.push_back(v->color.r);
+            colorData.push_back(v->color.g);
+            colorData.push_back(v->color.b);
+
+            // Use stored per-voxel normal (computed at collection time)
+            glm::vec3 n = v->normal; // fallback if normal missing
+            // Prefer an explicit stored normal if available:
+            // if AnimatedVoxel has 'normal' member, use that instead; below expects v->color exists.
+            normalData.push_back(n.x);
+            normalData.push_back(n.y);
+            normalData.push_back(n.z);
+        }
+
+        // Create cube VAO + buffers (static so only created once)
+        static GLuint cubeVAO = 0, cubeVBO = 0, cubeEBO = 0;
+        static GLuint instPosScaleVBO = 0, instColorVBO = 0, instNormalVBO = 0;
         if (cubeVAO == 0) {
-            // Simple unit cube vertices
+            // cube vertices (centered unit-cube)
             float vertices[] = {
-                    // Front face
-                    -0.4f, -0.4f,  0.4f,
-                    0.4f, -0.4f,  0.4f,
-                    0.4f,  0.4f,  0.4f,
-                    -0.4f,  0.4f,  0.4f,
-                    // Back face
-                    -0.4f, -0.4f, -0.4f,
-                    0.4f, -0.4f, -0.4f,
-                    0.4f,  0.4f, -0.4f,
-                    -0.4f,  0.4f, -0.4f
+                    -0.5f, -0.5f,  0.5f,
+                    0.5f, -0.5f,  0.5f,
+                    0.5f,  0.5f,  0.5f,
+                    -0.5f,  0.5f,  0.5f,
+                    -0.5f, -0.5f, -0.5f,
+                    0.5f, -0.5f, -0.5f,
+                    0.5f,  0.5f, -0.5f,
+                    -0.5f,  0.5f, -0.5f
             };
-
             unsigned int indices[] = {
-                    // Front
-                    0, 1, 2, 2, 3, 0,
-                    // Back
-                    4, 5, 6, 6, 7, 4,
-                    // Left
-                    4, 0, 3, 3, 7, 4,
-                    // Right
-                    1, 5, 6, 6, 2, 1,
-                    // Top
-                    3, 2, 6, 6, 7, 3,
-                    // Bottom
-                    4, 5, 1, 1, 0, 4
+                    0,1,2, 2,3,0,
+                    4,5,6, 6,7,4,
+                    4,0,3, 3,7,4,
+                    1,5,6, 6,2,1,
+                    3,2,6, 6,7,3,
+                    4,5,1, 1,0,4
             };
 
             glGenVertexArrays(1, &cubeVAO);
-            glGenBuffers(1, &cubeVBO);
-            GLuint cubeEBO;
-            glGenBuffers(1, &cubeEBO);
-
             glBindVertexArray(cubeVAO);
 
+            glGenBuffers(1, &cubeVBO);
             glBindBuffer(GL_ARRAY_BUFFER, cubeVBO);
             glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
 
+            glGenBuffers(1, &cubeEBO);
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cubeEBO);
             glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
 
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+            // per-vertex aPos (location 0)
             glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+
+            // instance buffers
+            glGenBuffers(1, &instNormalVBO);
+            glBindBuffer(GL_ARRAY_BUFFER, instNormalVBO);
+            glBufferData(GL_ARRAY_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+            glVertexAttribDivisor(1, 1);
+
+            glGenBuffers(1, &instColorVBO);
+            glBindBuffer(GL_ARRAY_BUFFER, instColorVBO);
+            glBufferData(GL_ARRAY_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
+            glEnableVertexAttribArray(2);
+            glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+            glVertexAttribDivisor(2, 1);
+
+            glGenBuffers(1, &instPosScaleVBO);
+            glBindBuffer(GL_ARRAY_BUFFER, instPosScaleVBO);
+            glBufferData(GL_ARRAY_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
+            glEnableVertexAttribArray(3);
+            glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+            glVertexAttribDivisor(3, 1);
 
             glBindVertexArray(0);
         }
 
-        // Enable transparency for magical effect
+        // Upload instance buffers
+        glBindBuffer(GL_ARRAY_BUFFER, instPosScaleVBO);
+        glBufferData(GL_ARRAY_BUFFER, posScaleData.size() * sizeof(float), posScaleData.data(), GL_DYNAMIC_DRAW);
+
+        glBindBuffer(GL_ARRAY_BUFFER, instColorVBO);
+        glBufferData(GL_ARRAY_BUFFER, colorData.size() * sizeof(float), colorData.data(), GL_DYNAMIC_DRAW);
+
+        glBindBuffer(GL_ARRAY_BUFFER, instNormalVBO);
+        glBufferData(GL_ARRAY_BUFFER, normalData.size() * sizeof(float), normalData.data(), GL_DYNAMIC_DRAW);
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+        // Render instanced cubes with voxel lighting
+        glEnable(GL_DEPTH_TEST);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-        // Render each animated voxel
+        instancedShader.use();
         glBindVertexArray(cubeVAO);
-
-        for (const auto& voxel : animatedVoxels) {
-            if (!voxel.isAnimating) continue;
-
-            glm::mat4 model = glm::mat4(1.0f);
-            model = glm::translate(model, voxel.currentPos);
-
-            // Add pulsing effect based on animation progress
-            float pulse = 1.0f;
-
-            if (voxel.hasArrived) {
-                // Arrived voxels pulse gently
-                pulse = 1.0f + 0.1f * std::sin(glfwGetTime() * 3.0f);
-            } else {
-                // Moving voxels pulse faster
-                pulse = 1.0f + 0.2f * std::sin(glfwGetTime() * 8.0f + voxel.currentPos.x);
-            }            model = glm::scale(model, glm::vec3(pulse));
-
-            model = glm::scale(model, glm::vec3(pulse));
-
-            voxelAnimShader.setMatrix("model", model);
-            voxelAnimShader.setVec3("color", voxel.color);
-
-            // Draw cube
-            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
-        }
-
+        glDrawElementsInstanced(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0, instanceCount);
         glBindVertexArray(0);
+
         glDisable(GL_BLEND);
     }
 

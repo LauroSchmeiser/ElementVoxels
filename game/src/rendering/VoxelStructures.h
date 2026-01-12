@@ -87,7 +87,6 @@ namespace gl3 {
         uint64_t targetMaterial;
         glm::vec3 formationColor;
         float formationRadius = 0.0f;
-        size_t collectedVoxels = 0;
 
         // store stable IDs (not vector indices)
         std::vector<uint64_t> animatedVoxelIDs;
@@ -100,8 +99,7 @@ namespace gl3 {
         glm::vec3 velocity;
         glm::vec3 color;
         glm::vec3 originalVoxelPos;
-        ChunkCoord originalChunkCoord;
-        float originalDensity;
+        glm::vec3 normal;
         float animationSpeed = 3.0f;
         bool isAnimating = false;
         bool hasArrived = false; // track if arrived at target
@@ -110,10 +108,8 @@ namespace gl3 {
     struct SpellFormation {
         glm::vec3 center;
         float radius;
-        float densityStrength;
         glm::vec3 color;
         uint64_t material;
-        bool isActive = true;
 
         // SDF function for this formation
         float evaluate(const glm::vec3& p) const {
