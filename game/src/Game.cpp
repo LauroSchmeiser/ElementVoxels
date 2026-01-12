@@ -250,7 +250,29 @@ namespace gl3 {
 
         // Step 2: Calculate formation properties
         glm::vec3 avgColor(0.0f);
-        float formationRadius = std::cbrt((float)visualVoxels.size()) * 0.5f;
+
+        // --- NEW: compute formation radius from number of collected voxels ---
+        const size_t collected = visualVoxels.size();
+        // Treat each voxel as unit volume (1.0). Tune VOXEL_VOLUME if your world units differ.
+        constexpr float VOXEL_VOLUME = 1.0f;
+        constexpr float PI = 3.14159265358979323846f;
+
+        // packingEfficiency lets you control how "tightly" the voxels should be packed into the
+        // spherical formation. Values <1.0 produce a larger radius for same voxel count (looser packing).
+        // Typical starting values: 0.5 - 0.75. Tune to taste.
+        const float packingEfficiency = 0.6f;
+
+        float desiredVolume = static_cast<float>(collected) * VOXEL_VOLUME;
+        // sphere radius from volume: V = 4/3 * PI * r^3  ->  r = cbrt( (3/(4*PI)) * V )
+        float computedRadius = std::cbrt((3.0f / (4.0f * PI)) * (desiredVolume / packingEfficiency));
+
+        // Clamp the formation radius so it doesn't exceed a sensible max (e.g., fraction of spell search radius)
+        // and so it has a reasonable minimum when few voxels were collected.
+        float maxFormationRadius = std::max(1.0f, radius * 0.75f); // won't grow beyond ~75% of search radius
+        float minFormationRadius = 0.4f; // tune to avoid too-tiny visuals
+
+        float formationRadius = glm::clamp(computedRadius, minFormationRadius, maxFormationRadius);
+        // ----------------------------------------------------------------
 
         // Assign targets and set up AnimatedVoxel entries. We'll assign stable ids as we push
         for (size_t i = 0; i < visualVoxels.size(); ++i) {
@@ -289,7 +311,7 @@ namespace gl3 {
         activeSpells.push_back(spell);
 
         std::cout << "Spell cast! " << visualVoxels.size()
-                  << " voxels moving directly to formation\n";
+                  << " voxels moving directly to formation (radius=" << formationRadius << ")\n";
     }
 
     void Game::findNearbyVoxelsForVisual(const glm::vec3& center, float radius,
@@ -297,7 +319,7 @@ namespace gl3 {
                                          std::vector<AnimatedVoxel>& results,
                                          float strength) {
         const float radiusSq = radius * radius;
-        int maxVoxels = static_cast<int>(strength * 50);
+        int maxVoxels = static_cast<int>(strength * 100.0f);
 
         auto chunks = chunkManager->getChunksInRadius(center, radius);
 
@@ -450,25 +472,47 @@ namespace gl3 {
         }
     }
 
+    // Updated to take collectedVoxels into account when computing the final carved radius.
     void Game::createSpellFormation(const glm::vec3& center, float radius,
                                     float strength, uint64_t material,
-                                    const glm::vec3& color) {
+                                    const glm::vec3& color, size_t collectedVoxels) {
         // Create a new "planet" at the spell center
         WorldPlanet newFormation;
         newFormation.worldPos = center;
-        newFormation.radius = radius;
         newFormation.color = color;
         newFormation.type = 1; // Solid
 
-        // NEW: Ensure all affected chunks are loaded BEFORE carving
-        int minCX = worldToChunk(center.x - radius);
-        int maxCX = worldToChunk(center.x + radius);
-        int minCY = worldToChunk(center.y - radius);
-        int maxCY = worldToChunk(center.y + radius);
-        int minCZ = worldToChunk(center.z - radius);
-        int maxCZ = worldToChunk(center.z + radius);
+        // --- Compute effective radius from collected voxels (volume preserving) ---
+        // Treat each voxel as unit volume. Tune VOXEL_VOLUME and packingEfficiency to taste.
+        constexpr float VOXEL_VOLUME = 1.0f;
+        constexpr float PI = 3.14159265358979323846f;
+        const float packingEfficiency = 0.6f; // <1.0 -> looser packing -> bigger radius for same N
 
-        // Load all chunks first
+        float desiredVolume = static_cast<float>(collectedVoxels) * VOXEL_VOLUME;
+        // radius from sphere volume: r = cbrt((3/(4*PI)) * (V / packingEfficiency))
+        float computedRadius = std::cbrt((3.0f / (4.0f * PI)) * (desiredVolume / packingEfficiency));
+
+        // Clamp/min/max so very small pulls are still visible and we don't explode beyond the spell's search radius.
+        float minFormationRadius = 0.25f;
+        // Don't allow carving a formation larger than the spell's nominal radius (prevents creating material)
+        float maxFormationRadius = std::max(minFormationRadius, radius);
+
+        float effectiveRadius = glm::clamp(computedRadius, minFormationRadius, maxFormationRadius);
+
+        newFormation.radius = effectiveRadius;
+        // ---------------------------------------------------------------------
+
+        // Ensure we preload enough chunks to cover either the nominal radius or the effective radius
+        float preloadRadius = std::max(radius, effectiveRadius);
+
+        int minCX = worldToChunk(center.x - preloadRadius);
+        int maxCX = worldToChunk(center.x + preloadRadius);
+        int minCY = worldToChunk(center.y - preloadRadius);
+        int maxCY = worldToChunk(center.y + preloadRadius);
+        int minCZ = worldToChunk(center.z - preloadRadius);
+        int maxCZ = worldToChunk(center.z + preloadRadius);
+
+        // Load all chunks first (force create if missing)
         for (int cx = minCX; cx <= maxCX; ++cx) {
             for (int cy = minCY; cy <= maxCY; ++cy) {
                 for (int cz = minCZ; cz <= maxCZ; ++cz) {
@@ -488,13 +532,20 @@ namespace gl3 {
             }
         }
 
-        // Now carve into chunks
+        // Now carve into chunks using the effective, material-limited radius
         carveFormationIntoChunks(newFormation, material);
 
-        // NEW: Force immediate mesh regeneration for affected chunks
-        for (int cx = minCX; cx <= maxCX; ++cx) {
-            for (int cy = minCY; cy <= maxCY; ++cy) {
-                for (int cz = minCZ; cz <= maxCZ; ++cz) {
+        // Force immediate mesh regeneration for affected chunks (cover effectiveRadius)
+        int regenMinCX = worldToChunk(center.x - effectiveRadius);
+        int regenMaxCX = worldToChunk(center.x + effectiveRadius);
+        int regenMinCY = worldToChunk(center.y - effectiveRadius);
+        int regenMaxCY = worldToChunk(center.y + effectiveRadius);
+        int regenMinCZ = worldToChunk(center.z - effectiveRadius);
+        int regenMaxCZ = worldToChunk(center.z + effectiveRadius);
+
+        for (int cx = regenMinCX; cx <= regenMaxCX; ++cx) {
+            for (int cy = regenMinCY; cy <= regenMaxCY; ++cy) {
+                for (int cz = regenMinCZ; cz <= regenMaxCZ; ++cz) {
                     ChunkCoord coord{cx, cy, cz};
                     Chunk* chunk = chunkManager->getChunk(coord);
                     if (chunk) {
@@ -506,6 +557,9 @@ namespace gl3 {
                 }
             }
         }
+
+        std::cout << "createSpellFormation: collected=" << collectedVoxels
+                  << " => effectiveRadius=" << effectiveRadius << "\n";
     }
 
 
@@ -652,7 +706,7 @@ namespace gl3 {
 
                     createSpellFormation(spellIt->center, spellIt->formationRadius,
                                          spellIt->strength, spellIt->targetMaterial,
-                                         spellIt->formationColor);
+                                         spellIt->formationColor, spellIt->animatedVoxelIDs.size());
                     spellIt->geometryCreated = true;
                 } else if (arrivalRatio > 0.3f) {
                     // optional partial formation
@@ -1401,7 +1455,7 @@ namespace gl3 {
                     delay = 3.0f; // Slow spell with Ctrl
                 }
 
-                castGravityWellSpell(spellCenter, 100.0f, 0, 10.0f);
+                castGravityWellSpell(spellCenter, 300.0f, 0, 10.0f);
                 wasMousePressed = true;
             }
         } else {

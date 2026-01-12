@@ -17,8 +17,6 @@ namespace gl3 {
         ChunkCoord coord;
         bool meshDirty = true;
 
-        bool forceRegenNextFrame = false;
-
         // GPU CACHE - stored with the chunk!
         struct GPUCache {
             GLuint vao = 0;
@@ -61,7 +59,6 @@ namespace gl3 {
             emissiveLights.clear();
             meshDirty = true;
             lightingDirty = true;
-            forceRegenNextFrame = false;
         }
     };
 }

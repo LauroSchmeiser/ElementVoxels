@@ -193,15 +193,6 @@ namespace gl3 {
         std::unordered_map<uint64_t, size_t> animatedVoxelIndexMap;
         uint64_t nextAnimatedVoxelID = 1;
 
-        std::vector<AnimatedVoxel> animatedVoxels_backup; // (if you used elsewhere)
-
-        std::vector<AnimatedVoxel> animatedVoxels_to_add;
-
-        std::vector<AnimatedVoxel> tempVoxelBuffer;
-
-        std::vector<AnimatedVoxel> debugAnimatedVoxels;
-
-        std::vector<AnimatedVoxel> unused_holder;
 
         // Spell system methods
         void castGravityWellSpell(const glm::vec3& center, float radius,
@@ -218,7 +209,7 @@ namespace gl3 {
 
         void createSpellFormation(const glm::vec3& center, float radius,
                                   float strength, uint64_t material,
-                                  const glm::vec3& color);
+                                  const glm::vec3& color,size_t collectedVoxels);
 
         void createPartialFormation(const SpellEffect& spell, float completionRatio);
 
@@ -338,7 +329,7 @@ namespace gl3 {
         const int DIM = CHUNK_SIZE + 1; //Chunk Size with a bit off padding for marching cubes
         size_t voxelCount = DIM * DIM * DIM; //How many voxels can be in one Chunk
         static constexpr int ChunkCount = 60; //Total size of the Game World
-        static constexpr int RenderingRange = 30; //Range around Camera that is rendered
+        static constexpr int RenderingRange = 20; //Range around Camera that is rendered
 
         //Marching-cubes Variables
         size_t maxVerts =

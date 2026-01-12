@@ -5,7 +5,7 @@
 #include "glm/glm.hpp"
 
 namespace gl3 {
-    constexpr int CHUNK_SIZE = 10;
+    constexpr int CHUNK_SIZE = 8;
 
     struct Voxel {
         uint8_t type = 0;
@@ -87,6 +87,7 @@ namespace gl3 {
         uint64_t targetMaterial;
         glm::vec3 formationColor;
         float formationRadius = 0.0f;
+        size_t collectedVoxels = 0;
 
         // store stable IDs (not vector indices)
         std::vector<uint64_t> animatedVoxelIDs;
