@@ -189,27 +189,41 @@ namespace gl3 {
         std::vector<SpellEffect> activeSpells;
         std::vector<AnimatedVoxel> animatedVoxels;
 
+        // Stable-id mapping for animated voxels
+        std::unordered_map<uint64_t, size_t> animatedVoxelIndexMap;
+        uint64_t nextAnimatedVoxelID = 1;
+
+        std::vector<AnimatedVoxel> animatedVoxels_backup; // (if you used elsewhere)
+
+        std::vector<AnimatedVoxel> animatedVoxels_to_add;
+
+        std::vector<AnimatedVoxel> tempVoxelBuffer;
+
+        std::vector<AnimatedVoxel> debugAnimatedVoxels;
+
+        std::vector<AnimatedVoxel> unused_holder;
+
         // Spell system methods
         void castGravityWellSpell(const glm::vec3& center, float radius,
-                                        uint64_t targetMaterial, float strength);
+                                  uint64_t targetMaterial, float strength);
 
         void updateSpells(float deltaTime);
 
         void cleanupFinishedSpells();
 
         void findNearbyVoxelsForVisual(const glm::vec3& center, float radius,
-                                             uint64_t targetMaterial,
-                                             std::vector<AnimatedVoxel>& results,
-                                             float strength);
+                                       uint64_t targetMaterial,
+                                       std::vector<AnimatedVoxel>& results,
+                                       float strength);
 
         void createSpellFormation(const glm::vec3& center, float radius,
-                                        float strength, uint64_t material,
-                                        const glm::vec3& color);
+                                  float strength, uint64_t material,
+                                  const glm::vec3& color);
 
         void createPartialFormation(const SpellEffect& spell, float completionRatio);
 
         void createExteriorSmoothCrater(Chunk* chunk, const glm::ivec3& voxelPos,
-                                              const glm::vec3& worldPos);
+                                        const glm::vec3& worldPos);
 
         void carveFormationIntoChunks(const WorldPlanet& formation, uint64_t material);
 

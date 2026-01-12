@@ -250,37 +250,40 @@ namespace gl3 {
 
         // Step 2: Calculate formation properties
         glm::vec3 avgColor(0.0f);
-        float formationRadius = std::cbrt(visualVoxels.size()) * 0.8f;
+        float formationRadius = std::cbrt((float)visualVoxels.size()) * 0.5f;
 
-        // Calculate final positions on sphere immediately
+        // Assign targets and set up AnimatedVoxel entries. We'll assign stable ids as we push
         for (size_t i = 0; i < visualVoxels.size(); ++i) {
-            avgColor += visualVoxels[i].color;
+            AnimatedVoxel &v = visualVoxels[i];
 
-            // Calculate final position on sphere surface
+            avgColor += v.color;
+
             float angle = randomFloat(0.0f, glm::two_pi<float>());
             float height = randomFloat(-1.0f, 1.0f);
             float circleRadius = std::sqrt(1.0f - height * height);
 
-            visualVoxels[i].targetPos = center + glm::vec3(
+            v.targetPos = center + glm::vec3(
                     std::cos(angle) * circleRadius * formationRadius,
                     height * formationRadius,
                     std::sin(angle) * circleRadius * formationRadius
             );
 
-            visualVoxels[i].animationSpeed = strength * 1.5f;
-            visualVoxels[i].isAnimating = true;
-
-            // Store index in spell
-            spell.animatedVoxelIndices.push_back(animatedVoxels.size() + i);
+            v.animationSpeed = strength * 1.5f;
+            v.isAnimating = true;
+            v.hasArrived = false;
         }
-        avgColor /= visualVoxels.size();
+        avgColor /= (float)visualVoxels.size();
 
         spell.formationColor = avgColor;
         spell.formationRadius = formationRadius;
 
-        // Step 3: Add visual voxels to global list
-        size_t startIndex = animatedVoxels.size();
-        animatedVoxels.insert(animatedVoxels.end(), visualVoxels.begin(), visualVoxels.end());
+        // Step 3: Add visual voxels to global list and record their stable IDs in the spell
+        for (auto &v : visualVoxels) {
+            v.id = nextAnimatedVoxelID++;
+            animatedVoxels.push_back(v);
+            animatedVoxelIndexMap[v.id] = animatedVoxels.size() - 1;
+            spell.animatedVoxelIDs.push_back(v.id);
+        }
 
         // Step 4: Add spell to active list
         activeSpells.push_back(spell);
@@ -579,78 +582,97 @@ namespace gl3 {
     }
 
     void Game::updateSpells(float deltaTime) {
+        // Update each active spell
         for (auto spellIt = activeSpells.begin(); spellIt != activeSpells.end(); ) {
-            // NEW: Track newly arrived voxels per frame
-            int arrivedThisFrame = 0;
-            int totalVoxels = spellIt->animatedVoxelIndices.size();
+            // Track which voxels have arrived this frame (ids)
+            std::vector<uint64_t> newlyArrivedIDs;
 
-            for (size_t idx : spellIt->animatedVoxelIndices) {
-                if (idx < animatedVoxels.size()) {
-                    AnimatedVoxel& voxel = animatedVoxels[idx];
-                    if (voxel.isAnimating) {
-                        glm::vec3 toTarget = voxel.targetPos - voxel.currentPos;
-                        float distance = glm::length(toTarget);
+            // Check each voxel ID in this spell
+            for (uint64_t id : spellIt->animatedVoxelIDs) {
+                auto itIndex = animatedVoxelIndexMap.find(id);
 
-                        if (distance < 0.35f) {
-                            voxel.isAnimating = false;
-                            arrivedThisFrame++;
-                        } else {
-                            glm::vec3 dir = glm::normalize(toTarget);
-                            float speed = voxel.animationSpeed;
-                            float slowdown = glm::clamp(distance / 3.0f, 0.2f, 1.0f);
-                            voxel.velocity = dir * speed * slowdown;
-                            voxel.currentPos += voxel.velocity * deltaTime;
-                        }
+                if (itIndex == animatedVoxelIndexMap.end()) {
+                    // voxel was already removed from animatedVoxels => treat as arrived
+                    newlyArrivedIDs.push_back(id);
+                    continue;
+                }
+
+                size_t idx = itIndex->second;
+                if (idx >= animatedVoxels.size()) {
+                    newlyArrivedIDs.push_back(id);
+                    continue;
+                }
+
+                AnimatedVoxel &voxel = animatedVoxels[idx];
+
+                if (voxel.isAnimating) {
+                    // Update animation
+                    glm::vec3 toTarget = voxel.targetPos - voxel.currentPos;
+                    float distance = glm::length(toTarget);
+
+                    if (distance < 0.35f) {
+                        // Arrived!
+                        voxel.isAnimating = false;
+                        voxel.hasArrived = true;
+                        newlyArrivedIDs.push_back(id);
+                    } else {
+                        glm::vec3 dir = glm::normalize(toTarget);
+                        float speed = voxel.animationSpeed;
+                        float slowdown = glm::clamp(distance / 3.0f, 0.2f, 1.0f);
+
+                        voxel.velocity = dir * speed * slowdown;
+                        voxel.currentPos += voxel.velocity * deltaTime;
                     }
+                } else {
+                    newlyArrivedIDs.push_back(id); // already not animating
                 }
             }
 
-            // NEW: Create geometry immediately when ANY voxels arrive
-            if (!spellIt->geometryCreated) {
-                int totalArrived = 0;
-                for (size_t idx : spellIt->animatedVoxelIndices) {
-                    if (idx < animatedVoxels.size() && !animatedVoxels[idx].isAnimating) {
-                        totalArrived++;
+            // Create partial geometry for newly arrived voxels
+            if (!newlyArrivedIDs.empty() && !spellIt->geometryCreated) {
+                // Count arrivals by checking each id for non-animating or missing
+                int arrivedCount = 0;
+                int total = (int)spellIt->animatedVoxelIDs.size();
+                for (uint64_t id : spellIt->animatedVoxelIDs) {
+                    auto jt = animatedVoxelIndexMap.find(id);
+                    if (jt == animatedVoxelIndexMap.end()) {
+                        ++arrivedCount;
+                    } else {
+                        AnimatedVoxel &v = animatedVoxels[jt->second];
+                        if (!v.isAnimating) ++arrivedCount;
                     }
                 }
 
-                // Create formation when at least 25% have arrived (or after 2 seconds)
-                static std::unordered_map<size_t, float> spellTimers;
-                size_t spellId = std::distance(activeSpells.begin(), spellIt);
+                float arrivalRatio = total ? (float)arrivedCount / (float)total : 1.0f;
 
-                if (!spellTimers.count(spellId)) {
-                    spellTimers[spellId] = 0.0f;
-                }
-                spellTimers[spellId] += deltaTime;
-
-                float arrivalRatio = (float)totalArrived / totalVoxels;
-
-                // Create if enough voxels arrived OR if timer exceeded
-                if (arrivalRatio >= 0.25f) {
-                    std::cout << "Creating final geometry for spell ("
-                              << totalArrived << "/" << totalVoxels
-                              << " voxels arrived after " << spellTimers[spellId] << "s)\n";
+                // Create geometry when a certain percentage has arrived (e.g., 80%)
+                if (arrivalRatio >= 0.8f) {
+                    std::cout << arrivedCount << "/" << total
+                              << " voxels arrived. Creating final geometry...\n";
 
                     createSpellFormation(spellIt->center, spellIt->formationRadius,
                                          spellIt->strength, spellIt->targetMaterial,
                                          spellIt->formationColor);
                     spellIt->geometryCreated = true;
-
-                    // Remove timer
-                    spellTimers.erase(spellId);
+                } else if (arrivalRatio > 0.3f) {
+                    // optional partial formation
+                    // createPartialFormation(*spellIt, arrivalRatio);
                 }
             }
 
-            // Check if spell is complete
+            // If geometry already created, check if all voxels are done moving
             if (spellIt->geometryCreated) {
                 int stillAnimating = 0;
-                for (size_t idx : spellIt->animatedVoxelIndices) {
-                    if (idx < animatedVoxels.size() && animatedVoxels[idx].isAnimating) {
-                        stillAnimating++;
+                for (uint64_t id : spellIt->animatedVoxelIDs) {
+                    auto jt = animatedVoxelIndexMap.find(id);
+                    if (jt != animatedVoxelIndexMap.end()) {
+                        AnimatedVoxel &v = animatedVoxels[jt->second];
+                        if (v.isAnimating) ++stillAnimating;
                     }
                 }
 
                 if (stillAnimating == 0) {
+                    // All done, remove spell
                     spellIt = activeSpells.erase(spellIt);
                     continue;
                 }
@@ -659,12 +681,28 @@ namespace gl3 {
             ++spellIt;
         }
 
-        // Clean up non-animating voxels
-        animatedVoxels.erase(
-                std::remove_if(animatedVoxels.begin(), animatedVoxels.end(),
-                               [](const AnimatedVoxel& v) { return !v.isAnimating; }),
-                animatedVoxels.end()
-        );
+        // Clean up non-animating voxels that are not needed anymore.
+        // We'll remove any voxel that is not currently animating.
+        // Use swap-pop and keep animatedVoxelIndexMap consistent.
+        for (size_t i = 0; i < animatedVoxels.size(); ) {
+            if (!animatedVoxels[i].isAnimating) {
+                uint64_t removedID = animatedVoxels[i].id;
+
+                // swap with last and pop
+                size_t last = animatedVoxels.size() - 1;
+                if (i != last) {
+                    animatedVoxels[i] = animatedVoxels[last];
+                    // update moved one's index in the map
+                    animatedVoxelIndexMap[animatedVoxels[i].id] = i;
+                }
+                animatedVoxels.pop_back();
+                animatedVoxelIndexMap.erase(removedID);
+
+                // do not increment i (we swapped a new element into i)
+            } else {
+                ++i;
+            }
+        }
     }
 
     void Game::createPartialFormation(const SpellEffect& spell, float completionRatio) {
@@ -1725,12 +1763,10 @@ namespace gl3 {
 
             // Add pulsing effect based on animation progress
             float pulse = 1.0f;
-            float alphaMultiplier = 0.5f;
 
             if (voxel.hasArrived) {
                 // Arrived voxels pulse gently
                 pulse = 1.0f + 0.1f * std::sin(glfwGetTime() * 3.0f);
-                alphaMultiplier = 0.2f; // Slightly transparent
             } else {
                 // Moving voxels pulse faster
                 pulse = 1.0f + 0.2f * std::sin(glfwGetTime() * 8.0f + voxel.currentPos.x);
@@ -1740,7 +1776,6 @@ namespace gl3 {
 
             voxelAnimShader.setMatrix("model", model);
             voxelAnimShader.setVec3("color", voxel.color);
-            voxelAnimShader.setFloat("alpha", alphaMultiplier);
 
             // Draw cube
             glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);

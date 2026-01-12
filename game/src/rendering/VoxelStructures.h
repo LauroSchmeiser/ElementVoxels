@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <vector>
 #include "glm/glm.hpp"
 
@@ -82,19 +83,17 @@ namespace gl3 {
         glm::vec3 center;
         float radius;
         float strength;
-        uint64_t targetMaterial;
-
-        // Formation properties
-        float formationRadius;
-        glm::vec3 formationColor;
-
-        // Animation tracking
-        std::vector<size_t> animatedVoxelIndices;
         bool geometryCreated = false;
-        int completionDelayFrames = 2; // NEW: Wait 2 frames after geometry creation
+        uint64_t targetMaterial;
+        glm::vec3 formationColor;
+        float formationRadius = 0.0f;
+
+        // store stable IDs (not vector indices)
+        std::vector<uint64_t> animatedVoxelIDs;
     };
 
     struct AnimatedVoxel {
+        uint64_t id = 0; // unique stable id
         glm::vec3 currentPos;
         glm::vec3 targetPos;
         glm::vec3 velocity;
@@ -104,7 +103,7 @@ namespace gl3 {
         float originalDensity;
         float animationSpeed = 3.0f;
         bool isAnimating = false;
-        bool hasArrived = false; // New: track if arrived at target
+        bool hasArrived = false; // track if arrived at target
     };
 
     struct SpellFormation {
