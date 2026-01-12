@@ -298,15 +298,27 @@ namespace gl3 {
 
         auto chunks = chunkManager->getChunksInRadius(center, radius);
 
-        int foundCount = 0;
+        // First, collect ALL potential voxels with their distances
+        struct VoxelCandidate {
+            glm::vec3 worldPos;
+            glm::vec3 color;
+            ChunkCoord chunkCoord;
+            glm::ivec3 localPos;
+            float distanceSq;
+            Chunk* chunk; // Pointer to chunk
+        };
+
+        std::vector<VoxelCandidate> candidates;
+
+        // Collect all candidates
         for (const auto& [coord, chunk] : chunks) {
             if (!chunk || !hasSolidVoxels(*chunk)) continue;
 
             glm::vec3 chunkMin = getChunkMin(coord);
 
-            for (int x = 0; x <= CHUNK_SIZE && foundCount < maxVoxels; ++x) {
-                for (int y = 0; y <= CHUNK_SIZE && foundCount < maxVoxels; ++y) {
-                    for (int z = 0; z <= CHUNK_SIZE && foundCount < maxVoxels; ++z) {
+            for (int x = 0; x <= CHUNK_SIZE; ++x) {
+                for (int y = 0; y <= CHUNK_SIZE; ++y) {
+                    for (int z = 0; z <= CHUNK_SIZE; ++z) {
                         const Voxel& voxel = chunk->voxels[x][y][z];
 
                         if (voxel.isSolid() && voxel.material == targetMaterial) {
@@ -315,25 +327,118 @@ namespace gl3 {
                             float distSq = glm::dot(diff, diff);
 
                             if (distSq <= radiusSq) {
-                                AnimatedVoxel animVoxel;
-                                animVoxel.currentPos = worldPos;
-                                animVoxel.targetPos = center; // Initial target
-                                animVoxel.color = voxel.color;
-                                animVoxel.isAnimating = true;
-                                animVoxel.animationSpeed = strength * 1.5f;
-                                animVoxel.hasArrived = false;
+                                VoxelCandidate candidate;
+                                candidate.worldPos = worldPos;
+                                candidate.color = voxel.color;
+                                candidate.chunkCoord = coord;
+                                candidate.localPos = glm::ivec3(x, y, z);
+                                candidate.distanceSq = distSq;
+                                candidate.chunk = chunk;
 
-                                // Remove from original chunk
-                                Voxel& voxelToRemove = chunk->voxels[x][y][z];
-                                voxelToRemove.type = 0;
-                                voxelToRemove.density = -1000.0f;
+                                candidates.push_back(candidate);
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
-                                chunk->meshDirty = true;
-                                chunk->lightingDirty = true;
-                                markChunkModified(coord);
+        // Sort candidates by distance (closest first)
+        std::sort(candidates.begin(), candidates.end(),
+                  [](const VoxelCandidate& a, const VoxelCandidate& b) {
+                      return a.distanceSq < b.distanceSq;
+                  });
 
-                                results.push_back(animVoxel);
-                                foundCount++;
+        // Take only the closest N voxels
+        int takeCount = std::min(maxVoxels, static_cast<int>(candidates.size()));
+
+        for (int i = 0; i < takeCount; ++i) {
+            const auto& candidate = candidates[i];
+
+            AnimatedVoxel animVoxel;
+            animVoxel.currentPos = candidate.worldPos;
+            animVoxel.color = candidate.color;
+            animVoxel.isAnimating = true;
+            animVoxel.animationSpeed = strength * 1.5f;
+            animVoxel.hasArrived = false;
+
+            // Create crater at this voxel position
+            createExteriorSmoothCrater(candidate.chunk, candidate.localPos, candidate.worldPos);
+
+            // Mark chunk as modified
+            candidate.chunk->meshDirty = true;
+            candidate.chunk->lightingDirty = true;
+            markChunkModified(candidate.chunkCoord);
+
+            results.push_back(animVoxel);
+        }
+
+        // Debug output
+        if (takeCount > 0) {
+            float minDist = std::sqrt(candidates[0].distanceSq);
+            float maxDist = std::sqrt(candidates[takeCount-1].distanceSq);
+            std::cout << "Taking " << takeCount << " closest voxels (distances: "
+                      << minDist << " to " << maxDist << " units)\n";
+        }
+    }
+
+    void Game::createExteriorSmoothCrater(Chunk* chunk, const glm::ivec3& voxelPos,
+                                          const glm::vec3& worldPos) {
+        float craterRadius = 2.0f;
+        float maxCraterDepth = 2.5f;
+
+        int range = static_cast<int>(std::ceil(craterRadius));
+
+        for (int dx = -range; dx <= range; ++dx) {
+            for (int dy = -range; dy <= range; ++dy) {
+                for (int dz = -range; dz <= range; ++dz) {
+                    int nx = voxelPos.x + dx;
+                    int ny = voxelPos.y + dy;
+                    int nz = voxelPos.z + dz;
+
+                    if (nx < 0 || nx > CHUNK_SIZE || ny < 0 || ny > CHUNK_SIZE || nz < 0 || nz > CHUNK_SIZE) {
+                        continue;
+                    }
+
+                    float dist = std::sqrt(dx*dx + dy*dy + dz*dz);
+                    if (dist <= craterRadius) {
+                        float t = dist / craterRadius;
+                        float originalDensity = chunk->voxels[nx][ny][nz].density;
+
+                        // KEY INSIGHT: For Marching Cubes to show a solid exterior,
+                        // the density should be POSITIVE at the surface (0 isosurface)
+
+                        if (originalDensity >= 0.0f) {
+                            // This voxel was inside or at the surface of the planet
+
+                            // Create crater shape that:
+                            // 1. Reduces density near center
+                            // 2. Keeps exterior surface positive
+                            // 3. Creates smooth transition
+
+                            float craterShape = (1.0f - t * t); // Bowl shape
+                            float densityReduction = maxCraterDepth * craterShape;
+
+                            // Apply reduction, but ensure we don't go too negative
+                            float newDensity = originalDensity - densityReduction;
+
+                            // If this was deep inside (high positive), keep it positive
+                            if (originalDensity > 2.0f) {
+                                newDensity = std::max(newDensity, 0.1f);
+                            }
+
+                            chunk->voxels[nx][ny][nz].density = newDensity;
+
+                            // Update type - critical for Marching Cubes
+                            if (newDensity < -0.5f) {
+                                // Too negative = air (creates hole)
+                                chunk->voxels[nx][ny][nz].type = 0;
+                            } else if (newDensity < 0.0f) {
+                                // Negative but close to 0 = surface
+                                chunk->voxels[nx][ny][nz].type = 1;
+                            } else {
+                                // Positive = solid interior
+                                chunk->voxels[nx][ny][nz].type = 1;
                             }
                         }
                     }
@@ -387,15 +492,19 @@ namespace gl3 {
                     glm::vec3 chunkOrigin = getChunkMin(coord);
                     bool chunkTouched = false;
 
-                    // Carve sphere into chunk
+                    // Carve sphere into chunk - BUT MAKE IT SOLID
                     for (int lx = 0; lx <= CHUNK_SIZE; ++lx) {
                         for (int ly = 0; ly <= CHUNK_SIZE; ++ly) {
                             for (int lz = 0; lz <= CHUNK_SIZE; ++lz) {
                                 glm::vec3 worldPos = chunkOrigin + glm::vec3(lx, ly, lz);
                                 float dist = glm::distance(worldPos, formation.worldPos);
 
-                                // Calculate SDF value
+                                // Calculate SDF value - CRITICAL: Make interior positive
                                 float formationDensity = formation.radius - dist;
+
+                                // For solid objects, interior should be positive
+                                // Exterior (beyond radius) is negative
+                                // Surface is near 0
 
                                 // Get existing density
                                 float existingDensity = chunk->voxels[lx][ly][lz].density;
@@ -404,7 +513,7 @@ namespace gl3 {
                                 if (formationDensity > existingDensity) {
                                     chunk->voxels[lx][ly][lz].density = formationDensity;
 
-                                    // Set type and color near the surface
+                                    // Set type and color - IMPORTANT: Set ALL interior to solid
                                     if (formationDensity >= -1.0f) {
                                         chunk->voxels[lx][ly][lz].type = formation.type;
                                         chunk->voxels[lx][ly][lz].color = formation.color;
@@ -485,8 +594,8 @@ namespace gl3 {
                 } else if (arrivalRatio > 0.3f) {
                     // Optional: Create partial/weaker geometry as voxels arrive
                     // This gives a "building up" effect
-                    float partialRadius = spellIt->formationRadius * (arrivalRatio * 0.7f + 0.3f);
-                    createPartialFormation(*spellIt, arrivalRatio);
+                     //float partialRadius = spellIt->formationRadius * (arrivalRatio * 0.7f + 0.3f);
+                     //createPartialFormation(*spellIt, arrivalRatio);
                 }
             }
 

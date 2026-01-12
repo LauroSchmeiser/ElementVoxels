@@ -208,6 +208,9 @@ namespace gl3 {
 
         void createPartialFormation(const SpellEffect& spell, float completionRatio);
 
+        void createExteriorSmoothCrater(Chunk* chunk, const glm::ivec3& voxelPos,
+                                              const glm::vec3& worldPos);
+
         void carveFormationIntoChunks(const WorldPlanet& formation, uint64_t material);
 
         float randomFloat(float min, float max);

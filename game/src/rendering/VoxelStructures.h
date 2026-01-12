@@ -78,10 +78,7 @@ namespace gl3 {
         glm::vec3 center;
         float radius;
         float strength;
-        float delayBeforeCreation = 1.0f;
-        float creationTimer = 0.0f;
         bool geometryCreated = false;
-        bool markedForDeletion = false; // Add this
         uint64_t targetMaterial;
         glm::vec3 formationColor;
         float formationRadius = 0.0f;
@@ -94,11 +91,12 @@ namespace gl3 {
         glm::vec3 targetPos;
         glm::vec3 velocity;
         glm::vec3 color;
+        glm::vec3 originalVoxelPos;
+        ChunkCoord originalChunkCoord;
+        float originalDensity;
         float animationSpeed = 3.0f;
-        float animationProgress = 0.0f;
         bool isAnimating = false;
         bool hasArrived = false; // New: track if arrived at target
-        bool removeWhenArrived = true; // Add this field to AnimatedVoxel
     };
 
     struct SpellFormation {
