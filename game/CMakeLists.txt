@@ -22,7 +22,8 @@ add_executable(${EXE_FILE} ${SOURCE_FILES}
         src/rendering/MultiGridChunkManager.h
         src/rendering/ChunkManager.cpp
         src/rendering/ChunkManager.h
-        src/rendering/Chunk.h)
+        src/rendering/Chunk.h
+)
 
 
 

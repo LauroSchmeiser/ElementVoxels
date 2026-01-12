@@ -8,11 +8,13 @@ namespace gl3 {
 
     struct Voxel {
         uint8_t type = 0;
+        uint64_t material=0;
         float density = 1.0f;
         glm::vec3 color = glm::vec3(1.0f);
 
         bool isSolid() const { return type != 0; }
         // 0==Empty, 1==base, 2==fire, 3==fluid
+        // 0==stone, 1==earth, 2==ice etc....
     };
 
     struct VoxelLight {
@@ -62,6 +64,56 @@ namespace gl3 {
             hash *= prime;
 
             return static_cast<std::size_t>(hash);
+        }
+    };
+
+    struct SpellEffect {
+        enum class Type {
+            GRAVITY_WELL,
+            CONSTRUCT,
+            TELEKINESIS
+        };
+
+        Type type;
+        glm::vec3 center;
+        float radius;
+        float strength;
+        float delayBeforeCreation = 1.0f;
+        float creationTimer = 0.0f;
+        bool geometryCreated = false;
+        bool markedForDeletion = false; // Add this
+        uint64_t targetMaterial;
+        glm::vec3 formationColor;
+        float formationRadius = 0.0f;
+
+        std::vector<size_t> animatedVoxelIndices;
+    };
+
+    struct AnimatedVoxel {
+        glm::vec3 currentPos;
+        glm::vec3 targetPos;
+        glm::vec3 velocity;
+        glm::vec3 color;
+        float animationSpeed = 3.0f;
+        float animationProgress = 0.0f;
+        bool isAnimating = false;
+        bool hasArrived = false; // New: track if arrived at target
+        bool removeWhenArrived = true; // Add this field to AnimatedVoxel
+    };
+
+    struct SpellFormation {
+        glm::vec3 center;
+        float radius;
+        float densityStrength;
+        glm::vec3 color;
+        uint64_t material;
+        bool isActive = true;
+
+        // SDF function for this formation
+        float evaluate(const glm::vec3& p) const {
+            float dist = glm::distance(p, center);
+            // Smooth sphere SDF - same as your planet generation
+            return radius - dist; // Positive inside, negative outside
         }
     };
 
