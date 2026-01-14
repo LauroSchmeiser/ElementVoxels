@@ -307,7 +307,7 @@ namespace gl3 {
 
         //Lighting-Variables:
         const int MAX_LIGHTS = 4; // has to match marching cubes shader
-        const float LIGHT_RADIUS = 220.0f * CHUNK_SIZE*VOXEL_SIZE;
+        const float LIGHT_RADIUS = 220.0f * CHUNK_SIZE*VOXEL_SIZE*2;
         uint64_t frameCounter = 29; // Frame counter for light update staggering
         const float LIGHT_RADIUS_SQ = LIGHT_RADIUS * LIGHT_RADIUS;
         std::vector<const gl3::VoxelLight *> flatEmissiveLightList;
@@ -329,7 +329,7 @@ namespace gl3 {
         const int DIM = CHUNK_SIZE + 1; //Chunk Size with a bit off padding for marching cubes
         size_t voxelCount = DIM * DIM * DIM; //How many voxels can be in one Chunk
         static constexpr int ChunkCount = 70; //Total size of the Game World
-        static constexpr int RenderingRange = 25; //Range around Camera that is rendered
+        static constexpr int RenderingRange = 12; //Range around Camera that is rendered
 
         //Marching-cubes Variables
         size_t maxVerts =

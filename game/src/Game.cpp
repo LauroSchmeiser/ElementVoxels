@@ -579,7 +579,7 @@ namespace gl3 {
         // Don't allow carving a formation larger than the spell's nominal radius (prevents creating material)
         float maxFormationRadius = std::max(minFormationRadius, radius);
 
-        float effectiveRadius = glm::clamp(computedRadius, minFormationRadius, maxFormationRadius);
+        float effectiveRadius = glm::clamp(computedRadius, minFormationRadius, maxFormationRadius)*VOXEL_SIZE;
 
         newFormation.radius = effectiveRadius;
         // ---------------------------------------------------------------------
@@ -1354,7 +1354,7 @@ namespace gl3 {
             VoxelLight light;
             light.pos = sumPos / float(count);
             light.color = sumColor / float(count);
-            light.intensity = float(count) * CHUNK_SIZE*VOXEL_SIZE*2; // Scale intensity
+            light.intensity = float(count) * CHUNK_SIZE*VOXEL_SIZE*5; // Scale intensity
             light.id = makeLightID(coord.x, coord.y, coord.z);
 
             chunk->emissiveLights.push_back(light);
@@ -1485,10 +1485,11 @@ namespace gl3 {
 ////----Input Code------------------------------------------------------------------------------------------------------------------------------
 
     void Game::update() {
+        static bool wasKeyPressed = false;
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
             glfwSetWindowShouldClose(window, true);
         }
-        if (glfwGetKey(window, GLFW_KEY_TAB) == GLFW_PRESS) {
+        if (glfwGetKey(window, GLFW_KEY_TAB) == GLFW_PRESS&&!wasKeyPressed) {
             if (DebugMode1) {
                 voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel.frag");
                 DebugMode1 = false;
@@ -1497,6 +1498,10 @@ namespace gl3 {
                 DebugMode1 = true;
                 activeDebugMode = 0;
             }
+            wasKeyPressed=true;
+        } else
+        {
+            wasKeyPressed= false;
         }
         if (glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS) {
             activeDebugMode = 1;
