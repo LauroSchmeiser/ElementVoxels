@@ -1,7 +1,7 @@
 // In Chunk.h
 #pragma once
-#undef NEAR;
-#undef FAR;
+#undef NEAR
+#undef FAR
 #include <vector>
 #include <glad/glad.h>
 

@@ -746,17 +746,17 @@ namespace gl3 {
                     glm::vec3 toTarget = voxel.targetPos - voxel.currentPos;
                     float distance = glm::length(toTarget);
 
-                    if (distance < 0.35f) {
+                    if (distance < 1.0f*VOXEL_SIZE) {
                         // Arrived!
                         voxel.isAnimating = false;
                         voxel.hasArrived = true;
                         newlyArrivedIDs.push_back(id);
                     } else {
-                        glm::vec3 dir = glm::normalize(toTarget);
+                        //glm::vec3 dir = glm::normalize(toTarget);
                         float speed = voxel.animationSpeed;
-                        float slowdown = glm::clamp(distance / 3.0f, 0.2f, 1.0f);
+                        float slowdown = glm::clamp(distance / 2.0f, 0.75f, 1.0f);
 
-                        voxel.velocity = dir * speed * slowdown;
+                        voxel.velocity = (toTarget/glm::vec3(VOXEL_SIZE*CHUNK_SIZE)) * speed * slowdown*4.0f;
                         voxel.currentPos += voxel.velocity * deltaTime;
                     }
                 } else {
@@ -790,9 +790,9 @@ namespace gl3 {
                                          spellIt->strength, spellIt->targetMaterial,
                                          spellIt->formationColor, spellIt->animatedVoxelIDs.size());
                     spellIt->geometryCreated = true;
-                } else if (arrivalRatio > 0.3f) {
+                } else if (arrivalRatio > 0.0005f) {
                     // optional partial formation
-                    // createPartialFormation(*spellIt, arrivalRatio);
+                    createPartialFormation(*spellIt, arrivalRatio);
                 }
             }
 
@@ -1468,7 +1468,7 @@ namespace gl3 {
                 if (usedLightIDs.insert(light.id).second) {
                     SunInstance inst;
                     inst.position = light.pos;
-                    inst.scale = std::sqrt(light.intensity) * 0.5f;
+                    inst.scale = std::sqrt(light.intensity)/VOXEL_SIZE * 0.5f;
                     inst.color = light.color * 2.5f;
                     emissiveBillboards.push_back(inst);
                 }
