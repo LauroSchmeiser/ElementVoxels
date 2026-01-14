@@ -50,9 +50,13 @@ namespace gl3 {
 
 
     Game::Game(int width, int height, const std::string &title)
-            : windowWidth(width), windowHeight(height),
-              chunkManager(std::make_unique<MultiGridChunkManager>())  // Initialize manager
-            , cameraPos(0.0f, 0.0f, 50.0f), cameraRotation(-90.0f, 0.0f) {
+            : windowWidth(width),
+              windowHeight(height),
+              chunkManager(std::make_unique<MultiGridChunkManager>()),
+              cameraPos(0.0f, 0.0f, 50.0f),
+              cameraRotation(-90.0f, 0.0f),
+              characterController(chunkManager.get(), 1.8f, 1.0f)  // Use .get() on unique_ptr
+            {
         windowWidth = width;
         windowHeight = height;
 
@@ -107,6 +111,7 @@ namespace gl3 {
         ////Initialization-Steps
         CpuTimer t0("ssbos");
         setupSSBOsAndTables();
+        setupInput();
         setupCamera();
         CpuTimer t1("generateChunks");
         generateChunks();
@@ -171,10 +176,10 @@ namespace gl3 {
         return false;
     }
 
-    int Game::worldToChunk(float worldPos) const {
+    int Game::worldToChunk(float worldPos){
         // Each chunk covers CHUNK_SIZE voxels, each voxel is VOXEL_SIZE world units.
         // So chunk world width = CHUNK_SIZE * VOXEL_SIZE.
-        const float chunkWorldSize = CHUNK_SIZE * gl3::VOXEL_SIZE;
+        float chunkWorldSize = CHUNK_SIZE * gl3::VOXEL_SIZE;
         return (int) std::floor(worldPos / chunkWorldSize);
     }
 
@@ -1042,6 +1047,30 @@ namespace gl3 {
 
     }
 
+    void Game::setupInput() {
+        // Track all keys we'll use
+        input.trackKeys({
+                                GLFW_KEY_W, GLFW_KEY_UP, GLFW_KEY_S, GLFW_KEY_DOWN,
+                                GLFW_KEY_A, GLFW_KEY_LEFT, GLFW_KEY_D, GLFW_KEY_RIGHT,
+                                GLFW_KEY_SPACE, GLFW_KEY_LEFT_SHIFT, GLFW_KEY_LEFT_CONTROL,
+                                GLFW_KEY_TAB, GLFW_KEY_ESCAPE,GLFW_KEY_E
+                        });
+
+        // Character movement
+        actions.addAction("MoveForward", {GLFW_KEY_W, GLFW_KEY_UP});
+        actions.addAction("MoveBack", {GLFW_KEY_S, GLFW_KEY_DOWN});
+        actions.addAction("MoveLeft", {GLFW_KEY_A, GLFW_KEY_LEFT});
+        actions.addAction("MoveRight", {GLFW_KEY_D, GLFW_KEY_RIGHT});
+        actions.addAction("Jump", {GLFW_KEY_SPACE});
+        actions.addAction("Sprint", {GLFW_KEY_LEFT_SHIFT});
+        actions.addAction("Crouch", {GLFW_KEY_LEFT_CONTROL});
+
+        // Debug/UI actions
+        actions.addAction("ToggleDebug", {GLFW_KEY_TAB});
+        actions.addAction("Escape", {GLFW_KEY_ESCAPE});
+        actions.addAction("CastSpell", {GLFW_KEY_E});
+    }
+
     void Game::setupCamera() {
         // --- Camera setup ---
         cameraPos = glm::vec3(0.0f, 0.0f, 80.0f);
@@ -1485,69 +1514,67 @@ namespace gl3 {
 ////----Input Code------------------------------------------------------------------------------------------------------------------------------
 
     void Game::update() {
-        static bool wasKeyPressed = false;
-        if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
-            glfwSetWindowShouldClose(window, true);
-        }
-        if (glfwGetKey(window, GLFW_KEY_TAB) == GLFW_PRESS&&!wasKeyPressed) {
-            if (DebugMode1) {
-                voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel.frag");
-                DebugMode1 = false;
-            } else {
-                voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel_debug.frag");
-                DebugMode1 = true;
-                activeDebugMode = 0;
+            input.update(window);
+            actions.update(input);
+
+            // Now use clean, readable input checks
+            if (actions["Escape"].wasJustPressed) {
+                glfwSetWindowShouldClose(window, true);
             }
-            wasKeyPressed=true;
-        } else
-        {
-            wasKeyPressed= false;
-        }
-        if (glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS) {
-            activeDebugMode = 1;
-        }
-        if (glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS) {
-            activeDebugMode = 2;
-        }
-        if (glfwGetKey(window, GLFW_KEY_3) == GLFW_PRESS) {
-            activeDebugMode = 3;
-        }
-        if (glfwGetKey(window, GLFW_KEY_4) == GLFW_PRESS) {
-            activeDebugMode = 4;
-        }
-        if (glfwGetKey(window, GLFW_KEY_5) == GLFW_PRESS) {
-            activeDebugMode = 5;
-        }
 
-        if (glfwGetKey(window, GLFW_KEY_CAPS_LOCK) == GLFW_PRESS) {
-            DebugMode2 = (!DebugMode2);
-        }
+            if (actions["ToggleDebug"].wasJustPressed) {
+                DebugMode1 = !DebugMode1;
+                std::cout << "Debug mode: " << (DebugMode1 ? "ON" : "OFF") << "\n";
 
-        // Cast gravity well spell on right mouse click
-        static bool wasMousePressed = false;
-        // In update() function:
-        if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
-            if (!wasMousePressed) {
-                RayCastResult hit = rayCastFromCamera(250.0f);
-                glm::vec3 spellCenter = hit.hit ? hit.hitPosition :
-                                        (cameraPos + getCameraFront() * 125.0f);
-
-                // Different spells with different delays
-                float delay = 2.0f; // Default 2 second delay
-
-                // Optional: Change delay based on modifier keys
-                if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
-                    delay = 0.5f; // Fast spell with Shift
-                } else if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS) {
-                    delay = 3.0f; // Slow spell with Ctrl
+                // Optional: Update shaders like before
+                if (DebugMode1) {
+                    voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel_debug.frag");
+                    activeDebugMode = 0;
+                } else {
+                    voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel.frag");
                 }
-
-                castGravityWellSpell(spellCenter, 300.0f, 0, 10.0f);
-                wasMousePressed = true;
             }
-        } else {
-            wasMousePressed = false;
-        }
+
+            if (actions["CastSpell"].wasJustPressed) {
+
+                        std::cout<<"Spell Triggered";
+                        RayCastResult hit = rayCastFromCamera(250.0f);
+                        glm::vec3 spellCenter = hit.hit ? hit.hitPosition :
+                                                (cameraPos + getCameraFront() * 125.0f);
+
+
+                        castGravityWellSpell(spellCenter, 300.0f, 0, 10.0f);;
+            }
+
+            // Character movement - perfect for your controller
+
+        // Get input for character
+        glm::vec3 moveInput(0.0f);
+        if (actions["MoveForward"].isPressed) moveInput.z += 1.0f;
+        if (actions["MoveBack"].isPressed) moveInput.z -= 1.0f;
+        if (actions["MoveLeft"].isPressed) moveInput.x -= 1.0f;
+        if (actions["MoveRight"].isPressed) moveInput.x += 1.0f;
+
+        bool jump = actions["Jump"].wasJustPressed;
+        bool sprint = actions["Sprint"].isPressed;
+        bool crouch = actions["Crouch"].isPressed;
+
+        // Get mouse delta (you'll need to implement this)
+        glm::vec3 cameraFront = getCameraFront();
+        glm::vec3 cameraRight = glm::normalize(glm::cross(cameraFront, glm::vec3(0.0f, 1.0f, 0.0f)));
+
+        // Get mouse delta
+        glm::vec2 mouseDelta = getMouseDelta();
+
+        // Update character with camera-relative movement
+        characterController.update(deltaTime, moveInput, jump, sprint, crouch,
+                                   mouseDelta, cameraFront, cameraRight);
+
+        // Update camera to follow character
+        updateCamera();
+
+            // Pass to character controller
+            //characterController->move(moveInput, jump, sprint);
 
         // Update dynamic chunks
         // chunkManager->forEachDynamicChunk([this](Chunk* chunk) {
@@ -2003,7 +2030,7 @@ namespace gl3 {
 
         // Billboards
         std::vector<SunInstance> billboardInstances;
-        billboardInstances.reserve(fluidPlanets.size());
+        //billboardInstances.reserve(fluidPlanets.size());
 
         // Clear field storage
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, fieldBitsSSBO);
@@ -2019,8 +2046,8 @@ namespace gl3 {
                 {0.15f, 0.70f, 0.90f}
         };
 
-        for (size_t i = 0; i < fluidPlanets.size(); i++) {
-            WorldPlanet &planet = fluidPlanets[i];
+        for (size_t i = 0; i < 1; i++) {
+            //WorldPlanet &planet = fluidPlanets[i];
 
             // Pick blue/green color
             glm::vec3 planetColor = baseColors[i % 5];
@@ -2032,7 +2059,7 @@ namespace gl3 {
             // Voxel splat into a field
             // -------------------------
             voxelSplatShader->use();
-            voxelSplatShader->setVec3("gridOrigin", planet.worldPos - 0.5f * glm::vec3(CHUNK_SIZE));
+           // voxelSplatShader->setVec3("gridOrigin", planet.worldPos - 0.5f * glm::vec3(CHUNK_SIZE));
             voxelSplatShader->setFloat("voxelSize", 0.25f);
             voxelSplatShader->setFloat("influenceRadius", 10.0f);
 
@@ -2048,7 +2075,7 @@ namespace gl3 {
             // Marching cubes
             // -------------------------
             marchingCubesShader->use();
-            marchingCubesShader->setVec3("gridOrigin", planet.worldPos - 0.5f * glm::vec3(GRID_X, GRID_Y, GRID_Z));
+            //marchingCubesShader->setVec3("gridOrigin", planet.worldPos - 0.5f * glm::vec3(GRID_X, GRID_Y, GRID_Z));
             marchingCubesShader->setFloat("voxelSize", 0.25f);
 
             resetAtomicCounter();
@@ -2074,11 +2101,11 @@ namespace gl3 {
             // Billboard glow (fluid look)
             // -------------------------
             SunInstance inst;
-            inst.position =
-                    planet.worldPos + (cameraPos - planet.worldPos) * 0.25f;
+            //inst.position =
+            //        planet.worldPos + (cameraPos - planet.worldPos) * 0.25f;
 
-            float r = (CHUNK_SIZE * 0.25f) * glm::length(planet.radius);
-            inst.scale = r * 2.5f;       // glow radius
+           // float r = (CHUNK_SIZE * 0.25f) * glm::length(planet.radius);
+            //inst.scale = r * 2.5f;       // glow radius
             inst.color = planetColor;    // same as planet
 
             billboardInstances.push_back(inst);
@@ -2398,4 +2425,25 @@ namespace gl3 {
         return glm::vec3(0, 1, 0);
     }
 
+    void Game::updateCamera() {
+        // Camera follows character with slight offset for smoothness
+        glm::vec3 targetCameraPos = characterController.getCameraPosition();
+
+        // Smooth interpolation
+        cameraPos = glm::mix(cameraPos, targetCameraPos, 0.2f);
+
+        // Update camera rotation from mouse input
+        // ... your existing camera rotation code
+    }
+
+    glm::vec2 Game::getMouseDelta() {
+        // Implement mouse delta calculation
+        static glm::vec2 lastMousePos;
+        double x, y;
+        glfwGetCursorPos(window, &x, &y);
+        glm::vec2 currentPos(x, y);
+        glm::vec2 delta = currentPos - lastMousePos;
+        lastMousePos = currentPos;
+        return delta;
+    }
 }

@@ -23,6 +23,10 @@ add_executable(${EXE_FILE} ${SOURCE_FILES}
         src/rendering/ChunkManager.cpp
         src/rendering/ChunkManager.h
         src/rendering/Chunk.h
+        src/Input/InputManager.h
+        src/Input/InputActionMap.h
+        src/CharacterController.cpp
+        src/CharacterController.h
 )
 
 

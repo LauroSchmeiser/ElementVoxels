@@ -17,6 +17,8 @@
 #include "rendering/Chunk.h"
 #include "../robin_hood.h"
 #include "rendering/MultiGridChunkManager.h"
+#include "Input/InputActionMap.h"
+#include "CharacterController.h"
 
 namespace gl3 {
     class Game {
@@ -41,8 +43,10 @@ namespace gl3 {
 
         bool hasSolidVoxels(const gl3::Chunk &chunk);
 
-        int worldToChunk(float worldPos) const;
+    public:
+        static int worldToChunk(float worldPos);
 
+    private:
         void markChunkModified(const ChunkCoord &coord);
 
         void unloadChunk(const ChunkCoord &coord);
@@ -53,7 +57,7 @@ namespace gl3 {
 
         bool isChunkVisible(const ChunkCoord &coord) const;
 
-////Structs::
+        ////Structs::
         struct Particle {
             glm::vec3 position;
             glm::vec3 velocity;
@@ -233,6 +237,8 @@ namespace gl3 {
         ////Initialization-Steps
         void setupSSBOsAndTables();
 
+        void setupInput();
+
         void setupCamera();
 
         void generateChunks();
@@ -311,12 +317,12 @@ namespace gl3 {
         uint64_t frameCounter = 29; // Frame counter for light update staggering
         const float LIGHT_RADIUS_SQ = LIGHT_RADIUS * LIGHT_RADIUS;
         std::vector<const gl3::VoxelLight *> flatEmissiveLightList;
-        std::unordered_map<ChunkCoord, std::vector<VoxelLight *>, ChunkCoordHash> lightSpatialHash;
+        robin_hood::unordered_map<ChunkCoord, std::vector<VoxelLight *>, ChunkCoordHash> lightSpatialHash;
         // After building chunk-local lights we create a small merged pool to avoid seams.
         // Merged pool holds stable VoxelLight objects we point to from flatEmissiveLightList.
         std::vector<gl3::VoxelLight> mergedEmissiveLightPool;
         static constexpr int LIGHT_UPDATE_INTERVAL = 15; // Update lights every 30 frames
-        std::unordered_set<uint32_t> usedLightIDs;
+        robin_hood::unordered_set<uint32_t> usedLightIDs;
 
 
         ////Camera-Variables:
@@ -345,8 +351,10 @@ namespace gl3 {
         std::vector<SunInstance> emissiveBillboards;
 
 
-        ////Lists (deprecated)
-        std::vector<WorldPlanet> fluidPlanets;
+        ////Input
+        CharacterController characterController;
+        InputManager input;
+        InputActionMap actions;
 
 
         ////Shader:
@@ -358,5 +366,7 @@ namespace gl3 {
         ////helper functions:
         RayCastResult rayCastFromCamera(float maxDistance = 1000.0f);
         glm::vec3 calculateNormalAt(Chunk* chunk, const glm::ivec3& pos);
+        void updateCamera();
+        glm::vec2 getMouseDelta();
     };
 }
