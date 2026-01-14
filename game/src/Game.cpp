@@ -1354,7 +1354,7 @@ namespace gl3 {
             VoxelLight light;
             light.pos = sumPos / float(count);
             light.color = sumColor / float(count);
-            light.intensity = float(count) * 35.0f; // Scale intensity
+            light.intensity = float(count) * CHUNK_SIZE*VOXEL_SIZE*2; // Scale intensity
             light.id = makeLightID(coord.x, coord.y, coord.z);
 
             chunk->emissiveLights.push_back(light);
