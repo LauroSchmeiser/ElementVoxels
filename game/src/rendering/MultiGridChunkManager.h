@@ -57,6 +57,16 @@ namespace gl3 {
         robin_hood::unordered_map<ChunkCoord, std::unique_ptr<Chunk>, ChunkCoordHash> allChunks;
 
     public:
+
+        void clear() {
+            allChunks.clear();
+            staticGrid.clear();
+            dynamicGrid.clear();
+            fluidGrid.clear();
+            emissiveGrid.clear();
+            interactiveGrid.clear();
+        }
+
         // Add a chunk with category
         void addChunk(const ChunkCoord& coord, VoxelCategory category) {
             auto& chunkPtr = allChunks[coord];

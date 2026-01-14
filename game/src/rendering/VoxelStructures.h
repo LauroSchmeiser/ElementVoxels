@@ -14,7 +14,7 @@ namespace gl3 {
         glm::vec3 color = glm::vec3(1.0f);
 
         bool isSolid() const { return type != 0; }
-        // 0==Empty, 1==base, 2==fire, 3==fluid
+        // 0==Empty, 1==base, 2==fire, 3==fluid, 4== static
         // 0==stone, 1==earth, 2==ice etc....
     };
 

@@ -110,6 +110,22 @@ namespace gl3 {
         setupCamera();
         CpuTimer t1("generateChunks");
         generateChunks();
+
+        // DEBUG: Check if any chunks were created
+        auto allCoords = chunkManager->getAllChunkCoords();
+        std::cout << "Total chunks created: " << allCoords.size() << std::endl;
+
+        // DEBUG: Check a few chunks
+        int solidChunks = 0;
+        for (const auto& coord : allCoords) {
+            if (Chunk* chunk = chunkManager->getChunk(coord)) {
+                if (hasSolidVoxels(*chunk)) {
+                    solidChunks++;
+                }
+            }
+        }
+        std::cout << "Chunks with solid voxels: " << solidChunks << std::endl;
+
         setupVEffects();
 
         while (!glfwWindowShouldClose(window)) {
@@ -163,12 +179,16 @@ namespace gl3 {
 ////----Chunk Management Code-------------------------------------------------------------------------------------------------------------------
 
     bool Game::hasSolidVoxels(const gl3::Chunk &chunk) {
-        for (int x = 0; x <= CHUNK_SIZE; ++x)
-            for (int y = 0; y <= CHUNK_SIZE; ++y)
-                for (int z = 0; z <= CHUNK_SIZE; ++z)
-                    if (chunk.voxels[x][y][z].isSolid())
-                        return true;
-        return false;
+        // Check if any voxel has density near the isosurface
+        for (int x = 0; x <= CHUNK_SIZE; ++x) {
+            for (int y = 0; y <= CHUNK_SIZE; ++y) {
+                for (int z = 0; z <= CHUNK_SIZE; ++z) {
+                    if (chunk.voxels[x][y][z].isSolid()&&chunk.voxels[x][y][z].density >= -1.0f && chunk.voxels[x][y][z].density <= 1.0f) {
+                        return true; // Voxel near isosurface
+                    }
+                }
+            }
+        }
     }
 
     int Game::worldToChunk(float worldPos) const {
@@ -1040,106 +1060,263 @@ namespace gl3 {
     }
 
     void Game::setupCamera() {
-        // --- Camera setup ---
-        cameraPos = glm::vec3(0.0f, 0.0f, 80.0f);
-        cameraRotation = glm::vec2(0.0f, -90.0f);
+        // Position camera above the terrain looking at it
+        cameraPos = glm::vec3(0.0f, 60.0f, 30.0f); // Higher Y, closer Z
+        cameraRotation = glm::vec2(-30.0f, -90.0f); // Look slightly downward
+
         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
     }
 
 
     void Game::generateChunks() {
+        // Clear existing chunks first
+        chunkManager->clear();
+
+        // Terrain generation parameters
+        const int WORLD_HEIGHT = 3; // Number of chunks in Y direction for terrain
+        const int BEDROCK_LEVEL = 1; // How many layers of bedrock at bottom
+        const int BEDROCK_SIDE_THICKNESS = 1; // Thickness of side walls
+        const int WORLD_RADIUS = ChunkCount; // Increased from ChunkCount*2 to 15 (30 chunks across)
+
+        // Create random generators
         std::mt19937 rng(std::random_device{}());
+        std::uniform_real_distribution<float> heightVariation(-2.0f, 4.0f);
+        std::uniform_real_distribution<float> colorVariation(0.7f, 1.0f);
 
-        std::uniform_real_distribution<float> distPos(-(ChunkCount * 4), (ChunkCount * 4)); // Reduced range
-        std::uniform_real_distribution<float> distScale(0.5f, 3.0f);
-        std::uniform_real_distribution<float> distColor(0.3f, 1.0f);
+        // Terrain materials
+        glm::vec3 stoneColor = glm::vec3(0.5f, 0.5f, 0.5f); // Grayish
+        glm::vec3 dirtColor = glm::vec3(0.6f, 0.4f, 0.2f);  // Brownish
+        glm::vec3 grassColor = glm::vec3(0.2f, 0.6f, 0.3f); // Green
+        glm::vec3 bedrockColor = glm::vec3(0.1f, 0.1f, 0.1f); // Black
 
-        std::vector<WorldPlanet> worldPlanets;
-
-        // Create solid planets (type 1)
-        int planetCount = 20;
-        for (int i = 0; i < planetCount; ++i) {
-            WorldPlanet p;
-            p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
-            p.radius = distScale(rng) * CHUNK_SIZE;
-            p.color = glm::vec3(distColor(rng), distColor(rng), distColor(rng));
-            p.type = 1; // solid
-            worldPlanets.push_back(p);
-        }
-
-        // Create suns (type 2 - fire)
-        std::uniform_real_distribution<float> lavaDistColorR(0.8f, 1.0f);
-        std::uniform_real_distribution<float> lavaDistColorG(0.2f, 0.5f);
-        std::uniform_real_distribution<float> lavaDistColorB(0.0f, 0.1f);
-
-        int lavaCount = 2 + (rng() % 5);
-        for (int i = 0; i < lavaCount; ++i) {
-            WorldPlanet p;
-            p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
-            p.radius = distScale(rng) * CHUNK_SIZE;
-            p.color = glm::vec3(lavaDistColorR(rng), lavaDistColorG(rng), lavaDistColorB(rng));
-            p.type = 2; // fire
-            worldPlanets.push_back(p);
-        }
-
-        // Create water planets (type 3)
-        std::uniform_real_distribution<float> waterDistColorR(0.0f, 0.2f);
-        std::uniform_real_distribution<float> waterDistColorG(0.2f, 0.8f);
-        std::uniform_real_distribution<float> waterDistColorB(0.8f, 1.0f);
-
-        int waterCount = 0 + (rng() % 1);
-        for (int i = 0; i < waterCount; ++i) {
-            WorldPlanet p;
-            p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
-            p.radius = distScale(rng) * CHUNK_SIZE;
-            p.color = glm::vec3(waterDistColorR(rng), waterDistColorG(rng), waterDistColorB(rng));
-            p.type = 3; // water
-            worldPlanets.push_back(p);
-        }
-
-        // Carve planets into chunks
         size_t solidVoxels = 0;
-
-        // DEBUG: Track how many chunks we create
         std::unordered_set<ChunkCoord, ChunkCoordHash> createdChunks;
 
-        for (const auto &planet: worldPlanets) {
-            // Determine which chunks this planet affects
-            int minCX = worldToChunk(planet.worldPos.x - planet.radius);
-            int maxCX = worldToChunk(planet.worldPos.x + planet.radius);
-            int minCY = worldToChunk(planet.worldPos.y - planet.radius);
-            int maxCY = worldToChunk(planet.worldPos.y + planet.radius);
-            int minCZ = worldToChunk(planet.worldPos.z - planet.radius);
-            int maxCZ = worldToChunk(planet.worldPos.z + planet.radius);
+        // Generate terrain plane with some height variation
+        for (int cx = -WORLD_RADIUS; cx <= WORLD_RADIUS; ++cx) {
+            for (int cz = -WORLD_RADIUS; cz <= WORLD_RADIUS; ++cz) {
+                // Calculate base height for this column (in voxels)
+                float baseHeightVoxels = 40.0f + heightVariation(rng) *
+                                                 sin(cx * 0.3f) * cos(cz * 0.3f);
+
+                // Generate chunks in this column
+                for (int cy = 0; cy < WORLD_HEIGHT; ++cy) {
+                    ChunkCoord coord{cx, cy, cz};
+
+                    // Skip chunks that would be outside world boundaries
+                    if (abs(cx) > WORLD_RADIUS - BEDROCK_SIDE_THICKNESS ||
+                        abs(cz) > WORLD_RADIUS - BEDROCK_SIDE_THICKNESS) {
+                        // This is a side wall - make it bedrock using SDF approach
+                        chunkManager->addChunk(coord, VoxelCategory::STATIC);
+                        Chunk* chunk = chunkManager->getChunk(coord);
+                        if (chunk) {
+                            chunk->coord = coord;
+                            chunk->clear(); // Sets density to -1000.0f
+
+                            // Fill with bedrock SDF (local implementation)
+                            {
+                                glm::vec3 chunkOrigin(coord.x * CHUNK_SIZE, coord.y * CHUNK_SIZE, coord.z * CHUNK_SIZE);
+
+                                // Determine which wall we're creating
+                                bool isXWall = abs(coord.x) > ChunkCount * 2 - 1;
+                                bool isZWall = abs(coord.z) > ChunkCount * 2 - 1;
+
+                                for (int x = 0; x <= CHUNK_SIZE; ++x) {
+                                    for (int y = 0; y <= CHUNK_SIZE; ++y) {
+                                        for (int z = 0; z <= CHUNK_SIZE; ++z) {
+                                            glm::vec3 worldPos = chunkOrigin + glm::vec3(x, y, z);
+                                            float density = -1000.0f; // Start with air
+
+                                            if (isXWall) {
+                                                // X wall SDF
+                                                float wallX = (coord.x > 0) ? (ChunkCount * 2 * CHUNK_SIZE) : (-ChunkCount * 2 * CHUNK_SIZE);
+                                                float wallDensity = 5.0f - abs(worldPos.x - wallX); // Positive inside wall
+                                                density = std::max(density, wallDensity);
+                                            }
+
+                                            if (isZWall) {
+                                                // Z wall SDF
+                                                float wallZ = (coord.z > 0) ? (ChunkCount * 2 * CHUNK_SIZE) : (-ChunkCount * 2 * CHUNK_SIZE);
+                                                float wallDensity = 5.0f - abs(worldPos.z - wallZ); // Positive inside wall
+                                                density = std::max(density, wallDensity);
+                                            }
+
+                                            // Always have a floor
+                                            float floorDensity = (worldPos.y + 5.0f);
+                                            density = std::max(density, floorDensity);
+
+                                            chunk->voxels[x][y][z].density = density;
+
+                                            if (density >= -1.0f) {
+                                                chunk->voxels[x][y][z].type = 4;
+                                                chunk->voxels[x][y][z].material = 0;
+                                                chunk->voxels[x][y][z].color = bedrockColor * glm::vec3(colorVariation(rng));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            createdChunks.insert(coord);
+                            chunk->meshDirty = true;
+                            chunk->lightingDirty = true;
+                            FilledChunks++;
+                        }
+                        continue;
+                    }
+
+                    // Always create chunk for this coordinate
+                    chunkManager->addChunk(coord, VoxelCategory::DYNAMIC);
+                    Chunk* chunk = chunkManager->getChunk(coord);
+                    if (!chunk) continue;
+
+                    chunk->coord = coord;
+                    chunk->clear(); // IMPORTANT: This sets all densities to -1000.0f
+                    createdChunks.insert(coord);
+
+                    glm::vec3 chunkOrigin(cx * CHUNK_SIZE, cy * CHUNK_SIZE, cz * CHUNK_SIZE);
+                    bool chunkTouched = false;
+
+                    // Fill chunk with terrain using SDF approach for smooth surfaces
+                    for (int lx = 0; lx <= CHUNK_SIZE; ++lx) {
+                        for (int ly = 0; ly <= CHUNK_SIZE; ++ly) {
+                            for (int lz = 0; lz <= CHUNK_SIZE; ++lz) {
+                                glm::vec3 voxelWorldPos = chunkOrigin + glm::vec3(lx, ly, lz);
+
+                                // Calculate density for terrain height field
+                                {
+                                    // Start with negative value (air)
+                                    float density = -1000.0f;
+
+                                    // Add bedrock floor
+                                    float bedrockDensity = (voxelWorldPos.y + 5.0f); // Positive when y > -5
+                                    density = std::max(density, bedrockDensity);
+
+                                    // Add terrain height field
+                                    float terrainSurface = baseHeightVoxels;
+                                    float terrainDensity = terrainSurface - voxelWorldPos.y; // Positive below surface
+
+                                    // Smooth transition for natural terrain
+                                    float noise = 0.5f * sin(voxelWorldPos.x * 0.1f) * cos(voxelWorldPos.z * 0.1f);
+                                    terrainDensity += noise;
+
+                                    // Take maximum (SDF union)
+                                    density = std::max(density, terrainDensity);
+
+                                    float existingDensity = chunk->voxels[lx][ly][lz].density;
+
+                                    // SDF UNION: Take maximum density
+                                    if (density > existingDensity) {
+                                        chunk->voxels[lx][ly][lz].density = density;
+
+                                        // Set type and color if near surface
+                                        if (density >= -1.0f) {
+                                            // Determine material based on height
+                                            if (cy < BEDROCK_LEVEL) {
+                                                // Bedrock layer
+                                                chunk->voxels[lx][ly][lz].type = 4;
+                                                chunk->voxels[lx][ly][lz].material = 0;
+                                                chunk->voxels[lx][ly][lz].color = bedrockColor *
+                                                                                  glm::vec3(colorVariation(rng));
+                                            } else if (voxelWorldPos.y < baseHeightVoxels - CHUNK_SIZE) {
+                                                // Deep stone
+                                                chunk->voxels[lx][ly][lz].type = 1;
+                                                chunk->voxels[lx][ly][lz].material = 0;
+                                                chunk->voxels[lx][ly][lz].color = stoneColor *
+                                                                                  glm::vec3(colorVariation(rng));
+                                            } else if (voxelWorldPos.y < baseHeightVoxels - 2) {
+                                                // Upper stone
+                                                chunk->voxels[lx][ly][lz].type = 1;
+                                                chunk->voxels[lx][ly][lz].material = 0;
+                                                chunk->voxels[lx][ly][lz].color = stoneColor *
+                                                                                  glm::vec3(0.8f + colorVariation(rng) * 0.2f);
+                                            } else if (voxelWorldPos.y < baseHeightVoxels) {
+                                                // Dirt layer
+                                                chunk->voxels[lx][ly][lz].type = 1;
+                                                chunk->voxels[lx][ly][lz].material = 1;
+                                                chunk->voxels[lx][ly][lz].color = dirtColor *
+                                                                                  glm::vec3(colorVariation(rng));
+                                            } else if (voxelWorldPos.y < baseHeightVoxels + 1) {
+                                                // Surface (grass or dirt)
+                                                if (fmod(voxelWorldPos.x * voxelWorldPos.z, 3.0f) < 1.0f) {
+                                                    chunk->voxels[lx][ly][lz].type = 1;
+                                                    chunk->voxels[lx][ly][lz].material = 2;
+                                                    chunk->voxels[lx][ly][lz].color = grassColor *
+                                                                                      glm::vec3(colorVariation(rng));
+                                                } else {
+                                                    chunk->voxels[lx][ly][lz].type = 1;
+                                                    chunk->voxels[lx][ly][lz].material = 1;
+                                                    chunk->voxels[lx][ly][lz].color = dirtColor *
+                                                                                      glm::vec3(colorVariation(rng));
+                                                }
+                                            }
+
+                                            if (density >= 0) {
+                                                solidVoxels++;
+                                                chunkTouched = true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (chunkTouched) {
+                        chunk->meshDirty = true;
+                        chunk->lightingDirty = true;
+                        FilledChunks++;
+                    }
+                }
+            }
+        }
+
+        // Add suns in the sky
+        std::uniform_real_distribution<float> sunDistPos(-1, 1);
+        std::uniform_real_distribution<float> sunDistScale(2.0f, 4.0f);
+        std::uniform_real_distribution<float> sunDistHeight(WORLD_RADIUS*4.0, WORLD_RADIUS*5); // High up
+
+        int sunCount = 2 + (rng() % 2); // 1-2 suns
+
+        for (int i = 0; i < sunCount; ++i) {
+            // Create sun sphere
+            glm::vec3 sunPos = glm::vec3(
+                    sunDistPos(rng),
+                    sunDistHeight(rng), // High in the sky
+                    sunDistPos(rng)
+            );
+
+            float sunRadius = sunDistScale(rng) * CHUNK_SIZE;
+
+            // Sun colors
+            glm::vec3 sunColor;
+            if (i == 0) {
+                sunColor = glm::vec3(1.0f, 0.5f, 0.0f); // Yellowish sun
+            } else {
+                sunColor = glm::vec3(0.8f, 0.7f, 0.0f); // Greenish sun
+            }
+
+            // Carve sun sphere into chunks
+            int minCX = worldToChunk(sunPos.x - sunRadius);
+            int maxCX = worldToChunk(sunPos.x + sunRadius);
+            int minCY = worldToChunk(sunPos.y - sunRadius);
+            int maxCY = worldToChunk(sunPos.y + sunRadius);
+            int minCZ = worldToChunk(sunPos.z - sunRadius);
+            int maxCZ = worldToChunk(sunPos.z + sunRadius);
 
             for (int cx = minCX; cx <= maxCX; ++cx) {
                 for (int cy = minCY; cy <= maxCY; ++cy) {
                     for (int cz = minCZ; cz <= maxCZ; ++cz) {
                         ChunkCoord coord{cx, cy, cz};
 
-                        // Get or create chunk using MultiGridChunkManager
-                        Chunk *chunk = chunkManager->getChunk(coord);
+                        // Get or create chunk
+                        Chunk* chunk = chunkManager->getChunk(coord);
                         if (!chunk) {
-                            // Determine category based on planet type
-                            VoxelCategory category;
-                            switch (planet.type) {
-                                case 2:
-                                    category = VoxelCategory::EMISSIVE;
-                                    break; // Fire
-                                case 3:
-                                    category = VoxelCategory::FLUID;
-                                    break;    // Water
-                                default:
-                                    category = VoxelCategory::STATIC;
-                                    break;  // Solid
-                            }
-                            chunkManager->addChunk(coord, category);
+                            chunkManager->addChunk(coord, VoxelCategory::EMISSIVE);
                             chunk = chunkManager->getChunk(coord);
-
                             if (chunk) {
-                                // Initialize the chunk if newly created
                                 chunk->coord = coord;
-                                chunk->clear(); // IMPORTANT: Initialize all densities to -1000
+                                chunk->clear();
                                 createdChunks.insert(coord);
                             }
                         }
@@ -1149,31 +1326,28 @@ namespace gl3 {
                         glm::vec3 chunkOrigin(cx * CHUNK_SIZE, cy * CHUNK_SIZE, cz * CHUNK_SIZE);
                         bool chunkTouched = false;
 
-                        // Carve sphere into chunk - FIXED: Use SDF union operation
+                        // Carve sphere into chunk
                         for (int lx = 0; lx <= CHUNK_SIZE; ++lx) {
                             for (int ly = 0; ly <= CHUNK_SIZE; ++ly) {
                                 for (int lz = 0; lz <= CHUNK_SIZE; ++lz) {
                                     glm::vec3 worldPos = chunkOrigin + glm::vec3(lx, ly, lz);
-                                    float dist = glm::distance(worldPos, planet.worldPos);
+                                    float dist = glm::distance(worldPos, sunPos);
 
-                                    // Calculate this planet's SDF value
-                                    float planetDensity = planet.radius - dist; // Positive inside, negative outside
+                                    float sunDensity = sunRadius - dist;
 
-                                    // Get existing density (initialized to -1000 for air)
+                                    // Get existing density
                                     float existingDensity = chunk->voxels[lx][ly][lz].density;
 
-                                    // SDF UNION: Take the MAXIMUM density (most solid)
-                                    // For Marching Cubes, positive = inside, negative = outside
-                                    if (planetDensity > existingDensity) {
-                                        // This planet is "more solid" at this point
-                                        chunk->voxels[lx][ly][lz].density = planetDensity;
+                                    // SDF UNION
+                                    if (sunDensity > existingDensity) {
+                                        chunk->voxels[lx][ly][lz].density = sunDensity;
 
-                                        // Set type and color if we're inside or near the surface
-                                        if (planetDensity >= -1.0f) { // Near the isosurface (density ~0)
-                                            chunk->voxels[lx][ly][lz].type = planet.type;
-                                            chunk->voxels[lx][ly][lz].color = planet.color;
+                                        if (sunDensity >= -1.0f) {
+                                            chunk->voxels[lx][ly][lz].type = 2; // Fire/emissive
+                                            chunk->voxels[lx][ly][lz].material = 0;
+                                            chunk->voxels[lx][ly][lz].color = sunColor;
 
-                                            if (planetDensity >= 0) { // Actually inside the solid
+                                            if (sunDensity >= 0) {
                                                 solidVoxels++;
                                                 chunkTouched = true;
                                             }
@@ -1188,20 +1362,70 @@ namespace gl3 {
                             chunk->lightingDirty = true;
                             FilledChunks++;
 
-                            // Rebuild lights for this chunk if it contains fire
-                            if (planet.type == 2) {
-                                rebuildChunkLights(coord);
-                            }
+                            // Add lighting for sun
+                            rebuildChunkLights(coord);
                         }
                     }
                 }
             }
         }
 
+        // Add ceiling bedrock layer at the top of the world using SDF
+        int ceilingLevel = WORLD_HEIGHT - 1;
+        float ceilingY = ceilingLevel * CHUNK_SIZE + CHUNK_SIZE / 2.0f;
+
+        for (int cx = -WORLD_RADIUS; cx <= WORLD_RADIUS; ++cx) {
+            for (int cz = -WORLD_RADIUS; cz <= WORLD_RADIUS; ++cz) {
+                ChunkCoord coord{cx, ceilingLevel, cz};
+
+                chunkManager->addChunk(coord, VoxelCategory::STATIC);
+                Chunk* chunk = chunkManager->getChunk(coord);
+                if (chunk) {
+                    chunk->coord = coord;
+                    chunk->clear();
+
+                    // Fill with ceiling SDF
+                    {
+                        glm::vec3 chunkOrigin(coord.x * CHUNK_SIZE, coord.y * CHUNK_SIZE, coord.z * CHUNK_SIZE);
+
+                        for (int x = 0; x <= CHUNK_SIZE; ++x) {
+                            for (int y = 0; y <= CHUNK_SIZE; ++y) {
+                                for (int z = 0; z <= CHUNK_SIZE; ++z) {
+                                    glm::vec3 worldPos = chunkOrigin + glm::vec3(x, y, z);
+
+                                    // Ceiling SDF: positive below ceiling, negative above
+                                    float ceilingDensity = ceilingY - worldPos.y - 2.0f;
+
+                                    // Start with existing density (from chunk->clear() = -1000)
+                                    float existingDensity = chunk->voxels[x][y][z].density;
+
+                                    // SDF union
+                                    if (ceilingDensity > existingDensity) {
+                                        chunk->voxels[x][y][z].density = ceilingDensity;
+
+                                        if (ceilingDensity >= -1.0f) {
+                                            chunk->voxels[x][y][z].type = 4;
+                                            chunk->voxels[x][y][z].material = 0;
+                                            chunk->voxels[x][y][z].color = bedrockColor * glm::vec3(colorVariation(rng));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    createdChunks.insert(coord);
+                    chunk->meshDirty = true;
+                    chunk->lightingDirty = true;
+                    FilledChunks++;
+                }
+            }
+        }
+
         // Statistics
-        std::cout << "Generated " << worldPlanets.size() << " planets\n";
-        std::cout << "Touched " << FilledChunks << " chunks\n";
+        std::cout << "Generated " << createdChunks.size() << " chunks\n";
         std::cout << "Created " << solidVoxels << " solid voxels\n";
+        std::cout << "Added " << sunCount << " sun(s) in the sky\n";
     }
 
     void Game::setupVEffects() {
@@ -1351,7 +1575,7 @@ namespace gl3 {
             VoxelLight light;
             light.pos = sumPos / float(count);
             light.color = sumColor / float(count);
-            light.intensity = float(count) * 35.0f; // Scale intensity
+            light.intensity = float(count) * 155.0f; // Scale intensity
             light.id = makeLightID(coord.x, coord.y, coord.z);
 
             chunk->emissiveLights.push_back(light);
@@ -1612,13 +1836,13 @@ namespace gl3 {
     void Game::renderChunks() {
         int built = 0;
         int lighted = 0;
-        int culledChunks=0;
+        int culledChunks = 0;
+        int occludedChunks = 0; // Track occlusion culled chunks
 
-        std::cout<<"\nFrame:"<<(frameCounter-29)<<"\n";
+        std::cout << "\nFrame:" << (frameCounter - 29) << "\n";
         if (DebugMode2) {
             glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-        }
-        else {
+        } else {
             glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
         }
         float aspect = (windowHeight == 0) ? (float) windowWidth / 1.0f : (float) windowWidth / (float) windowHeight;
@@ -1642,177 +1866,183 @@ namespace gl3 {
         int meshRegens = 0;
         int totalChecked = 0;
 
-
         // STEP 1: Update global light spatial hash (replaces grid)
         if (frameCounter % 30 == 0) { // Update every 30 frames
             CpuTimer t7("\n Update Light Spacial Hash");
             updateLightSpatialHash();
         }
 
-        // STEP 2: First, generate meshes for dirty chunks
+        // STEP 1.5: Pre-calculate visible chunks with occlusion culling
+        // We'll use a simple approach: chunks that are behind solid terrain from camera view
+        std::vector<std::pair<ChunkCoord, Chunk*>> visibleChunks;
+        visibleChunks.reserve(totalChunks / 4); // Reserve some space
+
+        // For terrain, we can use ray-marching or height-based occlusion
+        // Simple approach: Only render chunks within a certain distance and not occluded
+
         const int renderRadius = RenderingRange;
-        //if(DebugMode1) {CpuTimer t8("Generate Meshes");}
+
+        // Get camera direction
+        glm::vec3 cameraDir = getCameraFront();
+
+        // STEP 2: First, generate meshes for dirty chunks and collect visible chunks
         for (int cx = camCX - renderRadius; cx <= camCX + renderRadius; ++cx) {
             for (int cy = camCY - renderRadius; cy <= camCY + renderRadius; ++cy) {
                 for (int cz = camCZ - renderRadius; cz <= camCZ + renderRadius; ++cz) {
                     totalChecked++;
                     ChunkCoord coord{cx, cy, cz};
-                    if(!isChunkVisible(coord))
-                    {
-                        culledChunks++;
-                        continue;
-                    }
-                    Chunk *chunk = chunkManager->getChunk(coord);
 
+
+                    Chunk* chunk = chunkManager->getChunk(coord);
                     if (!chunk) continue;
                     if (!hasSolidVoxels(*chunk)) continue;
 
+                    // Occlusion culling for terrain
+                    if (isChunkOccluded(coord, cameraPos)) {
+                        occludedChunks++;
+                        continue;
+                    }
+
+                    // Add to visible chunks list
+                    visibleChunks.emplace_back(coord, chunk);
+
                     // Regenerate mesh if dirty
-                    if (chunk->meshDirty&&built < MAX_CHUNKS_PER_FRAME || !chunk->gpuCache.isValid&&built < MAX_CHUNKS_PER_FRAME) {
+                    if ((chunk->meshDirty && built < MAX_CHUNKS_PER_FRAME) ||
+                        (!chunk->gpuCache.isValid && built < MAX_CHUNKS_PER_FRAME)) {
                         built++;
-                        if(built<=1&&DebugMode1)
-                        {
+                        if (built <= 1 && DebugMode1) {
                             CpuTimer t5("generateChunkMesh");
                             generateChunkMesh(chunk);
+                        } else {
+                            generateChunkMesh(chunk);
                         }
-                        else{
-                        generateChunkMesh(chunk);
-                        }
-                        if(built<=1) {
+                        if (built <= 1) {
                             std::cout << "approximate Mesh Progress: "
-                                      << ((float) (frameCounter - 29) * MAX_CHUNKS_PER_FRAME / FilledChunks) * 100.0f
+                                      << ((float)(frameCounter - 29) * MAX_CHUNKS_PER_FRAME / FilledChunks) * 100.0f
                                       << "% \n";
                         }
                         meshRegens++;
                     }
 
                     // Rebuild lighting if dirty
-                    if (chunk->lightingDirty&&lighted<MAX_CHUNKS_PER_FRAME) {
+                    if (chunk->lightingDirty && lighted < MAX_CHUNKS_PER_FRAME) {
                         lighted++;
-                        if(lighted==1&&DebugMode1)
-                        {
+                        if (lighted == 1 && DebugMode1) {
                             CpuTimer t4("rebuildChunkLights");
                             rebuildChunkLights(coord);
-                        }
-                        else {
+                        } else {
                             rebuildChunkLights(coord);
                         }
-                        if(lighted<=1) {
+                        if (lighted <= 1) {
                             std::cout << "approximate Lighting Progress: "
-                                    <<((float) (frameCounter - 29) * MAX_CHUNKS_PER_FRAME / FilledChunks) * 100.0f
-                                    << "% \n";
+                                      << ((float)(frameCounter - 29) * MAX_CHUNKS_PER_FRAME / FilledChunks) * 100.0f
+                                      << "% \n";
                         }
                         chunk->lightingDirty = false;
                     }
-
                 }
             }
         }
-        if(DebugMode1) {std::cout << "Mesh generation: culled " << culledChunks << " of " << totalChecked
-                  << " chunks (" << (100.0f * culledChunks / totalChecked) << "% culled)\n";}
-        culledChunks = 0;
-        totalChecked = 0;
-        // STEP 3: Now RENDER all visible chunks
+
+        if (DebugMode1) {
+            std::cout << "Mesh generation: culled " << culledChunks << " of " << totalChecked
+                      << " chunks (" << (100.0f * culledChunks / totalChecked) << "% culled)\n";
+            std::cout << "Occlusion culled: " << occludedChunks << " chunks\n";
+        }
+
+        // STEP 3: Sort visible chunks by distance to camera (front-to-back for better occlusion)
+        std::sort(visibleChunks.begin(), visibleChunks.end(),
+                  [&](const std::pair<ChunkCoord, Chunk*>& a, const std::pair<ChunkCoord, Chunk*>& b) {
+                      glm::vec3 aCenter = glm::vec3(
+                              a.first.x * CHUNK_SIZE + CHUNK_SIZE / 2,
+                              a.first.y * CHUNK_SIZE + CHUNK_SIZE / 2,
+                              a.first.z * CHUNK_SIZE + CHUNK_SIZE / 2
+                      );
+                      glm::vec3 bCenter = glm::vec3(
+                              b.first.x * CHUNK_SIZE + CHUNK_SIZE / 2,
+                              b.first.y * CHUNK_SIZE + CHUNK_SIZE / 2,
+                              b.first.z * CHUNK_SIZE + CHUNK_SIZE / 2
+                      );
+
+                      // Calculate squared distances (faster than actual distance)
+                      float distA2 = glm::dot(aCenter - cameraPos, aCenter - cameraPos);
+                      float distB2 = glm::dot(bCenter - cameraPos, bCenter - cameraPos);
+                      return distA2 < distB2;
+                  });
+
+        // STEP 4: Now RENDER only visible chunks
         voxelShader->use();  // Activate RENDER shader
 
         // Set common uniforms that don't change per chunk
-
         voxelShader->setMatrix("model", glm::mat4(1.0f));
         voxelShader->setMatrix("mvp", pv);
         voxelShader->setVec3("viewPos", cameraPos);
         voxelShader->setVec3("ambientColor", glm::vec3(0.0002f));
 
-// or show signed N·L for the strongest light (index 0)
         if (DebugMode1) {
             voxelShader->setInt("debugMode", activeDebugMode % 5);
         } else {
             voxelShader->setFloat("emission", 0.0f);
         }
 
-        //if(DebugMode1) {CpuTimer t6("ChunkLighting");}
-        for (int cx = camCX - renderRadius; cx <= camCX + renderRadius; ++cx) {
-            for (int cy = camCY - renderRadius; cy <= camCY + renderRadius; ++cy) {
-                for (int cz = camCZ - renderRadius; cz <= camCZ + renderRadius; ++cz) {
-                    totalChecked++;
-                    ChunkCoord coord{cx, cy, cz};
-                    if(!isChunkVisible(coord))
-                    {
-                        culledChunks++;
-                        continue;
-                    }
-                    Chunk *chunk = chunkManager->getChunk(coord);
-                    if (!chunk || !hasSolidVoxels(*chunk)) continue;
+        // Render visible chunks
+        for (const auto& [coord, chunk] : visibleChunks) {
+            // Skip if no geometry
+            if (chunk->gpuCache.vertexCount == 0 || !chunk->gpuCache.isValid) {
+                continue;
+            }
 
-                    // Skip if no geometry
-                    if (chunk->gpuCache.vertexCount == 0 || !chunk->gpuCache.isValid) {
-                        continue;
-                    }
+            // Update lights for this chunk (check if outdated)
+            if (frameCounter - chunk->gpuCache.lastLightUpdateFrame > LIGHT_UPDATE_INTERVAL ||
+                chunk->gpuCache.nearbyLights.empty()) {
+                updateChunkLights(chunk);
+            }
 
-                    // Update lights for this chunk (check if outdated)
-                    if (frameCounter - chunk->gpuCache.lastLightUpdateFrame > LIGHT_UPDATE_INTERVAL ||
-                        chunk->gpuCache.nearbyLights.empty()) {
-                        updateChunkLights(chunk);
-                    }
-
-                    // Collect billboards from emissive chunks
-                    for (const auto &light: chunk->emissiveLights) {
-                        if (usedLightIDs.insert(light.id).second) {
-                            SunInstance inst;
-                            inst.position = light.pos;
-                            inst.scale = std::sqrt(light.intensity) * 0.5f;
-                            inst.color = light.color * 1.0f;
-                            emissiveBillboards.push_back(inst);
-                        }
-                    }
-
-                    //std::cout<<(chunk->gpuCache.nearbyLights.size())<<"\n";
-
-                    // Set per-chunk uniforms (lights)
-                    /*if((chunk->gpuCache.nearbyLights.size()>0)) {
-                        std::cout << "lights exist for this chunk: "<< chunk->gpuCache.nearbyLights.size() << "\n";
-                    }*/
-
-                    int numLights = std::min((int) chunk->gpuCache.nearbyLights.size(), MAX_LIGHTS);
-                    voxelShader->setInt("numLights", numLights);
-                    for (int i = 0; i < numLights; ++i) {
-                        const VoxelLight *light = chunk->gpuCache.nearbyLights[i];
-                        voxelShader->setVec3("lightPos[" + std::to_string(i) + "]", light->pos);
-                        voxelShader->setVec3("lightColor[" + std::to_string(i) + "]", light->color);
-                        voxelShader->setFloat("lightIntensity[" + std::to_string(i) + "]", light->intensity);
-                    }
-
-                    // For remaining light slots, set them to zero
-                    for (int i = numLights; i < MAX_LIGHTS; ++i) {
-                        voxelShader->setVec3("lightPos[" + std::to_string(i) + "]", glm::vec3(0.0f));
-                        voxelShader->setVec3("lightColor[" + std::to_string(i) + "]", glm::vec3(0.0f));
-                        voxelShader->setFloat("lightIntensity[" + std::to_string(i) + "]", 0.0f);
-                    }
-
-                    // Draw from chunk's VAO
-                    glBindVertexArray(chunk->gpuCache.vao);
-                    glDrawArrays(GL_TRIANGLES, 0, chunk->gpuCache.vertexCount);
-                    glBindVertexArray(0);
-
-                    renderedChunks++;
+            // Collect billboards from emissive chunks
+            for (const auto& light : chunk->emissiveLights) {
+                if (usedLightIDs.insert(light.id).second) {
+                    SunInstance inst;
+                    inst.position = light.pos;
+                    inst.scale = std::sqrt(light.intensity) * 0.5f;
+                    inst.color = light.color * 1.0f;
+                    emissiveBillboards.push_back(inst);
                 }
             }
+
+            int numLights = std::min((int)chunk->gpuCache.nearbyLights.size(), MAX_LIGHTS);
+            voxelShader->setInt("numLights", numLights);
+            for (int i = 0; i < numLights; ++i) {
+                const VoxelLight* light = chunk->gpuCache.nearbyLights[i];
+                voxelShader->setVec3("lightPos[" + std::to_string(i) + "]", light->pos);
+                voxelShader->setVec3("lightColor[" + std::to_string(i) + "]", light->color);
+                voxelShader->setFloat("lightIntensity[" + std::to_string(i) + "]", light->intensity);
+            }
+
+            // For remaining light slots, set them to zero
+            for (int i = numLights; i < MAX_LIGHTS; ++i) {
+                voxelShader->setVec3("lightPos[" + std::to_string(i) + "]", glm::vec3(0.0f));
+                voxelShader->setVec3("lightColor[" + std::to_string(i) + "]", glm::vec3(0.0f));
+                voxelShader->setFloat("lightIntensity[" + std::to_string(i) + "]", 0.0f);
+            }
+
+            // Draw from chunk's VAO
+            glBindVertexArray(chunk->gpuCache.vao);
+            glDrawArrays(GL_TRIANGLES, 0, chunk->gpuCache.vertexCount);
+            glBindVertexArray(0);
+
+            renderedChunks++;
         }
 
-        if(DebugMode1) {
-            std::cout << "Lighting/Rendering: culled " << culledChunks << " of " << totalChecked
-                      << " chunks (" << (100.0f * culledChunks / totalChecked) << "% culled)\n";
-
-            // Also add frustum culling statistics
-            std::cout << "Frustum culling effectiveness: "
-                      << (100.0f * (totalChunks - totalChecked + culledChunks) / totalChunks)
-                      << "% of chunks were culled\n";
+        if (DebugMode1) {
+            std::cout << "Rendered " << renderedChunks << " of " << visibleChunks.size()
+                      << " visible chunks (Regenerated: " << meshRegens << ")\n";
+            std::cout << "Total occlusion: " << (culledChunks + occludedChunks) << " chunks culled\n";
         }
+
         // Render billboards
         if (!emissiveBillboards.empty() && !DebugMode1) {
-            sunBillboards.render(emissiveBillboards, view, projection, (float) glfwGetTime());
+            sunBillboards.render(emissiveBillboards, view, projection, (float)glfwGetTime());
         }
-
-        //std::cout << "Rendered " << renderedChunks << " chunks (Regenerated: " << meshRegens << ")\n";
     }
 
     void Game::renderAnimatedVoxels() {
@@ -2388,4 +2618,169 @@ namespace gl3 {
         return glm::vec3(0, 1, 0);
     }
 
+
+    bool Game::isChunkOccluded(const ChunkCoord& targetCoord, const glm::vec3& cameraPos) {
+        // DISABLE OCCLUSION CULLING WHEN CAMERA IS HIGH ABOVE TERRAIN
+        // When camera is high, we want to see more terrain, not less
+
+        float cameraHeight = cameraPos.y;
+        float targetHeight = targetCoord.y * CHUNK_SIZE;
+
+        // If camera is very high above the target, disable occlusion
+        if (cameraHeight - targetHeight > 50.0f) {
+            return false; // Don't occlude when looking down from high up
+        }
+
+        // Get the center of the target chunk
+        glm::vec3 targetCenter = glm::vec3(
+                targetCoord.x * CHUNK_SIZE + CHUNK_SIZE / 2.0f,
+                targetCoord.y * CHUNK_SIZE + CHUNK_SIZE / 2.0f,
+                targetCoord.z * CHUNK_SIZE + CHUNK_SIZE / 2.0f
+        );
+
+        // Vector from camera to target
+        glm::vec3 rayDir = glm::normalize(targetCenter - cameraPos);
+
+        // Use DDA algorithm to step through chunks
+        return isChunkOccludedByDDA(cameraPos, targetCoord, rayDir);
+    }
+
+    bool Game::isChunkOccludedByDDA(const glm::vec3& start, const ChunkCoord& target, const glm::vec3& dir) {
+        // Convert start position to chunk coordinates
+        ChunkCoord current = {
+                worldToChunk(start.x),
+                worldToChunk(start.y),
+                worldToChunk(start.z)
+        };
+
+        // Don't check the starting chunk (where camera is)
+        if (current == target) return false;
+
+        // DDA algorithm parameters
+        float t = 0.0f;
+        float tMaxX, tMaxY, tMaxZ;
+        float tDeltaX, tDeltaY, tDeltaZ;
+
+        int stepX, stepY, stepZ;
+
+        // Initialize DDA
+        glm::vec3 rayStart = start;
+        glm::vec3 rayDir = dir;
+
+        // Avoid division by zero
+        if (rayDir.x == 0) rayDir.x = 0.0001f;
+        if (rayDir.y == 0) rayDir.y = 0.0001f;
+        if (rayDir.z == 0) rayDir.z = 0.0001f;
+
+        // Determine step direction and initialize tMax
+        if (rayDir.x > 0) {
+            stepX = 1;
+            tMaxX = ((current.x + 1) * CHUNK_SIZE - rayStart.x) / rayDir.x;
+        } else {
+            stepX = -1;
+            tMaxX = (current.x * CHUNK_SIZE - rayStart.x) / rayDir.x;
+        }
+
+        if (rayDir.y > 0) {
+            stepY = 1;
+            tMaxY = ((current.y + 1) * CHUNK_SIZE - rayStart.y) / rayDir.y;
+        } else {
+            stepY = -1;
+            tMaxY = (current.y * CHUNK_SIZE - rayStart.y) / rayDir.y;
+        }
+
+        if (rayDir.z > 0) {
+            stepZ = 1;
+            tMaxZ = ((current.z + 1) * CHUNK_SIZE - rayStart.z) / rayDir.z;
+        } else {
+            stepZ = -1;
+            tMaxZ = (current.z * CHUNK_SIZE - rayStart.z) / rayDir.z;
+        }
+
+        // tDelta is the distance along the ray between chunk boundaries
+        tDeltaX = CHUNK_SIZE / std::abs(rayDir.x);
+        tDeltaY = CHUNK_SIZE / std::abs(rayDir.y);
+        tDeltaZ = CHUNK_SIZE / std::abs(rayDir.z);
+
+        // Max distance to check
+        float maxDistance = glm::distance(
+                glm::vec3(target.x * CHUNK_SIZE, target.y * CHUNK_SIZE, target.z * CHUNK_SIZE),
+                rayStart
+        ) + CHUNK_SIZE * 4.0f;
+
+        // Track how many solid chunks we encounter
+        int solidChunksFound = 0;
+        const int SOLID_CHUNKS_THRESHOLD = 3; // Need at least N solid chunks to occlude
+
+        // Step through chunks
+        while (t < maxDistance) {
+            // Check if we reached the target chunk
+            if (current == target) {
+                // We reached target
+                return (solidChunksFound >= SOLID_CHUNKS_THRESHOLD);
+            }
+
+            // Check if current chunk is solid
+            Chunk* chunk = chunkManager->getChunk(current);
+            if (chunk && hasSolidVoxels(*chunk)) {
+                // Check how "solid" this chunk is (percentage of solid voxels)
+                float solidity = getChunkSolidity(*chunk);
+
+                // Only count as "occluding" if chunk is mostly solid
+                if (solidity > 0.5f) { // 70% solid or more
+                    solidChunksFound++;
+
+                    // EARLY OUT: If we found enough solid chunks, occlude immediately
+                    if (solidChunksFound >= SOLID_CHUNKS_THRESHOLD) {
+                        return true;
+                    }
+                }
+            }
+
+            // Step to next chunk boundary
+            if (tMaxX < tMaxY) {
+                if (tMaxX < tMaxZ) {
+                    t = tMaxX;
+                    tMaxX += tDeltaX;
+                    current.x += stepX;
+                } else {
+                    t = tMaxZ;
+                    tMaxZ += tDeltaZ;
+                    current.z += stepZ;
+                }
+            } else {
+                if (tMaxY < tMaxZ) {
+                    t = tMaxY;
+                    tMaxY += tDeltaY;
+                    current.y += stepY;
+                } else {
+                    t = tMaxZ;
+                    tMaxZ += tDeltaZ;
+                    current.z += stepZ;
+                }
+            }
+        }
+
+        return false;
+    }
+
+// Replace isChunkFullyOpaque with getChunkSolidity
+    float Game::getChunkSolidity(const Chunk& chunk) {
+        int solidVoxels = 0;
+        int totalVoxels = 0;
+
+        // Sample every 4th voxel for performance
+        for (int x = 0; x <= CHUNK_SIZE; x += 2) {
+            for (int y = 0; y <= CHUNK_SIZE; y += 2) {
+                for (int z = 0; z <= CHUNK_SIZE; z += 2) {
+                    totalVoxels++;
+                    if (chunk.voxels[x][y][z].density >= 0.0f) {
+                        solidVoxels++;
+                    }
+                }
+            }
+        }
+
+        return totalVoxels > 0 ? (float)solidVoxels / totalVoxels : 0.0f;
+    }
 }
