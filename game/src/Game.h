@@ -328,8 +328,8 @@ namespace gl3 {
         //World-Variables:
         const int DIM = CHUNK_SIZE + 1; //Chunk Size with a bit off padding for marching cubes
         size_t voxelCount = DIM * DIM * DIM; //How many voxels can be in one Chunk
-        static constexpr int ChunkCount = 60; //Total size of the Game World
-        static constexpr int RenderingRange = 35; //Range around Camera that is rendered
+        static constexpr int ChunkCount = 70; //Total size of the Game World
+        static constexpr int RenderingRange = 25; //Range around Camera that is rendered
 
         //Marching-cubes Variables
         size_t maxVerts =
