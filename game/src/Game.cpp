@@ -172,8 +172,25 @@ namespace gl3 {
     }
 
     int Game::worldToChunk(float worldPos) const {
-        return (int) std::floor(worldPos / CHUNK_SIZE);
+        // Each chunk covers CHUNK_SIZE voxels, each voxel is VOXEL_SIZE world units.
+        // So chunk world width = CHUNK_SIZE * VOXEL_SIZE.
+        const float chunkWorldSize = CHUNK_SIZE * gl3::VOXEL_SIZE;
+        return (int) std::floor(worldPos / chunkWorldSize);
     }
+
+    glm::vec3 Game::getChunkMin(const ChunkCoord& coord) const {
+        // chunk origin in world units
+        return glm::vec3(coord.x * CHUNK_SIZE * gl3::VOXEL_SIZE,
+                         coord.y * CHUNK_SIZE * gl3::VOXEL_SIZE,
+                         coord.z * CHUNK_SIZE * gl3::VOXEL_SIZE);
+    }
+
+    glm::vec3 Game::getChunkMax(const ChunkCoord& coord) const {
+        return glm::vec3((coord.x + 1) * CHUNK_SIZE * gl3::VOXEL_SIZE,
+                         (coord.y + 1) * CHUNK_SIZE * gl3::VOXEL_SIZE,
+                         (coord.z + 1) * CHUNK_SIZE * gl3::VOXEL_SIZE);
+    }
+
 
 
     void Game::markChunkModified(const ChunkCoord &coord) {
@@ -203,19 +220,6 @@ namespace gl3 {
             // GPU resources get cleaned up in chunk destructor or clear() method
             chunk->clear(); // This deletes VAO/VBO
         }
-    }
-
-    // Get chunk bounding box in world space
-    glm::vec3 Game::getChunkMin(const ChunkCoord& coord) const {
-        return glm::vec3(coord.x * CHUNK_SIZE,
-                         coord.y * CHUNK_SIZE,
-                         coord.z * CHUNK_SIZE);
-    }
-
-    glm::vec3 Game::getChunkMax(const ChunkCoord& coord) const {
-        return glm::vec3((coord.x + 1) * CHUNK_SIZE,
-                         (coord.y + 1) * CHUNK_SIZE,
-                         (coord.z + 1) * CHUNK_SIZE);
     }
 
     // Check if chunk is visible (combination of distance and frustum culling)
@@ -362,8 +366,7 @@ namespace gl3 {
                         const Voxel& voxel = chunk->voxels[x][y][z];
 
                         if (voxel.isSolid() && voxel.material == targetMaterial) {
-                            glm::vec3 worldPos = chunkMin + glm::vec3(x, y, z);
-                            glm::vec3 diff = worldPos - center;
+                            glm::vec3 worldPos = chunkMin + glm::vec3((float)x, (float)y, (float)z) * gl3::VOXEL_SIZE;                            glm::vec3 diff = worldPos - center;
                             float distSq = glm::dot(diff, diff);
 
                             if (distSq <= radiusSq) {
@@ -487,10 +490,10 @@ namespace gl3 {
 
     void Game::createExteriorSmoothCrater(Chunk* chunk, const glm::ivec3& voxelPos,
                                           const glm::vec3& worldPos) {
-        float craterRadius = 2.0f;
-        float maxCraterDepth = 2.5f;
+        float craterRadius = 2.0f * gl3::VOXEL_SIZE; // scale crater size by voxel size
+        float maxCraterDepth = 2.5f; // this is a density amount, leave unless you need to tune
 
-        int range = static_cast<int>(std::ceil(craterRadius));
+        int range = static_cast<int>(std::ceil(craterRadius / gl3::VOXEL_SIZE));
 
         for (int dx = -range; dx <= range; ++dx) {
             for (int dy = -range; dy <= range; ++dy) {
@@ -503,7 +506,8 @@ namespace gl3 {
                         continue;
                     }
 
-                    float dist = std::sqrt(dx*dx + dy*dy + dz*dz);
+                    glm::vec3 offset = glm::vec3((float)dx, (float)dy, (float)dz) * gl3::VOXEL_SIZE;
+                    float dist = glm::length(offset); // world distance
                     if (dist <= craterRadius) {
                         float t = dist / craterRadius;
                         float originalDensity = chunk->voxels[nx][ny][nz].density;
@@ -677,9 +681,8 @@ namespace gl3 {
                     for (int lx = 0; lx <= CHUNK_SIZE; ++lx) {
                         for (int ly = 0; ly <= CHUNK_SIZE; ++ly) {
                             for (int lz = 0; lz <= CHUNK_SIZE; ++lz) {
-                                glm::vec3 worldPos = chunkOrigin + glm::vec3(lx, ly, lz);
+                                glm::vec3 worldPos = chunkOrigin + glm::vec3((float)lx, (float)ly, (float)lz) * gl3::VOXEL_SIZE;
                                 float dist = glm::distance(worldPos, formation.worldPos);
-
                                 float formationDensity = formation.radius - dist;
 
                                 float existingDensity = chunk->voxels[lx][ly][lz].density;
@@ -1146,14 +1149,14 @@ namespace gl3 {
 
                         if (!chunk) continue;
 
-                        glm::vec3 chunkOrigin(cx * CHUNK_SIZE, cy * CHUNK_SIZE, cz * CHUNK_SIZE);
+                        glm::vec3 chunkOrigin(cx * CHUNK_SIZE*VOXEL_SIZE, cy * CHUNK_SIZE*VOXEL_SIZE, cz * CHUNK_SIZE*VOXEL_SIZE);
                         bool chunkTouched = false;
 
                         // Carve sphere into chunk - FIXED: Use SDF union operation
                         for (int lx = 0; lx <= CHUNK_SIZE; ++lx) {
                             for (int ly = 0; ly <= CHUNK_SIZE; ++ly) {
                                 for (int lz = 0; lz <= CHUNK_SIZE; ++lz) {
-                                    glm::vec3 worldPos = chunkOrigin + glm::vec3(lx, ly, lz);
+                                    glm::vec3 worldPos = chunkOrigin + glm::vec3(lx, ly, lz)*VOXEL_SIZE;
                                     float dist = glm::distance(worldPos, planet.worldPos);
 
                                     // Calculate this planet's SDF value
@@ -2099,9 +2102,9 @@ namespace gl3 {
         }
 
         glm::vec3 chunkOrigin(
-                chunk->coord.x * CHUNK_SIZE,
-                chunk->coord.y * CHUNK_SIZE,
-                chunk->coord.z * CHUNK_SIZE
+                chunk->coord.x * CHUNK_SIZE * gl3::VOXEL_SIZE,
+                chunk->coord.y * CHUNK_SIZE * gl3::VOXEL_SIZE,
+                chunk->coord.z * CHUNK_SIZE * gl3::VOXEL_SIZE
         );
 
         // PHASE 1: Use COMPUTE SHADER to generate mesh
@@ -2243,7 +2246,9 @@ namespace gl3 {
                                   Shader &computeShader) {
         computeShader.use();
 
-        const float voxelSize = 1.0f;
+        // tell compute shader the voxel size in world units
+        const float voxelSize = gl3::VOXEL_SIZE;
+
         // voxelGridDim equals DIM (number of sample points along each axis)
         computeShader.setVec3("gridOrigin", chunkOrigin); // index (0,0,0) maps to chunkOrigin
         computeShader.setFloat("voxelSize", voxelSize);
