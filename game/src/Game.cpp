@@ -1359,21 +1359,27 @@ namespace gl3 {
 
         chunk->emissiveLights.clear();
 
-        glm::vec3 chunkOrigin(coord.x * CHUNK_SIZE, coord.y * CHUNK_SIZE, coord.z * CHUNK_SIZE);
+        // chunk origin in world units
+        glm::vec3 chunkOrigin(
+                coord.x * CHUNK_SIZE * gl3::VOXEL_SIZE,
+                coord.y * CHUNK_SIZE * gl3::VOXEL_SIZE,
+                coord.z * CHUNK_SIZE * gl3::VOXEL_SIZE
+        );
 
         // Cluster emissive voxels within this chunk
         glm::vec3 sumPos(0.0f);
         glm::vec3 sumColor(0.0f);
         int count = 0;
 
-        for (int x = 0; x < CHUNK_SIZE; ++x) {
-            for (int y = 0; y < CHUNK_SIZE; ++y) {
-                for (int z = 0; z < CHUNK_SIZE; ++z) {
+        for (int x = 0; x <= CHUNK_SIZE; ++x) {
+            for (int y = 0; y <= CHUNK_SIZE; ++y) {
+                for (int z = 0; z <= CHUNK_SIZE; ++z) {
                     const auto &vox = chunk->voxels[x][y][z];
-                    if (vox.type == 2) { // Fire voxel
-                        sumPos += chunkOrigin + glm::vec3(x, y, z);
+                    if (vox.type == 2) { // Fire / emissive voxel
+                        glm::vec3 voxelWorldPos = chunkOrigin + glm::vec3((float)x, (float)y, (float)z) * gl3::VOXEL_SIZE;
+                        sumPos += voxelWorldPos;
                         sumColor += vox.color;
-                        count++;
+                        ++count;
                     }
                 }
             }
@@ -1383,7 +1389,8 @@ namespace gl3 {
             VoxelLight light;
             light.pos = sumPos / float(count);
             light.color = sumColor / float(count);
-            light.intensity = float(count) * CHUNK_SIZE*VOXEL_SIZE*5; // Scale intensity
+            // Tune intensity scaling if VOXEL_SIZE changes (it affects perceived scale)
+            light.intensity = float(count) * 35.0f;
             light.id = makeLightID(coord.x, coord.y, coord.z);
 
             chunk->emissiveLights.push_back(light);
@@ -1567,14 +1574,10 @@ namespace gl3 {
         glm::vec2 mouseDelta = getMouseDelta();
 
         // Update character with camera-relative movement
-        characterController.update(deltaTime, moveInput, jump, sprint, crouch,
-          //                         mouseDelta, cameraFront, cameraRight);
+        characterController.update(deltaTime, moveInput, jump, sprint, crouch, mouseDelta, cameraFront, cameraRight);
 
         // Update camera to follow character
-        updateCamera();
-
-            // Pass to character controller
-            //characterController->move(moveInput, jump, sprint);
+        //updateCamera();
 
         // Update dynamic chunks
         // chunkManager->forEachDynamicChunk([this](Chunk* chunk) {
@@ -2425,25 +2428,53 @@ namespace gl3 {
         return glm::vec3(0, 1, 0);
     }
 
-    void Game::updateCamera() {
-        // Camera follows character with slight offset for smoothness
-        glm::vec3 targetCameraPos = characterController.getCameraPosition();
+    // New: get mouse delta (single place to read cursor movement)
+    glm::vec2 Game::getMouseDelta() {
+        double xpos, ypos;
+        glfwGetCursorPos(window, &xpos, &ypos);
 
-        // Smooth interpolation
-        cameraPos = glm::mix(cameraPos, targetCameraPos, 0.2f);
+        glm::dvec2 curPos(xpos, ypos);
+        glm::vec2 delta(0.0f, 0.0f);
 
-        // Update camera rotation from mouse input
-        // ... your existing camera rotation code
+        if (!hasPreviousMousePos) {
+            previousMousePos = curPos;
+            hasPreviousMousePos = true;
+            return delta;
+        }
+
+        glm::dvec2 d = curPos - previousMousePos;
+        previousMousePos = curPos;
+
+        // return as floats (x,y)
+        delta.x = static_cast<float>(d.x);
+        delta.y = static_cast<float>(d.y);
+        return delta;
     }
 
-    glm::vec2 Game::getMouseDelta() {
-        // Implement mouse delta calculation
-        static glm::vec2 lastMousePos;
-        double x, y;
-        glfwGetCursorPos(window, &x, &y);
-        glm::vec2 currentPos(x, y);
-        glm::vec2 delta = currentPos - lastMousePos;
-        lastMousePos = currentPos;
-        return delta;
+// Updated: camera follows character with frame-rate-independent smoothing and uses centralized mouse delta
+    void Game::updateCamera() {
+        // Get desired camera position from the character controller
+        glm::vec3 targetCameraPos = characterController.getCameraPosition();
+
+        // Frame-rate independent follow: followSpeed is in "per-second" units.
+        // A followSpeed of ~10 means the camera reaches ~63% of the offset in 0.1s (fast),
+        // choose lower value for slower smoothing.
+        const float followSpeed = 10.0f; // tune to taste
+        float lerpT = glm::clamp(followSpeed * deltaTime, 0.0f, 1.0f);
+        cameraPos = glm::mix(cameraPos, targetCameraPos, lerpT);
+
+        // Mouse rotation: use centralized mouse delta so other code can also use it
+        glm::vec2 mouseDelta = getMouseDelta();
+
+        const float sensitivity = 0.1f;
+        float dx = mouseDelta.x * sensitivity;
+        float dy = mouseDelta.y * sensitivity;
+
+        cameraRotation.y += dx; // yaw
+        cameraRotation.x += -dy; // invert Y (match previous behavior)
+
+        // Clamp pitch to avoid gimbal lock
+        if (cameraRotation.x > 89.0f) cameraRotation.x = 89.0f;
+        if (cameraRotation.x < -89.0f) cameraRotation.x = -89.0f;
     }
 }

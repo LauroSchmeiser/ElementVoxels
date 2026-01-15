@@ -368,5 +368,7 @@ namespace gl3 {
         glm::vec3 calculateNormalAt(Chunk* chunk, const glm::ivec3& pos);
         void updateCamera();
         glm::vec2 getMouseDelta();
+        glm::dvec2 previousMousePos = glm::dvec2(0.0, 0.0);
+        bool hasPreviousMousePos = false;
     };
 }
