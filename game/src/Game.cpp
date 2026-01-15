@@ -1568,7 +1568,7 @@ namespace gl3 {
 
         // Update character with camera-relative movement
         characterController.update(deltaTime, moveInput, jump, sprint, crouch,
-                                   mouseDelta, cameraFront, cameraRight);
+          //                         mouseDelta, cameraFront, cameraRight);
 
         // Update camera to follow character
         updateCamera();
@@ -1589,7 +1589,7 @@ namespace gl3 {
 
 
     void Game::handleCameraInput() {
-        float speed = 20.0f * deltaTime;
+        float speed = 20.0f*VOXEL_SIZE * deltaTime;
 
         // WASD movement (relative to view)
         if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
