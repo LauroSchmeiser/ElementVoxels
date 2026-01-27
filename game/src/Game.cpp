@@ -132,7 +132,7 @@ namespace gl3 {
             }
 
             ////Input-Steps
-            handleCameraInput();
+            //handleCameraInput();
             glfwPollEvents();
             update();
 
@@ -253,137 +253,185 @@ namespace gl3 {
 
 ////----Spell-System-Code-----------------------------------------------------------------------------------------------------------------------
 
-    void Game::castGravityWellSpell(const glm::vec3& center, float radius,
-                                    uint64_t targetMaterial, float strength) {
-        // Create spell effect
-        SpellEffect spell;
-        spell.type = SpellEffect::Type::GRAVITY_WELL;
-        spell.center = center;
-        spell.radius = radius;
-        spell.strength = strength;
-        spell.targetMaterial = targetMaterial;
 
-        // Step 1: Find voxels
-        std::vector<AnimatedVoxel> visualVoxels;
-        findNearbyVoxelsForVisual(center, radius, targetMaterial, visualVoxels, strength);
+        void Game::castGravityWellSpell(const glm::vec3& center, float radius,
+                                        uint64_t targetMaterial, float strength) {
+            // Create spell effect
+            SpellEffect spell;
+            spell.type = SpellEffect::Type::GRAVITY_WELL;
+            spell.center = center;
+            spell.radius = radius;
+            spell.strength = strength;
+            spell.targetMaterial = targetMaterial;
+            spell.dominantType = 0;  // Will be set by findNearbyVoxelsForVisual
 
-        if (visualVoxels.empty()) {
-            std::cout << "No voxels found for spell\n";
-            return;
+            // Step 1: Find voxels
+            std::vector<AnimatedVoxel> visualVoxels;
+            findNearbyVoxelsForVisual(center, radius, targetMaterial,
+                                      visualVoxels, strength, spell.dominantType);
+
+            if (visualVoxels.empty()) {
+                std::cout << "No voxels found for spell\n";
+                return;
+            }
+
+
+            // Step 2: Calculate formation properties
+            glm::vec3 avgColor(0.0f);
+
+            // --- NEW: compute formation radius from number of collected voxels ---
+            const size_t collected = visualVoxels.size();
+            // Treat each voxel as unit volume (1.0). Tune VOXEL_VOLUME if your world units differ.
+            constexpr float VOXEL_VOLUME = 1.0f;
+            constexpr float PI = 3.14159265358979323846f;
+
+            // packingEfficiency lets you control how "tightly" the voxels should be packed into the
+            // spherical formation. Values <1.0 produce a larger radius for same voxel count (looser packing).
+            // Typical starting values: 0.5 - 0.75. Tune to taste.
+            const float packingEfficiency = 0.6f;
+
+            float desiredVolume = static_cast<float>(collected) * VOXEL_VOLUME;
+            // sphere radius from volume: V = 4/3 * PI * r^3  ->  r = cbrt( (3/(4*PI)) * V )
+            float computedRadius = std::cbrt((3.0f / (4.0f * PI)) * (desiredVolume / packingEfficiency));
+
+            // Clamp the formation radius so it doesn't exceed a sensible max (e.g., fraction of spell search radius)
+            // and so it has a reasonable minimum when few voxels were collected.
+            float maxFormationRadius = std::max(1.0f, radius * 0.75f); // won't grow beyond ~75% of search radius
+            float minFormationRadius = 0.4f; // tune to avoid too-tiny visuals
+
+            float formationRadius = glm::clamp(computedRadius, minFormationRadius, maxFormationRadius);
+            // ----------------------------------------------------------------
+
+            // Assign targets and set up AnimatedVoxel entries. We'll assign stable ids as we push
+            for (size_t i = 0; i < visualVoxels.size(); ++i) {
+                AnimatedVoxel &v = visualVoxels[i];
+
+                avgColor += v.color;
+
+                float angle = randomFloat(0.0f, glm::two_pi<float>());
+                float height = randomFloat(-1.0f, 1.0f);
+                float circleRadius = std::sqrt(1.0f - height * height);
+
+                v.targetPos = center + glm::vec3(
+                        std::cos(angle) * circleRadius * formationRadius,
+                        height * formationRadius,
+                        std::sin(angle) * circleRadius * formationRadius
+                );
+
+                v.animationSpeed = strength * 1.5f;
+                v.isAnimating = true;
+                v.hasArrived = false;
+            }
+            avgColor /= (float)visualVoxels.size();
+
+            spell.formationColor = avgColor;
+            spell.formationRadius = formationRadius;
+
+            // Step 3: Add visual voxels to global list and record their stable IDs in the spell
+            for (auto &v : visualVoxels) {
+                v.id = nextAnimatedVoxelID++;
+                animatedVoxels.push_back(v);
+                animatedVoxelIndexMap[v.id] = animatedVoxels.size() - 1;
+                spell.animatedVoxelIDs.push_back(v.id);
+            }
+
+            // Step 4: Add spell to active list
+            activeSpells.push_back(spell);
+
+            std::cout << "Spell cast! " << visualVoxels.size()
+                      << " voxels moving directly to formation (radius=" << formationRadius << ")\n";
         }
-
-        // Step 2: Calculate formation properties
-        glm::vec3 avgColor(0.0f);
-
-        // --- NEW: compute formation radius from number of collected voxels ---
-        const size_t collected = visualVoxels.size();
-        // Treat each voxel as unit volume (1.0). Tune VOXEL_VOLUME if your world units differ.
-        constexpr float VOXEL_VOLUME = 1.0f;
-        constexpr float PI = 3.14159265358979323846f;
-
-        // packingEfficiency lets you control how "tightly" the voxels should be packed into the
-        // spherical formation. Values <1.0 produce a larger radius for same voxel count (looser packing).
-        // Typical starting values: 0.5 - 0.75. Tune to taste.
-        const float packingEfficiency = 0.6f;
-
-        float desiredVolume = static_cast<float>(collected) * VOXEL_VOLUME;
-        // sphere radius from volume: V = 4/3 * PI * r^3  ->  r = cbrt( (3/(4*PI)) * V )
-        float computedRadius = std::cbrt((3.0f / (4.0f * PI)) * (desiredVolume / packingEfficiency));
-
-        // Clamp the formation radius so it doesn't exceed a sensible max (e.g., fraction of spell search radius)
-        // and so it has a reasonable minimum when few voxels were collected.
-        float maxFormationRadius = std::max(1.0f, radius * 0.75f); // won't grow beyond ~75% of search radius
-        float minFormationRadius = 0.4f; // tune to avoid too-tiny visuals
-
-        float formationRadius = glm::clamp(computedRadius, minFormationRadius, maxFormationRadius);
-        // ----------------------------------------------------------------
-
-        // Assign targets and set up AnimatedVoxel entries. We'll assign stable ids as we push
-        for (size_t i = 0; i < visualVoxels.size(); ++i) {
-            AnimatedVoxel &v = visualVoxels[i];
-
-            avgColor += v.color;
-
-            float angle = randomFloat(0.0f, glm::two_pi<float>());
-            float height = randomFloat(-1.0f, 1.0f);
-            float circleRadius = std::sqrt(1.0f - height * height);
-
-            v.targetPos = center + glm::vec3(
-                    std::cos(angle) * circleRadius * formationRadius,
-                    height * formationRadius,
-                    std::sin(angle) * circleRadius * formationRadius
-            );
-
-            v.animationSpeed = strength * 1.5f;
-            v.isAnimating = true;
-            v.hasArrived = false;
-        }
-        avgColor /= (float)visualVoxels.size();
-
-        spell.formationColor = avgColor;
-        spell.formationRadius = formationRadius;
-
-        // Step 3: Add visual voxels to global list and record their stable IDs in the spell
-        for (auto &v : visualVoxels) {
-            v.id = nextAnimatedVoxelID++;
-            animatedVoxels.push_back(v);
-            animatedVoxelIndexMap[v.id] = animatedVoxels.size() - 1;
-            spell.animatedVoxelIDs.push_back(v.id);
-        }
-
-        // Step 4: Add spell to active list
-        activeSpells.push_back(spell);
-
-        std::cout << "Spell cast! " << visualVoxels.size()
-                  << " voxels moving directly to formation (radius=" << formationRadius << ")\n";
-    }
 
     void Game::findNearbyVoxelsForVisual(const glm::vec3& center, float radius,
                                          uint64_t targetMaterial,
                                          std::vector<AnimatedVoxel>& results,
-                                         float strength) {
+                                         float strength,
+                                         uint8_t& outDominantType) {  // ADD OUTPUT PARAMETER
         const float radiusSq = radius * radius;
         int maxVoxels = static_cast<int>(strength * 100.0f);
 
+        // Use array for type counting
+        int typeCounts[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+
         auto chunks = chunkManager->getChunksInRadius(center, radius);
 
-        // First, collect ALL potential voxels with their distances
+        // Use a more efficient candidate collection
         struct VoxelCandidate {
             glm::vec3 worldPos;
             glm::vec3 color;
             ChunkCoord chunkCoord;
             glm::ivec3 localPos;
             float distanceSq;
-            Chunk* chunk; // Pointer to chunk
+            Chunk* chunk;
+            uint8_t type;  // Store type here
         };
 
         std::vector<VoxelCandidate> candidates;
 
-        // Collect all candidates
+        // Pre-allocate to avoid reallocations
+        candidates.reserve(maxVoxels * 2);
+
+        // Collect candidates with early pruning
         for (const auto& [coord, chunk] : chunks) {
             if (!chunk || !hasSolidVoxels(*chunk)) continue;
 
             glm::vec3 chunkMin = getChunkMin(coord);
+            glm::vec3 chunkCenter = chunkMin + glm::vec3(CHUNK_SIZE/2) * VOXEL_SIZE;
 
-            for (int x = 0; x <= CHUNK_SIZE; ++x) {
-                for (int y = 0; y <= CHUNK_SIZE; ++y) {
-                    for (int z = 0; z <= CHUNK_SIZE; ++z) {
+            // Quick sphere-AABB test
+            float distToChunkCenter = glm::distance(chunkCenter, center);
+            float maxChunkDist = std::sqrt(3.0f) * (CHUNK_SIZE * VOXEL_SIZE / 2.0f);
+
+            if (distToChunkCenter > radius + maxChunkDist) {
+                continue;  // Chunk is definitely outside spell radius
+            }
+
+            // Get bounds for this chunk relative to spell center
+            glm::vec3 chunkRelMin = chunkMin - center;
+            glm::vec3 chunkRelMax = chunkRelMin + glm::vec3(CHUNK_SIZE) * VOXEL_SIZE;
+
+            // Early test: check if chunk bounding sphere intersects spell sphere
+            float chunkRadius = glm::length(chunkRelMax - chunkRelMin) / 2.0f;
+            glm::vec3 chunkCenterRel = (chunkRelMin + chunkRelMax) / 2.0f;
+            float centerDist = glm::length(chunkCenterRel);
+
+            if (centerDist > radius + chunkRadius) {
+                continue;  // No intersection
+            }
+
+            // Only iterate through potentially intersecting region
+            int startX = std::max(0, static_cast<int>((center.x - radius - chunkMin.x) / VOXEL_SIZE));
+            int endX = std::min(CHUNK_SIZE, static_cast<int>((center.x + radius - chunkMin.x) / VOXEL_SIZE) + 1);
+            int startY = std::max(0, static_cast<int>((center.y - radius - chunkMin.y) / VOXEL_SIZE));
+            int endY = std::min(CHUNK_SIZE, static_cast<int>((center.y + radius - chunkMin.y) / VOXEL_SIZE) + 1);
+            int startZ = std::max(0, static_cast<int>((center.z - radius - chunkMin.z) / VOXEL_SIZE));
+            int endZ = std::min(CHUNK_SIZE, static_cast<int>((center.z + radius - chunkMin.z) / VOXEL_SIZE) + 1);
+
+            for (int x = startX; x <= endX; ++x) {
+                for (int y = startY; y <= endY; ++y) {
+                    for (int z = startZ; z <= endZ; ++z) {
                         const Voxel& voxel = chunk->voxels[x][y][z];
 
                         if (voxel.isSolid() && voxel.material == targetMaterial) {
-                            glm::vec3 worldPos = chunkMin + glm::vec3((float)x, (float)y, (float)z) * gl3::VOXEL_SIZE;                            glm::vec3 diff = worldPos - center;
+                            glm::vec3 worldPos = chunkMin + glm::vec3((float)x, (float)y, (float)z) * VOXEL_SIZE;
+                            glm::vec3 diff = worldPos - center;
                             float distSq = glm::dot(diff, diff);
 
                             if (distSq <= radiusSq) {
-                                VoxelCandidate candidate;
-                                candidate.worldPos = worldPos;
-                                candidate.color = voxel.color;
-                                candidate.chunkCoord = coord;
-                                candidate.localPos = glm::ivec3(x, y, z);
-                                candidate.distanceSq = distSq;
-                                candidate.chunk = chunk;
+                                candidates.push_back({
+                                                             worldPos,
+                                                             voxel.color,
+                                                             coord,
+                                                             {x, y, z},
+                                                             distSq,
+                                                             chunk,
+                                                             voxel.type
+                                                     });
 
-                                candidates.push_back(candidate);
+                                // Count type immediately
+                                if (voxel.type < 8) {
+                                    typeCounts[voxel.type]++;
+                                }
                             }
                         }
                     }
@@ -391,18 +439,32 @@ namespace gl3 {
             }
         }
 
-        // Sort candidates by distance (closest first)
-        std::sort(candidates.begin(), candidates.end(),
-                  [](const VoxelCandidate& a, const VoxelCandidate& b) {
-                      return a.distanceSq < b.distanceSq;
-                  });
+        // Sort by distance
+        if (candidates.size() > static_cast<size_t>(maxVoxels)) {
+            std::nth_element(candidates.begin(),
+                             candidates.begin() + maxVoxels,
+                             candidates.end(),
+                             [](const VoxelCandidate& a, const VoxelCandidate& b) {
+                                 return a.distanceSq < b.distanceSq;
+                             });
 
-        // Take only the closest N voxels
-        int takeCount = std::min(maxVoxels, static_cast<int>(candidates.size()));
+            // Only keep closest maxVoxels
+            candidates.resize(maxVoxels);
+        }
 
-        for (int i = 0; i < takeCount; ++i) {
-            const auto& candidate = candidates[i];
+        // Determine dominant type from collected candidates
+        int maxCount = 0;
+        uint8_t dominantType = 1;  // Default to type 1
+        for (int i = 0; i < 8; ++i) {
+            if (typeCounts[i] > maxCount) {
+                maxCount = typeCounts[i];
+                dominantType = static_cast<uint8_t>(i);
+            }
+        }
+        outDominantType = dominantType;  // Set output parameter
 
+        // Process candidates (same as before, but now we have types counted)
+        for (const auto& candidate : candidates) {
             AnimatedVoxel animVoxel;
             animVoxel.currentPos = candidate.worldPos;
             animVoxel.isAnimating = true;
@@ -472,417 +534,420 @@ namespace gl3 {
 
             animVoxel.normal = calculateNormalAt(candidate.chunk, candidate.localPos);
 
-            // Create crater at this voxel position (removes voxel from world)
+            // Create crater
             createExteriorSmoothCrater(candidate.chunk, candidate.localPos, candidate.worldPos);
 
             // Mark chunk as modified
             candidate.chunk->meshDirty = true;
             candidate.chunk->lightingDirty = true;
             markChunkModified(candidate.chunkCoord);
+
             results.push_back(animVoxel);
         }
 
         // Debug output
-        if (takeCount > 0) {
-            processEmissiveChunks();
-            float minDist = std::sqrt(candidates[0].distanceSq);
-            float maxDist = std::sqrt(candidates[takeCount-1].distanceSq);
-            std::cout << "Taking " << takeCount << " closest voxels (distances: "
-                      << minDist << " to " << maxDist << " units)\n";
+        if (!candidates.empty()) {
+            processEmissiveChunks();  // Consider calling this less frequently
+            float minDist = std::sqrt(candidates.front().distanceSq);
+            float maxDist = std::sqrt(candidates.back().distanceSq);
+            std::cout << "Taking " << candidates.size() << " closest voxels "
+                      << "(dominant type=" << (int)dominantType << ", "
+                      << "distances: " << minDist << " to " << maxDist << " units)\n";
         }
     }
 
 
-    void Game::createExteriorSmoothCrater(Chunk* chunk, const glm::ivec3& voxelPos,
-                                          const glm::vec3& worldPos) {
-        float craterRadius = 2.0f * gl3::VOXEL_SIZE; // scale crater size by voxel size
-        float maxCraterDepth = 2.5f; // this is a density amount, leave unless you need to tune
+        void Game::createExteriorSmoothCrater(Chunk* chunk, const glm::ivec3& voxelPos,
+                                              const glm::vec3& worldPos) {
+            float craterRadius = 2.0f * gl3::VOXEL_SIZE; // scale crater size by voxel size
+            float maxCraterDepth = 2.5f; // this is a density amount, leave unless you need to tune
 
-        int range = static_cast<int>(std::ceil(craterRadius / gl3::VOXEL_SIZE));
+            int range = static_cast<int>(std::ceil(craterRadius / gl3::VOXEL_SIZE));
 
-        for (int dx = -range; dx <= range; ++dx) {
-            for (int dy = -range; dy <= range; ++dy) {
-                for (int dz = -range; dz <= range; ++dz) {
-                    int nx = voxelPos.x + dx;
-                    int ny = voxelPos.y + dy;
-                    int nz = voxelPos.z + dz;
+            for (int dx = -range; dx <= range; ++dx) {
+                for (int dy = -range; dy <= range; ++dy) {
+                    for (int dz = -range; dz <= range; ++dz) {
+                        int nx = voxelPos.x + dx;
+                        int ny = voxelPos.y + dy;
+                        int nz = voxelPos.z + dz;
 
-                    if (nx < 0 || nx > CHUNK_SIZE || ny < 0 || ny > CHUNK_SIZE || nz < 0 || nz > CHUNK_SIZE) {
-                        continue;
-                    }
+                        if (nx < 0 || nx > CHUNK_SIZE || ny < 0 || ny > CHUNK_SIZE || nz < 0 || nz > CHUNK_SIZE) {
+                            continue;
+                        }
 
-                    glm::vec3 offset = glm::vec3((float)dx, (float)dy, (float)dz) * gl3::VOXEL_SIZE;
-                    float dist = glm::length(offset); // world distance
-                    if (dist <= craterRadius) {
-                        float t = dist / craterRadius;
-                        float originalDensity = chunk->voxels[nx][ny][nz].density;
+                        glm::vec3 offset = glm::vec3((float)dx, (float)dy, (float)dz) * gl3::VOXEL_SIZE;
+                        float dist = glm::length(offset); // world distance
+                        if (dist <= craterRadius) {
+                            float t = dist / craterRadius;
+                            float originalDensity = chunk->voxels[nx][ny][nz].density;
 
-                        // KEY INSIGHT: For Marching Cubes to show a solid exterior,
-                        // the density should be POSITIVE at the surface (0 isosurface)
+                            // KEY INSIGHT: For Marching Cubes to show a solid exterior,
+                            // the density should be POSITIVE at the surface (0 isosurface)
 
-                        if (originalDensity >= 0.0f) {
-                            // This voxel was inside or at the surface of the planet
+                            if (originalDensity >= 0.0f) {
+                                // This voxel was inside or at the surface of the planet
 
-                            // Create crater shape that:
-                            // 1. Reduces density near center
-                            // 2. Keeps exterior surface positive
-                            // 3. Creates smooth transition
+                                // Create crater shape that:
+                                // 1. Reduces density near center
+                                // 2. Keeps exterior surface positive
+                                // 3. Creates smooth transition
 
-                            float craterShape = (1.0f - t * t); // Bowl shape
-                            float densityReduction = maxCraterDepth * craterShape;
+                                float craterShape = (1.0f - t * t); // Bowl shape
+                                float densityReduction = maxCraterDepth * craterShape;
 
-                            // Apply reduction, but ensure we don't go too negative
-                            float newDensity = originalDensity - densityReduction;
+                                // Apply reduction, but ensure we don't go too negative
+                                float newDensity = originalDensity - densityReduction;
 
-                            // If this was deep inside (high positive), keep it positive
-                            if (originalDensity > 2.0f) {
-                                newDensity = std::max(newDensity, 0.1f);
-                            }
+                                // If this was deep inside (high positive), keep it positive
+                                if (originalDensity > 2.0f) {
+                                    newDensity = std::max(newDensity, 0.1f);
+                                }
 
-                            chunk->voxels[nx][ny][nz].density = newDensity;
+                                chunk->voxels[nx][ny][nz].density = newDensity;
 
-                            // Update type - critical for Marching Cubes
-                            if (newDensity < -0.5f) {
-                                // Too negative = air (creates hole)
-                                chunk->voxels[nx][ny][nz].type = 0;
-                            } else if (newDensity < 0.0f) {
-                                // Negative but close to 0 = surface
-                                chunk->voxels[nx][ny][nz].type = 1;
-                            } else {
-                                // Positive = solid interior
-                                chunk->voxels[nx][ny][nz].type = 1;
+                                // Update type - critical for Marching Cubes
+                                if (newDensity < -0.5f) {
+                                    // Too negative = air (creates hole)
+                                    chunk->voxels[nx][ny][nz].type = 0;
+                                } else if (newDensity < 0.0f) {
+                                    // Negative but close to 0 = surface
+                                    chunk->voxels[nx][ny][nz].type = 1;
+                                } else {
+                                    // Positive = solid interior
+                                    chunk->voxels[nx][ny][nz].type = 1;
+                                }
                             }
                         }
                     }
                 }
             }
         }
-    }
 
-    // Updated to take collectedVoxels into account when computing the final carved radius.
-    void Game::createSpellFormation(const glm::vec3& center, float radius,
-                                    float strength, uint64_t material,
-                                    const glm::vec3& color, size_t collectedVoxels) {
-        // Create a new "planet" at the spell center
-        WorldPlanet newFormation;
-        newFormation.worldPos = center;
-        newFormation.color = color;
-        newFormation.type = 1; // Solid
+        // Updated to take collectedVoxels into account when computing the final carved radius.
+        void Game::createSpellFormation(const glm::vec3& center, float radius,
+                                        float strength, uint64_t material,
+                                        const glm::vec3& color, size_t collectedVoxels,
+                                        uint8_t dominantType) {
+            // Create a new "planet" at the spell center
+            WorldPlanet newFormation;
+            newFormation.worldPos = center;
+            newFormation.color = color;
+            newFormation.type = dominantType; // Solid
 
-        // --- Compute effective radius from collected voxels (volume preserving) ---
-        // Treat each voxel as unit volume. Tune VOXEL_VOLUME and packingEfficiency to taste.
-        constexpr float VOXEL_VOLUME = 0.5f;
-        constexpr float PI = 3.14159265358979323846f;
-        const float packingEfficiency = 1.0f; // <1.0 -> looser packing -> bigger radius for same N
+            // --- Compute effective radius from collected voxels (volume preserving) ---
+            // Treat each voxel as unit volume. Tune VOXEL_VOLUME and packingEfficiency to taste.
+            constexpr float VOXEL_VOLUME = 0.5f;
+            constexpr float PI = 3.14159265358979323846f;
+            const float packingEfficiency = 1.0f; // <1.0 -> looser packing -> bigger radius for same N
 
-        float desiredVolume = static_cast<float>(collectedVoxels) * VOXEL_VOLUME;
-        // radius from sphere volume: r = cbrt((3/(4*PI)) * (V / packingEfficiency))
-        float computedRadius = std::cbrt((3.0f / (4.0f * PI)) * (desiredVolume / packingEfficiency));
+            float desiredVolume = static_cast<float>(collectedVoxels) * VOXEL_VOLUME;
+            // radius from sphere volume: r = cbrt((3/(4*PI)) * (V / packingEfficiency))
+            float computedRadius = std::cbrt((3.0f / (4.0f * PI)) * (desiredVolume / packingEfficiency));
 
-        // Clamp/min/max so very small pulls are still visible and we don't explode beyond the spell's search radius.
-        float minFormationRadius = 0.05f;
-        // Don't allow carving a formation larger than the spell's nominal radius (prevents creating material)
-        float maxFormationRadius = std::max(minFormationRadius, radius);
+            // Clamp/min/max so very small pulls are still visible and we don't explode beyond the spell's search radius.
+            float minFormationRadius = 0.05f;
+            // Don't allow carving a formation larger than the spell's nominal radius (prevents creating material)
+            float maxFormationRadius = std::max(minFormationRadius, radius);
 
-        float effectiveRadius = glm::clamp(computedRadius, minFormationRadius, maxFormationRadius)*VOXEL_SIZE;
+            float effectiveRadius = glm::clamp(computedRadius, minFormationRadius, maxFormationRadius)*VOXEL_SIZE;
 
-        newFormation.radius = effectiveRadius;
-        // ---------------------------------------------------------------------
+            newFormation.radius = effectiveRadius;
+            // ---------------------------------------------------------------------
 
-        // Ensure we preload enough chunks to cover either the nominal radius or the effective radius
-        float preloadRadius = std::max(radius, effectiveRadius);
+            // Ensure we preload enough chunks to cover either the nominal radius or the effective radius
+            float preloadRadius = std::max(radius, effectiveRadius);
 
-        int minCX = worldToChunk(center.x - preloadRadius);
-        int maxCX = worldToChunk(center.x + preloadRadius);
-        int minCY = worldToChunk(center.y - preloadRadius);
-        int maxCY = worldToChunk(center.y + preloadRadius);
-        int minCZ = worldToChunk(center.z - preloadRadius);
-        int maxCZ = worldToChunk(center.z + preloadRadius);
+            int minCX = worldToChunk(center.x - preloadRadius);
+            int maxCX = worldToChunk(center.x + preloadRadius);
+            int minCY = worldToChunk(center.y - preloadRadius);
+            int maxCY = worldToChunk(center.y + preloadRadius);
+            int minCZ = worldToChunk(center.z - preloadRadius);
+            int maxCZ = worldToChunk(center.z + preloadRadius);
 
-        // Load all chunks first (force create if missing)
-        for (int cx = minCX; cx <= maxCX; ++cx) {
-            for (int cy = minCY; cy <= maxCY; ++cy) {
-                for (int cz = minCZ; cz <= maxCZ; ++cz) {
-                    ChunkCoord coord{cx, cy, cz};
+            // Load all chunks first (force create if missing)
+            for (int cx = minCX; cx <= maxCX; ++cx) {
+                for (int cy = minCY; cy <= maxCY; ++cy) {
+                    for (int cz = minCZ; cz <= maxCZ; ++cz) {
+                        ChunkCoord coord{cx, cy, cz};
 
-                    // Force chunk creation if it doesn't exist
-                    if (!chunkManager->getChunk(coord)) {
-                        chunkManager->addChunk(coord, VoxelCategory::DYNAMIC);
+                        // Force chunk creation if it doesn't exist
+                        if (!chunkManager->getChunk(coord)) {
+                            chunkManager->addChunk(coord, VoxelCategory::DYNAMIC);
+                            Chunk* chunk = chunkManager->getChunk(coord);
+                            if (chunk) {
+                                // Initialize chunk properly
+                                chunk->coord = coord;
+                                chunk->clear();
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Now carve into chunks using the effective, material-limited radius
+            carveFormationIntoChunks(newFormation, material);
+
+            // Force immediate mesh regeneration for affected chunks (cover effectiveRadius)
+            int regenMinCX = worldToChunk(center.x - effectiveRadius);
+            int regenMaxCX = worldToChunk(center.x + effectiveRadius);
+            int regenMinCY = worldToChunk(center.y - effectiveRadius);
+            int regenMaxCY = worldToChunk(center.y + effectiveRadius);
+            int regenMinCZ = worldToChunk(center.z - effectiveRadius);
+            int regenMaxCZ = worldToChunk(center.z + effectiveRadius);
+
+            for (int cx = regenMinCX; cx <= regenMaxCX; ++cx) {
+                for (int cy = regenMinCY; cy <= regenMaxCY; ++cy) {
+                    for (int cz = regenMinCZ; cz <= regenMaxCZ; ++cz) {
+                        ChunkCoord coord{cx, cy, cz};
                         Chunk* chunk = chunkManager->getChunk(coord);
                         if (chunk) {
-                            // Initialize chunk properly
-                            chunk->coord = coord;
-                            chunk->clear();
+                            // Force immediate mesh generation (bypassing MAX_CHUNKS_PER_FRAME)
+                            if (chunk->meshDirty) {
+                                generateChunkMesh(chunk);
+
+                            }
                         }
                     }
                 }
             }
+
+            std::cout << "createSpellFormation: collected=" << collectedVoxels
+                      << " => effectiveRadius=" << effectiveRadius << "\n";
         }
 
-        // Now carve into chunks using the effective, material-limited radius
-        carveFormationIntoChunks(newFormation, material);
 
-        // Force immediate mesh regeneration for affected chunks (cover effectiveRadius)
-        int regenMinCX = worldToChunk(center.x - effectiveRadius);
-        int regenMaxCX = worldToChunk(center.x + effectiveRadius);
-        int regenMinCY = worldToChunk(center.y - effectiveRadius);
-        int regenMaxCY = worldToChunk(center.y + effectiveRadius);
-        int regenMinCZ = worldToChunk(center.z - effectiveRadius);
-        int regenMaxCZ = worldToChunk(center.z + effectiveRadius);
+        void Game::carveFormationIntoChunks(const WorldPlanet& formation, uint64_t material) {
+            // Determine which chunks this formation affects
+            int minCX = worldToChunk(formation.worldPos.x - formation.radius);
+            int maxCX = worldToChunk(formation.worldPos.x + formation.radius);
+            int minCY = worldToChunk(formation.worldPos.y - formation.radius);
+            int maxCY = worldToChunk(formation.worldPos.y + formation.radius);
+            int minCZ = worldToChunk(formation.worldPos.z - formation.radius);
+            int maxCZ = worldToChunk(formation.worldPos.z + formation.radius);
 
-        for (int cx = regenMinCX; cx <= regenMaxCX; ++cx) {
-            for (int cy = regenMinCY; cy <= regenMaxCY; ++cy) {
-                for (int cz = regenMinCZ; cz <= regenMaxCZ; ++cz) {
-                    ChunkCoord coord{cx, cy, cz};
-                    Chunk* chunk = chunkManager->getChunk(coord);
-                    if (chunk) {
-                        // Force immediate mesh generation (bypassing MAX_CHUNKS_PER_FRAME)
-                        if (chunk->meshDirty) {
-                            generateChunkMesh(chunk);
+            for (int cx = minCX; cx <= maxCX; ++cx) {
+                for (int cy = minCY; cy <= maxCY; ++cy) {
+                    for (int cz = minCZ; cz <= maxCZ; ++cz) {
+                        ChunkCoord coord{cx, cy, cz};
 
+                        // Get chunk - should exist after pre-loading
+                        Chunk* chunk = chunkManager->getChunk(coord);
+                        if (!chunk) {
+                            // Emergency fallback
+                            chunkManager->addChunk(coord, VoxelCategory::DYNAMIC);
+                            chunk = chunkManager->getChunk(coord);
+                            if (!chunk) continue;
+
+                            if (chunk->coord != coord) { // New chunk
+                                chunk->coord = coord;
+                                chunk->clear();
+                            }
                         }
-                    }
-                }
-            }
-        }
 
-        std::cout << "createSpellFormation: collected=" << collectedVoxels
-                  << " => effectiveRadius=" << effectiveRadius << "\n";
-    }
+                        glm::vec3 chunkOrigin = getChunkMin(coord);
+                        bool chunkTouched = false;
 
+                        // Carve sphere into chunk
+                        for (int lx = 0; lx <= CHUNK_SIZE; ++lx) {
+                            for (int ly = 0; ly <= CHUNK_SIZE; ++ly) {
+                                for (int lz = 0; lz <= CHUNK_SIZE; ++lz) {
+                                    glm::vec3 worldPos = chunkOrigin + glm::vec3((float)lx, (float)ly, (float)lz) * gl3::VOXEL_SIZE;
+                                    float dist = glm::distance(worldPos, formation.worldPos);
+                                    float formationDensity = formation.radius - dist;
 
-    void Game::carveFormationIntoChunks(const WorldPlanet& formation, uint64_t material) {
-        // Determine which chunks this formation affects
-        int minCX = worldToChunk(formation.worldPos.x - formation.radius);
-        int maxCX = worldToChunk(formation.worldPos.x + formation.radius);
-        int minCY = worldToChunk(formation.worldPos.y - formation.radius);
-        int maxCY = worldToChunk(formation.worldPos.y + formation.radius);
-        int minCZ = worldToChunk(formation.worldPos.z - formation.radius);
-        int maxCZ = worldToChunk(formation.worldPos.z + formation.radius);
+                                    float existingDensity = chunk->voxels[lx][ly][lz].density;
 
-        for (int cx = minCX; cx <= maxCX; ++cx) {
-            for (int cy = minCY; cy <= maxCY; ++cy) {
-                for (int cz = minCZ; cz <= maxCZ; ++cz) {
-                    ChunkCoord coord{cx, cy, cz};
+                                    // SDF UNION: Take the MAXIMUM density
+                                    if (formationDensity > existingDensity) {
+                                        chunk->voxels[lx][ly][lz].density = formationDensity;
 
-                    // Get chunk - should exist after pre-loading
-                    Chunk* chunk = chunkManager->getChunk(coord);
-                    if (!chunk) {
-                        // Emergency fallback
-                        chunkManager->addChunk(coord, VoxelCategory::DYNAMIC);
-                        chunk = chunkManager->getChunk(coord);
-                        if (!chunk) continue;
+                                        // Set type and color
+                                        if (formationDensity >= -1.0f) {
+                                            chunk->voxels[lx][ly][lz].type = formation.type;
+                                            chunk->voxels[lx][ly][lz].color = formation.color;
+                                            chunk->voxels[lx][ly][lz].material = material;
 
-                        if (chunk->coord != coord) { // New chunk
-                            chunk->coord = coord;
-                            chunk->clear();
-                        }
-                    }
-
-                    glm::vec3 chunkOrigin = getChunkMin(coord);
-                    bool chunkTouched = false;
-
-                    // Carve sphere into chunk
-                    for (int lx = 0; lx <= CHUNK_SIZE; ++lx) {
-                        for (int ly = 0; ly <= CHUNK_SIZE; ++ly) {
-                            for (int lz = 0; lz <= CHUNK_SIZE; ++lz) {
-                                glm::vec3 worldPos = chunkOrigin + glm::vec3((float)lx, (float)ly, (float)lz) * gl3::VOXEL_SIZE;
-                                float dist = glm::distance(worldPos, formation.worldPos);
-                                float formationDensity = formation.radius - dist;
-
-                                float existingDensity = chunk->voxels[lx][ly][lz].density;
-
-                                // SDF UNION: Take the MAXIMUM density
-                                if (formationDensity > existingDensity) {
-                                    chunk->voxels[lx][ly][lz].density = formationDensity;
-
-                                    // Set type and color
-                                    if (formationDensity >= -1.0f) {
-                                        chunk->voxels[lx][ly][lz].type = formation.type;
-                                        chunk->voxels[lx][ly][lz].color = formation.color;
-                                        chunk->voxels[lx][ly][lz].material = material;
-
-                                        if (formationDensity >= 0) {
-                                            chunkTouched = true;
+                                            if (formationDensity >= 0) {
+                                                chunkTouched = true;
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
-                    }
 
-                    if (chunkTouched) {
-                        chunk->meshDirty = true;
-                        chunk->lightingDirty = true;
-                        // Force mark as modified
-                        markChunkModified(coord);
+                        if (chunkTouched) {
+                            chunk->meshDirty = true;
+                            chunk->lightingDirty = true;
+                            // Force mark as modified
+                            markChunkModified(coord);
+                        }
                     }
                 }
             }
+            processEmissiveChunks();
         }
-    }
 
-    void Game::updateSpells(float deltaTime) {
-        // Update each active spell
-        for (auto spellIt = activeSpells.begin(); spellIt != activeSpells.end(); ) {
-            // Track which voxels have arrived this frame (ids)
-            std::vector<uint64_t> newlyArrivedIDs;
+        void Game::updateSpells(float deltaTime) {
+            // Update each active spell
+            for (auto spellIt = activeSpells.begin(); spellIt != activeSpells.end(); ) {
+                // Track which voxels have arrived this frame (ids)
+                std::vector<uint64_t> newlyArrivedIDs;
 
-            // Check each voxel ID in this spell
-            for (uint64_t id : spellIt->animatedVoxelIDs) {
-                auto itIndex = animatedVoxelIndexMap.find(id);
+                // Check each voxel ID in this spell
+                for (uint64_t id : spellIt->animatedVoxelIDs) {
+                    auto itIndex = animatedVoxelIndexMap.find(id);
 
-                if (itIndex == animatedVoxelIndexMap.end()) {
-                    // voxel was already removed from animatedVoxels => treat as arrived
-                    newlyArrivedIDs.push_back(id);
-                    continue;
-                }
-
-                size_t idx = itIndex->second;
-                if (idx >= animatedVoxels.size()) {
-                    newlyArrivedIDs.push_back(id);
-                    continue;
-                }
-
-                AnimatedVoxel &voxel = animatedVoxels[idx];
-
-                if (voxel.isAnimating) {
-                    // Update animation
-                    glm::vec3 toTarget = voxel.targetPos - voxel.currentPos;
-                    float distance = glm::length(toTarget);
-
-                    if (distance < 1.0f*VOXEL_SIZE) {
-                        // Arrived!
-                        voxel.isAnimating = false;
-                        voxel.hasArrived = true;
+                    if (itIndex == animatedVoxelIndexMap.end()) {
+                        // voxel was already removed from animatedVoxels => treat as arrived
                         newlyArrivedIDs.push_back(id);
-                    } else {
-                        //glm::vec3 dir = glm::normalize(toTarget);
-                        float speed = voxel.animationSpeed;
-                        float slowdown = glm::clamp(distance / 2.0f, 0.75f, 1.0f);
-
-                        voxel.velocity = (toTarget/glm::vec3(VOXEL_SIZE*CHUNK_SIZE)) * speed * slowdown*4.0f;
-                        voxel.currentPos += voxel.velocity * deltaTime;
+                        continue;
                     }
+
+                    size_t idx = itIndex->second;
+                    if (idx >= animatedVoxels.size()) {
+                        newlyArrivedIDs.push_back(id);
+                        continue;
+                    }
+
+                    AnimatedVoxel &voxel = animatedVoxels[idx];
+
+                    if (voxel.isAnimating) {
+                        // Update animation
+                        glm::vec3 toTarget = voxel.targetPos - voxel.currentPos;
+                        float distance = glm::length(toTarget);
+
+                        if (distance < 1.0f*VOXEL_SIZE) {
+                            // Arrived!
+                            voxel.isAnimating = false;
+                            voxel.hasArrived = true;
+                            newlyArrivedIDs.push_back(id);
+                        } else {
+                            //glm::vec3 dir = glm::normalize(toTarget);
+                            float speed = voxel.animationSpeed;
+                            float slowdown = glm::clamp(distance / 2.0f, 0.75f, 1.0f);
+
+                            voxel.velocity = (toTarget/glm::vec3(VOXEL_SIZE*CHUNK_SIZE)) * speed * slowdown*4.0f;
+                            voxel.currentPos += voxel.velocity * deltaTime;
+                        }
+                    } else {
+                        newlyArrivedIDs.push_back(id); // already not animating
+                    }
+                }
+
+                // Create partial geometry for newly arrived voxels
+                if (!newlyArrivedIDs.empty() && !spellIt->geometryCreated) {
+                    // Count arrivals by checking each id for non-animating or missing
+                    int arrivedCount = 0;
+                    int total = (int)spellIt->animatedVoxelIDs.size();
+                    for (uint64_t id : spellIt->animatedVoxelIDs) {
+                        auto jt = animatedVoxelIndexMap.find(id);
+                        if (jt == animatedVoxelIndexMap.end()) {
+                            ++arrivedCount;
+                        } else {
+                            AnimatedVoxel &v = animatedVoxels[jt->second];
+                            if (!v.isAnimating) ++arrivedCount;
+                        }
+                    }
+
+                    float arrivalRatio = total ? (float)arrivedCount / (float)total : 1.0f;
+
+                    // Create geometry when a certain percentage has arrived (e.g., 80%)
+                    if (arrivalRatio >= 0.8f) {
+                        std::cout << arrivedCount << "/" << total
+                                  << " voxels arrived. Creating final geometry...\n";
+
+                        createSpellFormation(spellIt->center, spellIt->formationRadius,
+                                             spellIt->strength, spellIt->targetMaterial,
+                                             spellIt->formationColor, spellIt->animatedVoxelIDs.size(),
+                                             spellIt->dominantType);
+                        spellIt->geometryCreated = true;
+                    } else if (arrivalRatio > 0.0005f) {
+                        // optional partial formation
+                        createPartialFormation(*spellIt, arrivalRatio);
+                    }
+                }
+
+                // If geometry already created, check if all voxels are done moving
+                if (spellIt->geometryCreated) {
+                    int stillAnimating = 0;
+                    for (uint64_t id : spellIt->animatedVoxelIDs) {
+                        auto jt = animatedVoxelIndexMap.find(id);
+                        if (jt != animatedVoxelIndexMap.end()) {
+                            AnimatedVoxel &v = animatedVoxels[jt->second];
+                            if (v.isAnimating) ++stillAnimating;
+                        }
+                    }
+
+                    if (stillAnimating == 0) {
+                        // All done, remove spell
+                        spellIt = activeSpells.erase(spellIt);
+                        continue;
+                    }
+                }
+
+                ++spellIt;
+            }
+
+            // Clean up non-animating voxels that are not needed anymore.
+            // We'll remove any voxel that is not currently animating.
+            // Use swap-pop and keep animatedVoxelIndexMap consistent.
+            for (size_t i = 0; i < animatedVoxels.size(); ) {
+                if (!animatedVoxels[i].isAnimating) {
+                    uint64_t removedID = animatedVoxels[i].id;
+
+                    // swap with last and pop
+                    size_t last = animatedVoxels.size() - 1;
+                    if (i != last) {
+                        animatedVoxels[i] = animatedVoxels[last];
+                        // update moved one's index in the map
+                        animatedVoxelIndexMap[animatedVoxels[i].id] = i;
+                    }
+                    animatedVoxels.pop_back();
+                    animatedVoxelIndexMap.erase(removedID);
+
+                    // do not increment i (we swapped a new element into i)
                 } else {
-                    newlyArrivedIDs.push_back(id); // already not animating
+                    ++i;
                 }
             }
-
-            // Create partial geometry for newly arrived voxels
-            if (!newlyArrivedIDs.empty() && !spellIt->geometryCreated) {
-                // Count arrivals by checking each id for non-animating or missing
-                int arrivedCount = 0;
-                int total = (int)spellIt->animatedVoxelIDs.size();
-                for (uint64_t id : spellIt->animatedVoxelIDs) {
-                    auto jt = animatedVoxelIndexMap.find(id);
-                    if (jt == animatedVoxelIndexMap.end()) {
-                        ++arrivedCount;
-                    } else {
-                        AnimatedVoxel &v = animatedVoxels[jt->second];
-                        if (!v.isAnimating) ++arrivedCount;
-                    }
-                }
-
-                float arrivalRatio = total ? (float)arrivedCount / (float)total : 1.0f;
-
-                // Create geometry when a certain percentage has arrived (e.g., 80%)
-                if (arrivalRatio >= 0.8f) {
-                    std::cout << arrivedCount << "/" << total
-                              << " voxels arrived. Creating final geometry...\n";
-
-                    createSpellFormation(spellIt->center, spellIt->formationRadius,
-                                         spellIt->strength, spellIt->targetMaterial,
-                                         spellIt->formationColor, spellIt->animatedVoxelIDs.size());
-                    spellIt->geometryCreated = true;
-                } else if (arrivalRatio > 0.0005f) {
-                    // optional partial formation
-                    createPartialFormation(*spellIt, arrivalRatio);
-                }
-            }
-
-            // If geometry already created, check if all voxels are done moving
-            if (spellIt->geometryCreated) {
-                int stillAnimating = 0;
-                for (uint64_t id : spellIt->animatedVoxelIDs) {
-                    auto jt = animatedVoxelIndexMap.find(id);
-                    if (jt != animatedVoxelIndexMap.end()) {
-                        AnimatedVoxel &v = animatedVoxels[jt->second];
-                        if (v.isAnimating) ++stillAnimating;
-                    }
-                }
-
-                if (stillAnimating == 0) {
-                    // All done, remove spell
-                    spellIt = activeSpells.erase(spellIt);
-                    continue;
-                }
-            }
-
-            ++spellIt;
         }
 
-        // Clean up non-animating voxels that are not needed anymore.
-        // We'll remove any voxel that is not currently animating.
-        // Use swap-pop and keep animatedVoxelIndexMap consistent.
-        for (size_t i = 0; i < animatedVoxels.size(); ) {
-            if (!animatedVoxels[i].isAnimating) {
-                uint64_t removedID = animatedVoxels[i].id;
+        void Game::createPartialFormation(const SpellEffect& spell, float completionRatio) {
+            WorldPlanet partialFormation;
+            partialFormation.worldPos = spell.center;
 
-                // swap with last and pop
-                size_t last = animatedVoxels.size() - 1;
-                if (i != last) {
-                    animatedVoxels[i] = animatedVoxels[last];
-                    // update moved one's index in the map
-                    animatedVoxelIndexMap[animatedVoxels[i].id] = i;
+            // Scale radius based on completion
+            partialFormation.radius = spell.formationRadius * (completionRatio * 0.7f + 0.3f);
+
+            // Fade in color based on completion
+            partialFormation.color = spell.formationColor * glm::vec3(completionRatio * 0.8f + 0.2f);
+            partialFormation.type = spell.dominantType;  // Use dominant type
+
+            // Temporarily carve partial formation
+            carveFormationIntoChunks(partialFormation, spell.targetMaterial);
+        }
+
+        void Game::cleanupFinishedSpells() {
+            // This is now redundant since we clean up in updateSpells
+            // But keep it for safety
+            for (auto voxelIt = animatedVoxels.begin(); voxelIt != animatedVoxels.end(); ) {
+                if (!voxelIt->isAnimating) {
+                    voxelIt = animatedVoxels.erase(voxelIt);
+                } else {
+                    ++voxelIt;
                 }
-                animatedVoxels.pop_back();
-                animatedVoxelIndexMap.erase(removedID);
-
-                // do not increment i (we swapped a new element into i)
-            } else {
-                ++i;
             }
         }
-    }
 
-    void Game::createPartialFormation(const SpellEffect& spell, float completionRatio) {
-        // Create a weaker/smaller version of the formation
-        // This shows the geometry building up gradually
+        float Game::randomFloat(float min, float max) {
+            static std::random_device rd;
+            static std::mt19937 gen(rd());
+            static std::uniform_real_distribution<float> dis(0.0f, 1.0f);
 
-        WorldPlanet partialFormation;
-        partialFormation.worldPos = spell.center;
-
-        // Scale radius based on completion
-        partialFormation.radius = spell.formationRadius * (completionRatio * 0.7f + 0.3f);
-
-        // Fade in color based on completion
-        partialFormation.color = spell.formationColor * glm::vec3(completionRatio * 0.8f + 0.2f);
-        partialFormation.type = 1;
-
-        // Temporarily carve partial formation (will be overwritten by final)
-        carveFormationIntoChunks(partialFormation, spell.targetMaterial);
-    }
-
-    void Game::cleanupFinishedSpells() {
-        // This is now redundant since we clean up in updateSpells
-        // But keep it for safety
-        for (auto voxelIt = animatedVoxels.begin(); voxelIt != animatedVoxels.end(); ) {
-            if (!voxelIt->isAnimating) {
-                voxelIt = animatedVoxels.erase(voxelIt);
-            } else {
-                ++voxelIt;
-            }
+            return min + dis(gen) * (max - min);
         }
-    }
 
-    float Game::randomFloat(float min, float max) {
-        static std::random_device rd;
-        static std::mt19937 gen(rd());
-        static std::uniform_real_distribution<float> dis(0.0f, 1.0f);
-
-        return min + dis(gen) * (max - min);
-    }
 
 ////----Debugging Code--------------------------------------------------------------------------------------------------------------------------
 
@@ -1544,7 +1609,7 @@ namespace gl3 {
 
             if (actions["CastSpell"].wasJustPressed) {
 
-                        std::cout<<"Spell Triggered";
+                        std::cout<<"Spell Triggered"<<"\n";
                         RayCastResult hit = rayCastFromCamera(250.0f);
                         glm::vec3 spellCenter = hit.hit ? hit.hitPosition :
                                                 (cameraPos + getCameraFront() * 125.0f);
@@ -1555,29 +1620,30 @@ namespace gl3 {
 
             // Character movement - perfect for your controller
 
-        // Get input for character
-        glm::vec3 moveInput(0.0f);
-        if (actions["MoveForward"].isPressed) moveInput.z += 1.0f;
-        if (actions["MoveBack"].isPressed) moveInput.z -= 1.0f;
-        if (actions["MoveLeft"].isPressed) moveInput.x -= 1.0f;
-        if (actions["MoveRight"].isPressed) moveInput.x += 1.0f;
+            // Get input for character
+            glm::vec3 moveInput(0.0f);
+            if (actions["MoveForward"].isPressed) moveInput.z += 10.0f;
+            if (actions["MoveBack"].isPressed) moveInput.z -= 10.0f;
+            if (actions["MoveLeft"].isPressed) moveInput.x -= 10.0f;
+            if (actions["MoveRight"].isPressed) moveInput.x += 10.0f;
 
-        bool jump = actions["Jump"].wasJustPressed;
-        bool sprint = actions["Sprint"].isPressed;
-        bool crouch = actions["Crouch"].isPressed;
+            bool jump = actions["Jump"].wasJustPressed;
+            bool sprint = actions["Sprint"].isPressed;
+            bool crouch = actions["Crouch"].isPressed;
 
-        // Get mouse delta (you'll need to implement this)
-        glm::vec3 cameraFront = getCameraFront();
-        glm::vec3 cameraRight = glm::normalize(glm::cross(cameraFront, glm::vec3(0.0f, 1.0f, 0.0f)));
+            // Get mouse delta (you'll need to implement this)
+            glm::vec3 cameraFront = getCameraFront();
+            glm::vec3 cameraRight = glm::normalize(glm::cross(cameraFront, glm::vec3(0.0f, 1.0f, 0.0f)));
 
-        // Get mouse delta
-        glm::vec2 mouseDelta = getMouseDelta();
+            // Get mouse delta
+            glm::vec2 mouseDelta = getMouseDelta();
 
-        // Update character with camera-relative movement
-        characterController.update(deltaTime, moveInput, jump, sprint, crouch, mouseDelta, cameraFront, cameraRight);
+            std::cout<<"move Input: "<<moveInput.x<<" X,"<<moveInput.y<<" Y,"<<moveInput.z<<" Z,"<<"\n";
+            // Update character with camera-relative movement
+            characterController.update(deltaTime, moveInput, jump, sprint, crouch, mouseDelta, cameraFront, cameraRight);
 
-        // Update camera to follow character
-        //updateCamera();
+            // Update camera to follow character
+            updateCamera();
 
         // Update dynamic chunks
         // chunkManager->forEachDynamicChunk([this](Chunk* chunk) {
@@ -1594,6 +1660,7 @@ namespace gl3 {
     void Game::handleCameraInput() {
         float speed = 20.0f*VOXEL_SIZE * deltaTime;
 
+        /*
         // WASD movement (relative to view)
         if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
             cameraPos += speed * getCameraFront();
@@ -1609,6 +1676,7 @@ namespace gl3 {
             cameraPos.y += speed;   // Fly up
         if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS)
             cameraPos.y -= speed;   // Fly down (or use GLFW_KEY_LEFT_SHIFT if you prefer)
+*/
 
         // Mouse rotation
         double xpos, ypos;
@@ -1758,7 +1826,7 @@ namespace gl3 {
         voxelShader->setMatrix("model", glm::mat4(1.0f));
         voxelShader->setMatrix("mvp", pv);
         voxelShader->setVec3("viewPos", cameraPos);
-        voxelShader->setVec3("ambientColor", glm::vec3(0.0002f));
+        voxelShader->setVec3("ambientColor", glm::vec3(0.2f));
 
 // or show signed N·L for the strongest light (index 0)
         if (DebugMode1) {
@@ -1877,7 +1945,7 @@ namespace gl3 {
 
         instancedShader.setMatrix("pv", pv);
         instancedShader.setVec3("viewPos", cameraPos);
-        instancedShader.setVec3("ambientColor", glm::vec3(0.0002f)); // match your chunk ambient
+        instancedShader.setVec3("ambientColor", glm::vec3(0.2f)); // match your chunk ambient
 
         // Choose lights for animated voxels:
         // Use mergedEmissiveLightPool (already kept up to date) and pick up to MAX_LIGHTS
@@ -2089,13 +2157,13 @@ namespace gl3 {
             // -------------------------
             voxelShader->use();
             voxelShader->setInt("numLights", 0); // not emissive — no lights needed
-            voxelShader->setVec3("ambientColor", {0.05f, 0.08f, 0.10f});
+            voxelShader->setVec3("ambientColor", glm::vec3(0.2f));
             voxelShader->setVec3("viewPos", cameraPos);
             voxelShader->setMatrix("model", glm::mat4(1.0f));
             voxelShader->setMatrix("mvp", pv);
 
-            voxelShader->setFloat("emission", 0.0f);          // not emissive
-            voxelShader->setVec3("emissionColor", {0, 0, 0});   // no glow in mesh
+            voxelShader->setFloat("emission", 100.0f);          // not emissive
+            voxelShader->setVec3("emissionColor", planetColor);   // no glow in mesh
             voxelShader->setVec3("uniformColor", planetColor);
 
             //drawTriangles(*voxelShader);
@@ -2459,22 +2527,27 @@ namespace gl3 {
         // Frame-rate independent follow: followSpeed is in "per-second" units.
         // A followSpeed of ~10 means the camera reaches ~63% of the offset in 0.1s (fast),
         // choose lower value for slower smoothing.
-        const float followSpeed = 10.0f; // tune to taste
-        float lerpT = glm::clamp(followSpeed * deltaTime, 0.0f, 1.0f);
-        cameraPos = glm::mix(cameraPos, targetCameraPos, lerpT);
+        //const float followSpeed = 10.0f; // tune to taste
+        //float lerpT = glm::clamp(followSpeed * deltaTime, 0.0f, 1.0f);
+        //cameraPos = glm::mix(cameraPos, targetCameraPos, lerpT);
+        cameraPos = targetCameraPos;
 
-        // Mouse rotation: use centralized mouse delta so other code can also use it
-        glm::vec2 mouseDelta = getMouseDelta();
+        double xpos, ypos;
+        glfwGetCursorPos(window, &xpos, &ypos);
+        static double lastX = xpos, lastY = ypos;
 
-        const float sensitivity = 0.1f;
-        float dx = mouseDelta.x * sensitivity;
-        float dy = mouseDelta.y * sensitivity;
+        float sensitivity = 0.1f;
+        float dx = (xpos - lastX) * sensitivity;
+        float dy = (lastY - ypos) * sensitivity; // invert Y movement
 
         cameraRotation.y += dx; // yaw
-        cameraRotation.x += -dy; // invert Y (match previous behavior)
+        cameraRotation.x += dy; // pitch
 
         // Clamp pitch to avoid gimbal lock
         if (cameraRotation.x > 89.0f) cameraRotation.x = 89.0f;
         if (cameraRotation.x < -89.0f) cameraRotation.x = -89.0f;
+
+        lastX = xpos;
+        lastY = ypos;
     }
 }

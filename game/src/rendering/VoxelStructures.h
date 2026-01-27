@@ -88,6 +88,7 @@ namespace gl3 {
         uint64_t targetMaterial;
         glm::vec3 formationColor;
         float formationRadius = 0.0f;
+        uint8_t dominantType = 0;  // ADD THIS
 
         // store stable IDs (not vector indices)
         std::vector<uint64_t> animatedVoxelIDs;
@@ -111,6 +112,7 @@ namespace gl3 {
         float radius;
         glm::vec3 color;
         uint64_t material;
+        uint8_t dominantType = 0;  // ADD THIS
 
         // SDF function for this formation
         float evaluate(const glm::vec3& p) const {

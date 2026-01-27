@@ -206,14 +206,18 @@ namespace gl3 {
 
         void cleanupFinishedSpells();
 
+
         void findNearbyVoxelsForVisual(const glm::vec3& center, float radius,
-                                       uint64_t targetMaterial,
-                                       std::vector<AnimatedVoxel>& results,
-                                       float strength);
+                                             uint64_t targetMaterial,
+                                             std::vector<AnimatedVoxel>& results,
+                                             float strength,
+                                             uint8_t& outDominantType);
 
         void createSpellFormation(const glm::vec3& center, float radius,
                                   float strength, uint64_t material,
-                                  const glm::vec3& color,size_t collectedVoxels);
+                                  const glm::vec3& color,size_t collectedVoxels,
+                                  uint8_t dominantType);
+
 
         void createPartialFormation(const SpellEffect& spell, float completionRatio);
 

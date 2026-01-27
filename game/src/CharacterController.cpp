@@ -3,229 +3,156 @@
 
 namespace gl3 {
     CharacterController::CharacterController(MultiGridChunkManager* chunkMgr, float height, float radius)
-            : chunkManager(chunkMgr) {
-        // Use settings instead of separate height/radius variables
-        settings.collisionHeight = height;
-        settings.collisionRadius = radius;
+            : height(height), radius(radius), currentHeight(height), defaultHeight(height),
+              chunkManager(chunkMgr) {
     }
+
 
     glm::vec3 CharacterController::getCameraPosition() const {
-        return state.position + glm::vec3(0.0f, settings.collisionHeight * 0.5f, 0.0f);
+        // Camera is slightly above character center (eye level)
+        return state.position + glm::vec3(0.0f, getEyeHeight(), 0.0f);
     }
 
-    CharacterController::Capsule CharacterController::getCapsule() const {
-        return Capsule{state.position, settings.collisionHeight, settings.collisionRadius};
-    }
+    bool CharacterController::testVoxelCollision(const glm::vec3& voxelPos) const {
+        if (!chunkManager) return false; // Safety check
 
-    float CharacterController::sampleDensity(const glm::vec3& worldPos) const {
-        if (!chunkManager) return -1000.0f;
-
-        // Convert to chunk coordinates
-        int chunkX = static_cast<int>(glm::floor(worldPos.x / (CHUNK_SIZE * VOXEL_SIZE)));
-        int chunkY = static_cast<int>(glm::floor(worldPos.y / (CHUNK_SIZE * VOXEL_SIZE)));
-        int chunkZ = static_cast<int>(glm::floor(worldPos.z / (CHUNK_SIZE * VOXEL_SIZE)));
+        // Convert world position to chunk coordinates
+        int chunkX = static_cast<int>(glm::floor(voxelPos.x / (CHUNK_SIZE * VOXEL_SIZE)));
+        int chunkY = static_cast<int>(glm::floor(voxelPos.y / (CHUNK_SIZE * VOXEL_SIZE)));
+        int chunkZ = static_cast<int>(glm::floor(voxelPos.z / (CHUNK_SIZE * VOXEL_SIZE)));
 
         ChunkCoord coord{chunkX, chunkY, chunkZ};
         Chunk* chunk = chunkManager->getChunk(coord);
 
-        if (!chunk) return -1000.0f;
+        if (!chunk) return false;
 
-        // Convert to local coordinates within chunk
-        float localX = worldPos.x - (coord.x * CHUNK_SIZE * VOXEL_SIZE);
-        float localY = worldPos.y - (coord.y * CHUNK_SIZE * VOXEL_SIZE);
-        float localZ = worldPos.z - (coord.z * CHUNK_SIZE * VOXEL_SIZE);
+        // Convert to local voxel coordinates within chunk
+        float localX = voxelPos.x - (coord.x * CHUNK_SIZE * VOXEL_SIZE);
+        float localY = voxelPos.y - (coord.y * CHUNK_SIZE * VOXEL_SIZE);
+        float localZ = voxelPos.z - (coord.z * CHUNK_SIZE * VOXEL_SIZE);
 
-        // Convert to voxel grid coordinates (floating point for interpolation)
-        float voxelX = localX / VOXEL_SIZE;
-        float voxelY = localY / VOXEL_SIZE;
-        float voxelZ = localZ / VOXEL_SIZE;
+        // Convert to voxel grid coordinates
+        int voxelX = static_cast<int>(glm::floor(localX / VOXEL_SIZE));
+        int voxelY = static_cast<int>(glm::floor(localY / VOXEL_SIZE));
+        int voxelZ = static_cast<int>(glm::floor(localZ / VOXEL_SIZE));
 
         // Clamp to valid range
-        voxelX = glm::clamp(voxelX, 0.0f, static_cast<float>(CHUNK_SIZE));
-        voxelY = glm::clamp(voxelY, 0.0f, static_cast<float>(CHUNK_SIZE));
-        voxelZ = glm::clamp(voxelZ, 0.0f, static_cast<float>(CHUNK_SIZE));
+        voxelX = glm::clamp(voxelX, 0,  CHUNK_SIZE * (int)std::ceil(VOXEL_SIZE));
+        voxelY = glm::clamp(voxelY, 0, CHUNK_SIZE * (int)std::ceil(VOXEL_SIZE));
+        voxelZ = glm::clamp(voxelZ, 0, CHUNK_SIZE * (int)std::ceil(VOXEL_SIZE));
 
-        return interpolateDensity(voxelX, voxelY, voxelZ, chunk);
+        // Check if voxel is solid
+        return chunk->voxels[voxelX][voxelY][voxelZ].isSolid();
     }
 
-    float CharacterController::interpolateDensity(float x, float y, float z, Chunk* chunk) const {
-        int x0 = static_cast<int>(glm::floor(x));
-        int y0 = static_cast<int>(glm::floor(y));
-        int z0 = static_cast<int>(glm::floor(z));
-
-        int x1 = glm::min(x0 + 1, CHUNK_SIZE);
-        int y1 = glm::min(y0 + 1, CHUNK_SIZE);
-        int z1 = glm::min(z0 + 1, CHUNK_SIZE);
-
-        float tx = x - x0;
-        float ty = y - y0;
-        float tz = z - z0;
-
-        // Trilinear interpolation
-        float c00 = chunk->voxels[x0][y0][z0].density * (1 - tz) + chunk->voxels[x0][y0][z1].density * tz;
-        float c01 = chunk->voxels[x0][y1][z0].density * (1 - tz) + chunk->voxels[x0][y1][z1].density * tz;
-        float c10 = chunk->voxels[x1][y0][z0].density * (1 - tz) + chunk->voxels[x1][y0][z1].density * tz;
-        float c11 = chunk->voxels[x1][y1][z0].density * (1 - tz) + chunk->voxels[x1][y1][z1].density * tz;
-
-        float c0 = c00 * (1 - ty) + c01 * ty;
-        float c1 = c10 * (1 - ty) + c11 * ty;
-
-        return c0 * (1 - tx) + c1 * tx;
+    glm::vec3 CharacterController::getAABBMin(const glm::vec3 &center) const {
+        return center - glm::vec3(radius, currentHeight * 0.5f, radius);
     }
 
-    float CharacterController::getDistanceToSurface(const glm::vec3& position) const {
-        // Positive = outside, Negative = inside, Zero = on surface
-        return sampleDensity(position);
+    glm::vec3 CharacterController::getAABBMax(const glm::vec3 &center) const {
+        return center + glm::vec3(radius, currentHeight * 0.5f, radius);
     }
 
-    glm::vec3 CharacterController::getSurfaceNormal(const glm::vec3& position, float epsilon) const {
-        // Calculate normal using central differences
-        float d = getDistanceToSurface(position);
-        float dx = getDistanceToSurface(position + glm::vec3(epsilon, 0, 0)) - d;
-        float dy = getDistanceToSurface(position + glm::vec3(0, epsilon, 0)) - d;
-        float dz = getDistanceToSurface(position + glm::vec3(0, 0, epsilon)) - d;
+    bool CharacterController::checkCollision(const glm::vec3 &testPosition,
+                                             glm::vec3 &outNormal,
+                                             float &outPenetration) const {
+        glm::vec3 aabbMin = getAABBMin(testPosition);
+        glm::vec3 aabbMax = getAABBMax(testPosition);
 
-        return glm::normalize(glm::vec3(dx, dy, dz));
-    }
+        // Expand AABB slightly for collision detection
+        const float skinWidth = 0.05f;
+        aabbMin -= glm::vec3(skinWidth);
+        aabbMax += glm::vec3(skinWidth);
 
-    bool CharacterController::sphereTrace(const glm::vec3& start, const glm::vec3& direction,
-                                          float maxDistance, glm::vec3& hitPos,
-                                          glm::vec3& hitNormal, float& hitDistance) const {
-        float totalDistance = 0.0f;
-        glm::vec3 currentPos = start;
+        // Track deepest collision
+        bool collisionFound = false;
+        float deepestPenetration = 0.0f;
+        glm::vec3 collisionNormal(0.0f);
 
-        for (int i = 0; i < 32; i++) { // Max iterations
-            float distance = getDistanceToSurface(currentPos);
+        // Check voxels in AABB region
+        for (float x = aabbMin.x; x <= aabbMax.x; x += std::ceil(VOXEL_SIZE)) {
+            for (float y = aabbMin.y; y <= aabbMax.y; y += std::ceil(VOXEL_SIZE)) {
+                for (float z = aabbMin.z; z <= aabbMax.z; z += std::ceil(VOXEL_SIZE)) {
+                    glm::vec3 voxelPos(glm::floor(x / VOXEL_SIZE) * VOXEL_SIZE,
+                                       glm::floor(y / VOXEL_SIZE) * VOXEL_SIZE,
+                                       glm::floor(z / VOXEL_SIZE) * VOXEL_SIZE);
 
-            if (distance < 0) {
-                // We're inside the surface
-                hitPos = currentPos;
-                hitNormal = getSurfaceNormal(currentPos);
-                hitDistance = totalDistance;
-                return true;
+                    if (testVoxelCollision(voxelPos)) {
+                        // Voxel AABB
+                        glm::vec3 voxelMin = voxelPos;
+                        glm::vec3 voxelMax = voxelPos + glm::vec3(VOXEL_SIZE);
+
+                        // Calculate overlap
+                        glm::vec3 overlap1 = aabbMax - voxelMin;
+                        glm::vec3 overlap2 = voxelMax - aabbMin;
+
+                        glm::vec3 overlap = glm::min(overlap1, overlap2);
+
+                        // Find axis with smallest penetration
+                        float minOverlap = glm::min(glm::min(overlap.x, overlap.y), overlap.z);
+
+                        if (minOverlap > deepestPenetration) {
+                            deepestPenetration = minOverlap;
+
+                            // Determine collision normal
+                            if (minOverlap == overlap.x) {
+                                collisionNormal = glm::vec3(overlap1.x < overlap2.x ? 1.0f : -1.0f, 0.0f, 0.0f);
+                            } else if (minOverlap == overlap.y) {
+                                collisionNormal = glm::vec3(0.0f, overlap1.y < overlap2.y ? 1.0f : -1.0f, 0.0f);
+                            } else {
+                                collisionNormal = glm::vec3(0.0f, 0.0f, overlap1.z < overlap2.z ? 1.0f : -1.0f);
+                            }
+
+                            collisionFound = true;
+                        }
+                    }
+                }
             }
-
-            if (distance < 0.001f) { // Close enough to surface
-                hitPos = currentPos;
-                hitNormal = getSurfaceNormal(currentPos);
-                hitDistance = totalDistance;
-                return true;
-            }
-
-            if (totalDistance > maxDistance) {
-                return false;
-            }
-
-            // March forward
-            float step = glm::max(distance * 0.5f, 0.01f); // Adaptive step size
-            currentPos += direction * step;
-            totalDistance += step;
         }
 
-        return false;
+        if (collisionFound) {
+            outNormal = collisionNormal;
+            outPenetration = deepestPenetration;
+        }
+
+        return collisionFound;
     }
 
-    void CharacterController::resolveCapsuleCollision() {
-        Capsule capsule = getCapsule();
-        const int maxIterations = 4;
+    void CharacterController::resolveCollisions() {
+        const int maxIterations = 8;
 
-        for (int iter = 0; iter < maxIterations; iter++) {
-            // Test multiple points along the capsule
-            const int numSamples = 8;
-            bool collisionFound = false;
-            glm::vec3 averageNormal(0.0f);
-            float totalPenetration = 0.0f;
-            int numCollisions = 0;
+        for (int i = 0; i < maxIterations; i++) {
+            glm::vec3 normal;
+            float penetration;
 
-            // Sample points along the capsule
-            for (int i = 0; i < numSamples; i++) {
-                float t = static_cast<float>(i) / (numSamples - 1);
-                glm::vec3 samplePoint = capsule.getBottom() +
-                                        glm::vec3(0, t * capsule.height, 0);
-
-                // Expand sample sphere by capsule radius
-                float distance = getDistanceToSurface(samplePoint);
-                float penetration = capsule.radius - distance;
-
-                if (penetration > 0) {
-                    collisionFound = true;
-                    numCollisions++;
-                    totalPenetration += penetration;
-
-                    // Get normal at surface
-                    glm::vec3 normal = getSurfaceNormal(samplePoint);
-                    averageNormal += normal;
-                }
-            }
-
-            if (!collisionFound) break;
-
-            if (numCollisions > 0) {
-                averageNormal = glm::normalize(averageNormal);
-                float avgPenetration = totalPenetration / numCollisions;
-
-                // Push out of collision
-                state.position += averageNormal * (avgPenetration + settings.skinWidth);
+            if (checkCollision(state.position, normal, penetration)) {
+                // Push character out of collision
+                state.position += normal * (penetration + 0.0001f);
 
                 // Remove velocity in collision direction
-                float velDotNormal = glm::dot(state.velocity, averageNormal);
+                float velDotNormal = glm::dot(state.velocity, normal);
                 if (velDotNormal < 0) {
-                    state.velocity -= averageNormal * velDotNormal;
+                    state.velocity -= normal * velDotNormal;
                 }
 
-                // Check if ground (normal mostly upward)
-                if (averageNormal.y > 0.7f) {
+                // Check if we're on ground
+                if (normal.y > 0.5f) { // Mostly upward normal
                     state.isGrounded = true;
                     state.coyoteTime = settings.coyoteTimeDuration;
                 }
+            } else {
+                break;
             }
         }
     }
 
-    void CharacterController::moveCapsule(glm::vec3& position, const glm::vec3& velocity, float deltaTime) {
-        if (glm::length(velocity) < 0.001f) return;
-
-        glm::vec3 direction = glm::normalize(velocity);
-        float remainingDistance = glm::length(velocity) * deltaTime;
-        const float minStep = 0.01f;
-
-        // Adaptive stepping based on distance to surface
-        while (remainingDistance > minStep) {
-            Capsule capsule{position, settings.collisionHeight, settings.collisionRadius};
-
-            // Find safe step distance
-            float safeDistance = remainingDistance;
-
-            // Test multiple points along capsule in movement direction
-            for (int i = 0; i < 5; i++) {
-                float t = static_cast<float>(i) / 4.0f;
-                glm::vec3 testPoint = capsule.getBottom() +
-                                      glm::vec3(0, t * capsule.height, 0);
-
-                glm::vec3 hitPos, hitNormal;
-                float hitDist;
-
-                if (sphereTrace(testPoint, direction, remainingDistance + capsule.radius,
-                                hitPos, hitNormal, hitDist)) {
-                    safeDistance = glm::min(safeDistance, hitDist - capsule.radius - settings.skinWidth);
-                }
-            }
-
-            safeDistance = glm::max(safeDistance, minStep);
-            position += direction * safeDistance;
-            remainingDistance -= safeDistance;
-
-            // Resolve any collision from this step
-            resolveCapsuleCollision();
-
-            if (safeDistance < minStep) break; // Stuck
-        }
-    }
-
-    glm::vec3 CharacterController::calculateWishVelocity(const glm::vec3& moveInput,
-                                                         const glm::vec3& forward,
-                                                         const glm::vec3& right) const {
+    glm::vec3 CharacterController::calculateWishVelocity(const glm::vec3 &moveInput,
+                                                         const glm::vec3 &forward,
+                                                         const glm::vec3 &right) const {
+        // Calculate movement direction relative to camera
         glm::vec3 wishDir = (forward * moveInput.z) + (right * moveInput.x);
+
+        // Flatten to horizontal plane
         wishDir.y = 0.0f;
 
         if (glm::length(wishDir) > 0.001f) {
@@ -238,66 +165,85 @@ namespace gl3 {
     void CharacterController::applyFriction(float deltaTime) {
         if (state.isGrounded) {
             float speed = glm::length(state.velocity);
+
             if (speed > 0.01f) {
                 float drop = speed * settings.friction * deltaTime;
-                state.velocity *= glm::max(speed - drop, 0.0f) / speed;
+                float newSpeed = glm::max(speed - drop, 0.0f);
+                state.velocity *= newSpeed / speed;
             }
         } else {
+            // Air friction (much lower)
             float speed = glm::length(state.velocity);
+
             if (speed > 0.01f) {
                 float drop = speed * settings.airFriction * deltaTime;
-                state.velocity *= glm::max(speed - drop, 0.0f) / speed;
+                float newSpeed = glm::max(speed - drop, 0.0f);
+                state.velocity *= newSpeed / speed;
             }
         }
     }
 
-    void CharacterController::accelerate(const glm::vec3& wishDir, float wishSpeed,
+    void CharacterController::accelerate(const glm::vec3 &wishDir, float wishSpeed,
                                          float accel, float deltaTime) {
         float currentSpeed = glm::dot(state.velocity, wishDir);
         float addSpeed = wishSpeed - currentSpeed;
 
         if (addSpeed <= 0) return;
 
-        float accelSpeed = accel * deltaTime;
+        float accelSpeed = accel * wishSpeed * deltaTime;
         accelSpeed = glm::min(accelSpeed, addSpeed);
 
         state.velocity += wishDir * accelSpeed;
     }
 
-    void CharacterController::updateGroundState() {
-        // Cast multiple rays downward to detect ground
-        Capsule capsule = getCapsule();
-        const int numRays = 5;
-        int groundHits = 0;
+    void CharacterController::move(float deltaTime) {
+        // Apply gravity
+        if (!state.isGrounded) {
+            state.velocity.y -= settings.gravity * deltaTime;
+            state.velocity.y = glm::max(state.velocity.y, -settings.terminalVelocity);
+        }
 
-        for (int i = 0; i < numRays; i++) {
-            float angle = (static_cast<float>(i) / numRays) * glm::two_pi<float>();
-            glm::vec3 rayStart = capsule.getBottom() +
-                                 glm::vec3(cos(angle) * capsule.radius * 0.7f, 0, sin(angle) * capsule.radius * 0.7f);
+        // Update position
+        glm::vec3 moveStep = state.velocity * deltaTime;
 
-            glm::vec3 hitPos, hitNormal;
-            float hitDist;
+        // Check for collisions during movement
+        glm::vec3 newPosition = state.position;
 
-            if (sphereTrace(rayStart, glm::vec3(0, -1, 0), 0.2f, hitPos, hitNormal, hitDist)) {
-                // Check slope angle
-                float slopeAngle = glm::degrees(glm::acos(glm::dot(hitNormal, glm::vec3(0, 1, 0))));
-                if (slopeAngle < settings.slopeLimit) {
-                    groundHits++;
+        // Move in small steps for more accurate collision
+        const float stepSize = 0.5f;
+        int steps = glm::max(1, static_cast<int>(glm::length(moveStep) / stepSize));
+        glm::vec3 step = moveStep / static_cast<float>(steps);
+
+        for (int i = 0; i < steps; i++) {
+            newPosition += step;
+
+            glm::vec3 normal;
+            float penetration;
+            if (checkCollision(newPosition, normal, penetration)) {
+                // Slide along collision plane
+                glm::vec3 remainingStep = step * (static_cast<float>(steps - i - 1) / static_cast<float>(steps));
+
+                // Remove component into collision
+                float intoCollision = glm::dot(remainingStep, normal);
+                remainingStep -= normal * intoCollision;
+
+                // Try sliding
+                glm::vec3 slidePosition = newPosition + remainingStep;
+                if (!checkCollision(slidePosition, normal, penetration)) {
+                    newPosition = slidePosition;
                 }
+                break;
             }
         }
 
-        state.isGrounded = (groundHits > numRays / 2);
-        if (state.isGrounded) {
-            state.coyoteTime = settings.coyoteTimeDuration;
-        }
+        state.position = newPosition;
     }
 
     void CharacterController::update(float deltaTime, const glm::vec3& moveInput,
                                      bool jumpInput, bool sprintInput,
                                      bool crouchInput, const glm::vec2& mouseDelta,
                                      const glm::vec3& cameraForward, const glm::vec3& cameraRight) {
-        // Update timing states
+        // Update coyote time and jump buffer
         if (state.isGrounded) {
             state.coyoteTime = settings.coyoteTimeDuration;
         } else {
@@ -314,22 +260,23 @@ namespace gl3 {
         bool wantsCrouch = crouchInput;
         if (wantsCrouch != state.isCrouching) {
             state.isCrouching = wantsCrouch;
-            settings.collisionHeight = state.isCrouching ?
-                                       settings.collisionHeight * settings.crouchHeightMultiplier :
-                                       1.8f; // Reset to default
+            currentHeight = state.isCrouching ?
+                            defaultHeight * settings.crouchHeightMultiplier : defaultHeight;
         }
 
-        // Handle sprinting
+        // Handle sprinting (can't sprint while crouching)
         state.isSprinting = sprintInput && !state.isCrouching && state.isGrounded;
 
-        // Calculate target speed
+        // Calculate movement speed
         float targetSpeed = state.isCrouching ? settings.crouchSpeed :
                             (state.isSprinting ? settings.sprintSpeed : settings.walkSpeed);
 
-        // Get camera-relative movement
+        // Get camera-relative movement vectors (you'll need to pass these or calculate from camera)
+        // For now, assume forward/right are global axes
         glm::vec3 forward = glm::normalize(glm::vec3(cameraForward.x, 0.0f, cameraForward.z));
         glm::vec3 right = glm::normalize(glm::vec3(cameraRight.x, 0.0f, cameraRight.z));
 
+        // Calculate wish velocity with camera-relative vectors
         glm::vec3 wishDir = calculateWishVelocity(moveInput, forward, right);
 
         // Apply friction
@@ -340,12 +287,6 @@ namespace gl3 {
                       settings.acceleration * settings.airControl;
         accelerate(wishDir, targetSpeed, accel, deltaTime);
 
-        // Apply gravity
-        if (!state.isGrounded) {
-            state.velocity.y -= settings.gravity * deltaTime;
-            state.velocity.y = glm::max(state.velocity.y, -settings.terminalVelocity);
-        }
-
         // Handle jumping
         if (state.jumpBuffer > 0.0f && state.coyoteTime > 0.0f) {
             state.velocity.y = settings.jumpForce;
@@ -354,10 +295,24 @@ namespace gl3 {
             state.coyoteTime = 0.0f;
         }
 
-        // Move with collision
-        moveCapsule(state.position, state.velocity, deltaTime);
+        // Move character
+        move(deltaTime);
+
+        // Resolve collisions
+        resolveCollisions();
 
         // Update ground state
-        updateGroundState();
+        if (!state.isGrounded) {
+            // Raycast down to check if we've landed
+            glm::vec3 groundCheckPos = state.position - glm::vec3(0.0f, currentHeight * 0.5f + 0.1f, 0.0f);
+            glm::vec3 normal;
+            float penetration;
+            if (checkCollision(groundCheckPos, normal, penetration)) {
+                if (normal.y > 0.5f) {
+                    state.isGrounded = true;
+                    state.velocity.y = glm::max(state.velocity.y, 0.0f); // Stop downward velocity
+                }
+            }
+        }
     }
 }
