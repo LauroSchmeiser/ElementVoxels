@@ -53,7 +53,7 @@ namespace gl3 {
             : windowWidth(width),
               windowHeight(height),
               chunkManager(std::make_unique<MultiGridChunkManager>()),
-              cameraPos(0.0f, 0.0f, 50.0f),
+              cameraPos(0.0f, 0.0f, 35.0f),
               cameraRotation(-90.0f, 0.0f),
               characterController(chunkManager.get(), 1.8f, 1.0f)  // Use .get() on unique_ptr
             {
@@ -134,6 +134,7 @@ namespace gl3 {
             ////Input-Steps
             //handleCameraInput();
             glfwPollEvents();
+            updatePhysics();
             update();
 
 
@@ -1317,6 +1318,27 @@ namespace gl3 {
         accumulator += deltaTime;
         if (accumulator >= fixedTimeStep) {
             // Update the entities based on what happened in the physics step
+            // Get input for character
+            glm::vec3 moveInput(0.0f);
+            if (actions["MoveForward"].isPressed) moveInput.z += 10.0f;
+            if (actions["MoveBack"].isPressed) moveInput.z -= 10.0f;
+            if (actions["MoveLeft"].isPressed) moveInput.x -= 10.0f;
+            if (actions["MoveRight"].isPressed) moveInput.x += 10.0f;
+
+            bool jump = actions["Jump"].wasJustPressed;
+            bool sprint = actions["Sprint"].isPressed;
+            bool crouch = actions["Crouch"].isPressed;
+
+            // Get mouse delta (you'll need to implement this)
+            glm::vec3 cameraFront = getCameraFront();
+            glm::vec3 cameraRight = glm::normalize(glm::cross(cameraFront, glm::vec3(0.0f, 1.0f, 0.0f)));
+
+            // Get mouse delta
+            glm::vec2 mouseDelta = getMouseDelta();
+
+            std::cout<<"move Input: "<<moveInput.x<<" X,"<<moveInput.y<<" Y,"<<moveInput.z<<" Z,"<<"\n";
+            // Update character with camera-relative movement
+            characterController.update(deltaTime, moveInput, jump, sprint, crouch, mouseDelta, cameraFront, cameraRight);
 
             accumulator -= fixedTimeStep;
         }
@@ -1619,28 +1641,6 @@ namespace gl3 {
             }
 
             // Character movement - perfect for your controller
-
-            // Get input for character
-            glm::vec3 moveInput(0.0f);
-            if (actions["MoveForward"].isPressed) moveInput.z += 10.0f;
-            if (actions["MoveBack"].isPressed) moveInput.z -= 10.0f;
-            if (actions["MoveLeft"].isPressed) moveInput.x -= 10.0f;
-            if (actions["MoveRight"].isPressed) moveInput.x += 10.0f;
-
-            bool jump = actions["Jump"].wasJustPressed;
-            bool sprint = actions["Sprint"].isPressed;
-            bool crouch = actions["Crouch"].isPressed;
-
-            // Get mouse delta (you'll need to implement this)
-            glm::vec3 cameraFront = getCameraFront();
-            glm::vec3 cameraRight = glm::normalize(glm::cross(cameraFront, glm::vec3(0.0f, 1.0f, 0.0f)));
-
-            // Get mouse delta
-            glm::vec2 mouseDelta = getMouseDelta();
-
-            std::cout<<"move Input: "<<moveInput.x<<" X,"<<moveInput.y<<" Y,"<<moveInput.z<<" Z,"<<"\n";
-            // Update character with camera-relative movement
-            characterController.update(deltaTime, moveInput, jump, sprint, crouch, mouseDelta, cameraFront, cameraRight);
 
             // Update camera to follow character
             updateCamera();
@@ -2519,35 +2519,149 @@ namespace gl3 {
         return delta;
     }
 
-// Updated: camera follows character with frame-rate-independent smoothing and uses centralized mouse delta
+
+    // -----------------------
+    // SDF sampling helpers
+    // -----------------------
+    float Game::sampleDensityAtWorld(const glm::vec3 &worldPos) const {
+        if (!chunkManager) return -10000.0f;
+            const float chunkWorldSize = CHUNK_SIZE * VOXEL_SIZE;
+            int baseCX = worldToChunk(worldPos.x);
+            int baseCY = worldToChunk(worldPos.y);
+            int baseCZ = worldToChunk(worldPos.z);
+            glm::vec3 chunkMin = glm::vec3(baseCX * chunkWorldSize,baseCY * chunkWorldSize,baseCZ * chunkWorldSize);
+            glm::vec3 local = (worldPos - chunkMin) / VOXEL_SIZE;
+            int ix = static_cast<int>(std::floor(local.x));
+            int iy = static_cast<int>(std::floor(local.y));
+            int iz = static_cast<int>(std::floor(local.z));
+            float fx = local.x - ix;
+            float fy = local.y - iy;
+            float fz = local.z - iz;
+
+            // gather 8 corner samples by querying the chunk manager (handles chunk boundaries)
+            auto sampleCorner = [&](int sx, int sy, int sz)->float {
+            // corner world position:
+            glm::vec3 cornerWorld = chunkMin + glm::vec3((float)(ix + sx), (float)(iy + sy), (float)(iz + sz)) * VOXEL_SIZE;
+            int cx = worldToChunk(cornerWorld.x);
+            int cy = worldToChunk(cornerWorld.y);
+            int cz = worldToChunk(cornerWorld.z);
+            ChunkCoord coord{cx, cy, cz};
+            Chunk* chunk = chunkManager->getChunk(coord);
+            if (!chunk) return -1000.0f;
+            // local index inside that chunk (0..CHUNK_SIZE)
+            glm::vec3 localCorner = (cornerWorld - getChunkMin(coord)) / VOXEL_SIZE;
+            int lx = glm::clamp((int)std::round(localCorner.x), 0, CHUNK_SIZE);
+            int ly = glm::clamp((int)std::round(localCorner.y), 0, CHUNK_SIZE);
+            int lz = glm::clamp((int)std::round(localCorner.z), 0, CHUNK_SIZE);
+            return chunk->voxels[lx][ly][lz].density;
+            };
+
+        float s000 = sampleCorner(0,0,0);
+        float s100 = sampleCorner(1,0,0);
+        float s010 = sampleCorner(0,1,0);
+        float s110 = sampleCorner(1,1,0);
+        float s001 = sampleCorner(0,0,1);
+        float s101 = sampleCorner(1,0,1);
+        float s011 = sampleCorner(0,1,1);
+        float s111 = sampleCorner(1,1,1);
+
+        auto lerp = [](float a, float b, float t){ return a + (b - a) * t; };
+        float c00 = lerp(s000, s100, fx);
+        float c10 = lerp(s010, s110, fx);
+        float c01 = lerp(s001, s101, fx);
+        float c11 = lerp(s011, s111, fx);
+
+        float c0 = lerp(c00, c10, fy);
+        float c1 = lerp(c01, c11, fy);
+        return lerp(c0, c1, fz);
+        }
+
+    glm::vec3 Game::sampleNormalAtWorld(const glm::vec3 &worldPos) const {
+        const float e = VOXEL_SIZE * 0.5f;
+        float dx = sampleDensityAtWorld(worldPos + glm::vec3(e,0,0)) - sampleDensityAtWorld(worldPos - glm::vec3(e,0,0));
+        float dy = sampleDensityAtWorld(worldPos + glm::vec3(0,e,0)) - sampleDensityAtWorld(worldPos - glm::vec3(0,e,0));
+        float dz = sampleDensityAtWorld(worldPos + glm::vec3(0,0,e)) - sampleDensityAtWorld(worldPos - glm::vec3(0,0,e));
+        glm::vec3 g(dx,dy,dz);
+        float len = glm::length(g);
+        if (len < 1e-6f) return glm::vec3(0.0f, 1.0f, 0.0f);
+        // density increases INTO solid => gradient points inward; we want outward normal
+        return -glm::normalize(g);
+        }
+
+    // -----------------------
+    // Camera update with collision-safe offset behind player
+    // -----------------------
     void Game::updateCamera() {
-        // Get desired camera position from the character controller
-        glm::vec3 targetCameraPos = characterController.getCameraPosition();
+        // Get player head/eye position
+        glm::vec3 headPos = characterController.getCameraPosition();
+        // Desired camera offset behind the player (tweak this)
+        const float cameraFollowDistance = 1.0f * VOXEL_SIZE; // how far behind the head
+        const float cameraHeightOffset = 0.0f;                // extra vertical offset if needed
+        glm::vec3 viewDir = getCameraFront();
+        glm::vec3 desiredCam = headPos - viewDir * cameraFollowDistance + glm::vec3(0.0f, cameraHeightOffset, 0.0f);
+        // Camera collision params
+        const float cameraRadius = 0.35f * VOXEL_SIZE; // radius of camera sphere
+        const float skinWidth = 0.02f * VOXEL_SIZE;   // small gap to keep off surface
+        const int steps = glm::max(4, (int)std::ceil(glm::length(desiredCam - headPos) / (VOXEL_SIZE * 0.25f)));
+        // Walk from headPos outward toward desiredCam and find first penetration
+        glm::vec3 safePos = headPos; // starts at head (should be non-penetrating)
+        bool collided = false;
+        glm::vec3 collidedNormal(0.0f);
+        for (int i = 1; i <= steps; ++i) {
+            float t = (float)i / (float)steps;
+                    glm::vec3 samplePos = glm::mix(headPos, desiredCam, t);
+                    float sdf = sampleDensityAtWorld(samplePos); // positive = inside solid
+                    float sphereSigned = sdf - cameraRadius;     // positive => penetration
+            if (sphereSigned > 0.0f) {
+                            // penetration at this sample -- step back to previous safe sample and push out
+                                    collided = true;
+                            // previous sample (clamped)
+                                    float prevT = (float)(i - 1) / (float)steps;
+                            glm::vec3 prevPos = glm::mix(headPos, desiredCam, prevT);
+                            // get normal at collision location (best attempt)
+                                    glm::vec3 n = sampleNormalAtWorld(samplePos);
+                            if (glm::length(n) < 1e-6f) n = glm::vec3(0,1,0);
+                            collidedNormal = glm::normalize(n);
+                            // place camera at prevPos plus offset OUT of surface
+                                    safePos = prevPos + collidedNormal * (cameraRadius + skinWidth);
+                            break;
+                        } else {
+                            safePos = samplePos; // this sample is safe; remember it
+                        }
+                }
 
-        // Frame-rate independent follow: followSpeed is in "per-second" units.
-        // A followSpeed of ~10 means the camera reaches ~63% of the offset in 0.1s (fast),
-        // choose lower value for slower smoothing.
-        //const float followSpeed = 10.0f; // tune to taste
-        //float lerpT = glm::clamp(followSpeed * deltaTime, 0.0f, 1.0f);
-        //cameraPos = glm::mix(cameraPos, targetCameraPos, lerpT);
-        cameraPos = targetCameraPos;
+                    // If we never collided, but desiredCam is safe then use desiredCam (we already set safePos along the loop)
+                    // If we started inside geometry (rare), project outward using normal at headPos#//
+                    if (!collided) {
+                    float headSdf = sampleDensityAtWorld(safePos);
+                    float headSphereSigned = headSdf - cameraRadius;
+                    if (headSphereSigned > 0.0f) {
+                            glm::vec3 n = sampleNormalAtWorld(safePos);
+                            safePos = safePos + glm::normalize(n) * (headSphereSigned + skinWidth);
+                        }
+               }
 
-        double xpos, ypos;
-        glfwGetCursorPos(window, &xpos, &ypos);
-        static double lastX = xpos, lastY = ypos;
+                    // Smooth camera movement to reduce snapping (tweak lerp factor)
+                            const float smoothingLerp = 0.55f; // 0 => no smoothing (immediate), <1 => smooth
+            cameraPos = glm::mix(cameraPos, safePos, smoothingLerp);
 
-        float sensitivity = 0.1f;
-        float dx = (xpos - lastX) * sensitivity;
-        float dy = (lastY - ypos) * sensitivity; // invert Y movement
+                    // Finally update camera rotation based on cursor
+                            double xpos, ypos;
+            glfwGetCursorPos(window, &xpos, &ypos);
+            static double lastX = xpos, lastY = ypos;
 
-        cameraRotation.y += dx; // yaw
-        cameraRotation.x += dy; // pitch
+                    float sensitivity = 0.1f;
+            float dx = (xpos - lastX) * sensitivity;
+            float dy = (lastY - ypos) * sensitivity; // invert Y movement
 
-        // Clamp pitch to avoid gimbal lock
-        if (cameraRotation.x > 89.0f) cameraRotation.x = 89.0f;
-        if (cameraRotation.x < -89.0f) cameraRotation.x = -89.0f;
+                    cameraRotation.y += dx; // yaw
+           cameraRotation.x += dy; // pitch
 
-        lastX = xpos;
-        lastY = ypos;
-    }
+                    // Clamp pitch to avoid gimbal lock
+                            if (cameraRotation.x > 89.0f) cameraRotation.x = 89.0f;
+           if (cameraRotation.x < -89.0f) cameraRotation.x = -89.0f;
+
+                    lastX = xpos;
+            lastY = ypos;
+        }
 }

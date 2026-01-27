@@ -52,16 +52,16 @@ namespace gl3 {
             float sprintSpeed = 50.0f;
             float crouchSpeed = 3.0f;
             float acceleration = 50.0f;
-            float airControl = 0.3f;
+            float airControl = 0.9f;
             float friction = 8.0f;
-            float airFriction = 1.0f;
+            float airFriction = 0.9f;
 
-            float jumpForce = 7.5f;
-            float gravity = 0.0f;
-            float terminalVelocity = 54.0f;
+            float jumpForce = 45.5f;
+            float gravity = 20.0f;
+            float terminalVelocity = 100.0f;
 
-            float coyoteTimeDuration = 0.15f;
-            float jumpBufferDuration = 0.1f;
+            float coyoteTimeDuration = 1.5f;
+            float jumpBufferDuration = 0.25f;
 
             float crouchHeightMultiplier = 0.6f;
         } settings;

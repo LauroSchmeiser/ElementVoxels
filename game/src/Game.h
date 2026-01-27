@@ -371,6 +371,8 @@ namespace gl3 {
         RayCastResult rayCastFromCamera(float maxDistance = 1000.0f);
         glm::vec3 calculateNormalAt(Chunk* chunk, const glm::ivec3& pos);
         void updateCamera();
+        float sampleDensityAtWorld(const glm::vec3 &worldPos) const;
+        glm::vec3 sampleNormalAtWorld(const glm::vec3 &worldPos) const;
         glm::vec2 getMouseDelta();
         glm::dvec2 previousMousePos = glm::dvec2(0.0, 0.0);
         bool hasPreviousMousePos = false;
