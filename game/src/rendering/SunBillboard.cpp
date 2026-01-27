@@ -90,7 +90,7 @@ void SunBillboard::render(const std::vector<SunInstance>& instances, const glm::
 
     // setup GL state for additive billboard rendering
     // setup GL state for additive billboard rendering
-    glDepthFunc(GL_ALWAYS);
+    glDepthFunc(GL_LESS);
     glBlendFunc(GL_ONE, GL_ONE); // additive glow
     glEnable(GL_BLEND);
     glEnable(GL_DEPTH_TEST);           // still test depth so the billboard is occluded by nearer geometry

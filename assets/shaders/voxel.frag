@@ -48,8 +48,8 @@ void main() {
 
     // convert accumulated light to reflected diffuse (energy-conserving Lambert)
     // diffuse reflectance = albedo / PI * incoming_radiance
-    vec3 diffuse = albedo * lightAccum;
 
+    vec3 diffuse = albedo * lightAccum;
 
     // ambient (very small)
     vec3 ambient = ambientColor * albedo;
@@ -57,14 +57,22 @@ void main() {
     // emission (self-emissive)
     vec3 emiss = emission * emissionColor;
 
+    vec3 hdr= vec3(0,0,0);
     // final HDR color
-    vec3 hdr = ambient + diffuse + emiss;
+    if(emission<=0)
+    {
+        hdr = ambient + diffuse + emiss;
+    }
+    else
+    {
+        hdr = ambient + emiss;
+    }
 
-    // simple Reinhard tone mapping
+    // simple Reinhard tone mapping (or remove if you want linear)
     vec3 color = hdr / (hdr + vec3(1.0));
 
-    FragColor = vec4(hdr, 1.0);
-    FragColor = vec4(diffuse,1.0);
+    FragColor = vec4(color, 1.0);
+    //FragColor = vec4(diffuse,1.0);
     // debug: show normals as color
     //FragColor = vec4(normalize(normal) * 0.5 + 0.5, 1.0);
 }

@@ -1170,7 +1170,7 @@ namespace gl3 {
         std::uniform_real_distribution<float> lavaDistColorG(0.2f, 0.5f);
         std::uniform_real_distribution<float> lavaDistColorB(0.0f, 0.1f);
 
-        int lavaCount = 2 + (rng() % 5);
+        int lavaCount = 4 + (rng() % 5);
         for (int i = 0; i < lavaCount; ++i) {
             WorldPlanet p;
             p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
@@ -1826,7 +1826,7 @@ namespace gl3 {
         voxelShader->setMatrix("model", glm::mat4(1.0f));
         voxelShader->setMatrix("mvp", pv);
         voxelShader->setVec3("viewPos", cameraPos);
-        voxelShader->setVec3("ambientColor", glm::vec3(0.2f));
+        voxelShader->setVec3("ambientColor", glm::vec3(0.002f));
 
 // or show signed N·L for the strongest light (index 0)
         if (DebugMode1) {
@@ -1834,6 +1834,11 @@ namespace gl3 {
         } else {
             voxelShader->setFloat("emission", 0.0f);
         }
+
+        std::vector<Chunk> emissiveChunks;
+        chunkManager->forEachEmissiveChunk([this, &emissiveChunks](Chunk *chunk) {
+                emissiveChunks.push_back(*chunk);
+        });
 
         //if(DebugMode1) {CpuTimer t6("ChunkLighting");}
         for (int cx = camCX - renderRadius; cx <= camCX + renderRadius; ++cx) {
@@ -1877,7 +1882,19 @@ namespace gl3 {
                     /*if((chunk->gpuCache.nearbyLights.size()>0)) {
                         std::cout << "lights exist for this chunk: "<< chunk->gpuCache.nearbyLights.size() << "\n";
                     }*/
-
+                    bool skip=false;
+                    for(int k=0; k<emissiveChunks.size();k++)
+                    {
+                        if(emissiveChunks.at(k).coord==chunk->coord)
+                        {
+                            skip=true;
+                            continue;
+                        }
+                    }
+                    if(skip)
+                    {
+                        continue;
+                    }
                     int numLights = std::min((int) chunk->gpuCache.nearbyLights.size(), MAX_LIGHTS);
                     voxelShader->setInt("numLights", numLights);
                     for (int i = 0; i < numLights; ++i) {
@@ -1921,6 +1938,7 @@ namespace gl3 {
         //std::cout << "Rendered " << renderedChunks << " chunks (Regenerated: " << meshRegens << ")\n";
     }
 
+
     void Game::renderAnimatedVoxels() {
         if (animatedVoxels.empty()) return;
 
@@ -1945,7 +1963,7 @@ namespace gl3 {
 
         instancedShader.setMatrix("pv", pv);
         instancedShader.setVec3("viewPos", cameraPos);
-        instancedShader.setVec3("ambientColor", glm::vec3(0.2f)); // match your chunk ambient
+        instancedShader.setVec3("ambientColor", glm::vec3(0.002f)); // match your chunk ambient
 
         // Choose lights for animated voxels:
         // Use mergedEmissiveLightPool (already kept up to date) and pick up to MAX_LIGHTS
@@ -2157,7 +2175,7 @@ namespace gl3 {
             // -------------------------
             voxelShader->use();
             voxelShader->setInt("numLights", 0); // not emissive — no lights needed
-            voxelShader->setVec3("ambientColor", glm::vec3(0.2f));
+            voxelShader->setVec3("ambientColor", glm::vec3(0.002f));
             voxelShader->setVec3("viewPos", cameraPos);
             voxelShader->setMatrix("model", glm::mat4(1.0f));
             voxelShader->setMatrix("mvp", pv);
