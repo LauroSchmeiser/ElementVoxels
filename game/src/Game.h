@@ -199,8 +199,33 @@ namespace gl3 {
 
 
         // Spell system methods
-        void castGravityWellSpell(const glm::vec3& center, float radius,
-                                  uint64_t targetMaterial, float strength);
+        void castSpellWithFormation(const glm::vec3& center, float radius,
+                                          uint64_t targetMaterial, float strength,
+                                          const FormationParams& baseFormationParams);
+
+        void adjustFormationForVolume(FormationParams& params, float volume);
+        glm::vec3 calculateFormationTarget(size_t index, size_t total,
+                                                 const FormationParams& params);
+
+        glm::vec3 calculateSphereDistribution(size_t index, size_t total,
+                                                    const FormationParams& params);
+
+        glm::vec3 calculatePlatformDistribution(size_t index, size_t total,
+                                                      const FormationParams& params);
+
+        glm::vec3 calculateWallDistribution(size_t index, size_t total,
+                                                  const FormationParams& params);
+
+        glm::vec3 calculateCubeDistribution(size_t index, size_t total,
+                                                  const FormationParams& params);
+
+        glm::vec3 calculateCylinderDistribution(size_t index, size_t total,
+                                                      const FormationParams& params);
+
+        glm::vec3 calculatePyramidDistribution(size_t index, size_t total,
+                                                     const FormationParams& params);
+
+        float haltonSequence(int index, int base);
 
         void updateSpells(float deltaTime);
 
@@ -213,10 +238,14 @@ namespace gl3 {
                                              float strength,
                                              uint8_t& outDominantType);
 
-        void createSpellFormation(const glm::vec3& center, float radius,
-                                  float strength, uint64_t material,
-                                  const glm::vec3& color,size_t collectedVoxels,
-                                  uint8_t dominantType);
+        void carveFormationWithSDF(const WorldPlanet& formation, uint64_t material,
+                                         const FormationParams& params);
+
+        void createSpellFormation(const glm::vec3& center,
+                                        const FormationParams& formationParams,
+                                        float strength, uint64_t material,
+                                        const glm::vec3& color, size_t collectedVoxels,
+                                        uint8_t dominantType);
 
 
         void createPartialFormation(const SpellEffect& spell, float completionRatio);
@@ -224,9 +253,24 @@ namespace gl3 {
         void createExteriorSmoothCrater(Chunk* chunk, const glm::ivec3& voxelPos,
                                         const glm::vec3& worldPos);
 
-        void carveFormationIntoChunks(const WorldPlanet& formation, uint64_t material);
-
         float randomFloat(float min, float max);
+
+        void castSpellSphere(const glm::vec3& center, float radius,
+                                   uint64_t material = 0, float strength = 1.0f);
+        void castSpellPlatform(const glm::vec3& center, const glm::vec3& normal,
+                                     float width, float depth, float thickness = 0.5f,
+                                     uint64_t material = 0, float strength = 1.0f);
+        void castSpellWall(const glm::vec3& center, const glm::vec3& normal,
+                                 float width, float height, float thickness = 0.5f,
+                                 uint64_t material = 0, float strength = 1.0f);
+        void castSpellCube(const glm::vec3& center, const glm::vec3& size,
+                                 uint64_t material = 0, float strength = 1.0f);
+        void castSpellCylinder(const glm::vec3& center, float radius, float height,
+                                     uint64_t material = 0, float strength = 1.0f);
+        void castSpellCustom(const glm::vec3& center, float radius,
+                                   uint64_t material, float strength,
+                                   SDFFunction customSDF, void* userData = nullptr);
+
 
         ////Debugging:
         void debugComputeShaderState();
@@ -344,7 +388,7 @@ namespace gl3 {
         //Marching-cubes Variables
         size_t maxVerts =
                 CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5 * 3; //Max amount of vertices marching cubes can create
-        const int MAX_CHUNKS_PER_FRAME = 20;
+        const int MAX_CHUNKS_PER_FRAME = 5;
         //std::vector<Chunk> dirtyChunks;
         //SSBOs for marching cubes:
         GLuint ssboVoxels = 0, ssboEdgeTable = 0, ssboTriTable = 0,
