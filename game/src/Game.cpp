@@ -283,14 +283,14 @@ namespace gl3 {
 
         // --- NEW: Compute optimal formation size based on collected voxels ---
         const size_t collected = visualVoxels.size();
-        constexpr float VOXEL_VOLUME = 1.0f;
+        // Convert voxel count -> world-volume (each voxel is a cube of VOXEL_SIZE^3)
+        const float voxelVolumeWorld = gl3::VOXEL_SIZE * gl3::VOXEL_SIZE * gl3::VOXEL_SIZE;
+        float desiredVolumeWorld = static_cast<float>(collected) * voxelVolumeWorld;
 
-        float desiredVolume = static_cast<float>(collected) * VOXEL_VOLUME;
-
-        // Adjust formation parameters based on collected volume
+        // Adjust formation parameters based on collected volume (in world^3)
         FormationParams adjustedFormation = baseFormationParams;
-        adjustFormationForVolume(adjustedFormation, desiredVolume);
-
+        adjustFormationForVolume(adjustedFormation, desiredVolumeWorld);
+        adjustedFormation.center = center;
         spell.formationParams = adjustedFormation; // Store adjusted params
         // ----------------------------------------------------------------
 
@@ -329,57 +329,55 @@ namespace gl3 {
     }
 
     // Helper function to adjust formation size based on collected volume
-    void Game::adjustFormationForVolume(FormationParams& params, float volume) {
-        const float packingEfficiency = 0.6f;
+    void Game::adjustFormationForVolume(FormationParams& params, float volume /*world^3*/) {
+        const float packingEfficiency = 0.7f;
         constexpr float PI = 3.14159265358979323846f;
+
+        const float minWorldDim = gl3::VOXEL_SIZE * 0.5f; // don't shrink below half a voxel
+        const float maxScaleFactor = 10.0f; // safety cap if you want
 
         switch(params.type) {
             case FormationType::SPHERE: {
-                float computedRadius = std::cbrt((3.0f / (4.0f * PI)) *
-                                                 (volume / packingEfficiency));
-                float maxRadius = std::max(1.0f, params.radius * 0.75f);
-                float minRadius = 0.4f;
+                float computedRadius = std::cbrt((3.0f / (4.0f * PI)) * (volume / packingEfficiency));
+                float maxRadius = std::max(minWorldDim, params.radius * 0.75f);
+                float minRadius = minWorldDim;
                 params.radius = glm::clamp(computedRadius, minRadius, maxRadius);
                 break;
             }
             case FormationType::PLATFORM: {
-                // Keep thickness constant, adjust width/depth
+                // Keep thickness (sizeY) constant (world units), adjust width/depth (world units)
                 float area = volume / (params.sizeY * packingEfficiency);
-                float side = std::sqrt(area);
-                params.sizeX = side;
-                params.sizeZ = side;
+                float side = std::sqrt(glm::max(0.0f, area));
+                params.sizeX = glm::max(side, minWorldDim);
+                params.sizeZ = glm::max(side, minWorldDim);
                 break;
             }
             case FormationType::WALL: {
-                // Keep thickness constant, adjust width/height
+                // Keep thickness (sizeZ) constant (world units), adjust width/height (world units)
                 float area = volume / (params.sizeZ * packingEfficiency);
-                params.sizeX = std::sqrt(area);
-                params.sizeY = params.sizeX * 0.75f; // Maintain aspect ratio
+                float side = std::sqrt(glm::max(0.0f, area));
+                params.sizeX = glm::max(side, minWorldDim);
+                params.sizeY = glm::max(params.sizeX * 0.75f, minWorldDim);
                 break;
             }
             case FormationType::CUBE: {
-                float side = std::cbrt(volume / packingEfficiency);
-                params.sizeX = side;
-                params.sizeY = side;
-                params.sizeZ = side;
+                float side = std::cbrt(glm::max(0.0f, volume / packingEfficiency));
+                params.sizeX = params.sizeY = params.sizeZ = glm::max(side, minWorldDim);
                 break;
             }
             case FormationType::CYLINDER: {
-                // Keep height proportional to radius
-                float computedRadius = std::cbrt((2.0f / (3.0f * PI)) *
-                                                 (volume / packingEfficiency));
-                params.radius = computedRadius;
-                params.sizeY = computedRadius * 2.0f; // Height is 2x radius
+                float computedRadius = std::cbrt((2.0f / (3.0f * PI)) * (volume / packingEfficiency));
+                params.radius = glm::max(computedRadius, minWorldDim);
+                params.sizeY = glm::max(params.radius * 2.0f, minWorldDim);
                 break;
             }
             case FormationType::PYRAMID: {
-                float side = std::cbrt((3.0f * volume) / (packingEfficiency * params.sizeY));
-                params.sizeX = side;
-                params.sizeZ = side;
+                float side = std::cbrt((3.0f * volume) / (packingEfficiency * params.sizeY + 1e-6f));
+                params.sizeX = glm::max(side, minWorldDim);
+                params.sizeZ = glm::max(side, minWorldDim);
                 break;
             }
             default:
-                // For custom shapes, don't auto-adjust
                 break;
         }
     }
@@ -876,18 +874,26 @@ namespace gl3 {
         newFormation.type = dominantType;
 
         // Use formation's bounding radius
-        float effectiveRadius = formationParams.getBoundingRadius() * VOXEL_SIZE;
+        float effectiveRadius = formationParams.getBoundingRadius();
         newFormation.radius = effectiveRadius;
 
-        // Pre-load chunks (same as before, but using formation bounding radius)
+        // Pre-load chunks using effectiveRadius (world units)
         float preloadRadius = effectiveRadius;
 
+        float chunkWorldSize = gl3::CHUNK_SIZE * gl3::VOXEL_SIZE;
         int minCX = worldToChunk(center.x - preloadRadius);
         int maxCX = worldToChunk(center.x + preloadRadius);
         int minCY = worldToChunk(center.y - preloadRadius);
         int maxCY = worldToChunk(center.y + preloadRadius);
         int minCZ = worldToChunk(center.z - preloadRadius);
         int maxCZ = worldToChunk(center.z + preloadRadius);
+
+        std::cout << "createSpellFormation: effectiveRadius=" << effectiveRadius
+                  << " (chunkWorldSize=" << chunkWorldSize << ")"
+                  << " chunksX=[" << minCX << "," << maxCX << "]"
+                  << " chunksY=[" << minCY << "," << maxCY << "]"
+                  << " chunksZ=[" << minCZ << "," << maxCZ << "]"
+                  << " center=(" << center.x << "," << center.y << "," << center.z << ")\n";
 
         // Load all chunks first (force create if missing)
         for (int cx = minCX; cx <= maxCX; ++cx) {
@@ -908,8 +914,11 @@ namespace gl3 {
                 }
             }
         }
-        // Now carve the formation using its SDF
-        carveFormationWithSDF(newFormation, material, formationParams);
+        FormationParams paramsCopy = formationParams;
+        paramsCopy.center = center;
+
+        // Now call carve using paramsCopy so the SDF uses the correct world-space center:
+        carveFormationWithSDF(newFormation, material, paramsCopy);
 
         // Force immediate mesh regeneration for affected chunks
         int regenMinCX = worldToChunk(center.x - effectiveRadius);
@@ -942,6 +951,13 @@ namespace gl3 {
     void Game::carveFormationWithSDF(const WorldPlanet& formation, uint64_t material,
                                      const FormationParams& params) {
         float boundingRadius = params.getBoundingRadius();
+        std::cout << "carveFormationWithSDF: boundingRadius=" << boundingRadius
+                  << " center=(" << formation.worldPos.x << "," << formation.worldPos.y << "," << formation.worldPos.z << ")\n";
+// sample a couple of points
+        float centerVal = params.evaluate(formation.worldPos);
+        float atRadiusVal = params.evaluate(formation.worldPos + glm::vec3(boundingRadius,0,0));
+        std::cout << " SDF(center)=" << centerVal << " SDF(center+radius)=" << atRadiusVal << "\n";
+
 
         // Determine which chunks this formation affects
         int minCX = worldToChunk(formation.worldPos.x - boundingRadius);
@@ -1214,7 +1230,8 @@ namespace gl3 {
                              uint64_t material, float strength) {
         FormationParams params = FormationParams::Wall(center, normal,
                                                        width, height, thickness);
-        float searchRadius = glm::max(width, height) * 10.5f*VOXEL_SIZE;
+        float searchRadius = glm::max(width, height) * 4.5f*VOXEL_SIZE;
+
         castSpellWithFormation(center, searchRadius, material, strength, params);
     }
 
@@ -1948,13 +1965,13 @@ namespace gl3 {
 
             // Wall dimensions (tune these values)
             float wallWidth = 10.0f*VOXEL_SIZE;    // Horizontal width
-            float wallHeight = 5.0f*VOXEL_SIZE;   // Vertical height
-            float wallThickness = 5.0f*VOXEL_SIZE; // How thick the wall is
+            float wallHeight = 6.0f*VOXEL_SIZE;   // Vertical height
+            float wallThickness = 3.0f*VOXEL_SIZE; // How thick the wall is
 
             // Cast the wall spell
             castSpellWall(spellCenter, cameraFront,
                           wallWidth, wallHeight, wallThickness,
-                          0, 20.0f*VOXEL_SIZE);
+                          0, 4.0f*VOXEL_SIZE);
         }
 
             // Character movement - perfect for your controller

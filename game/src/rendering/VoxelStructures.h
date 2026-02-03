@@ -233,50 +233,56 @@ namespace gl3 {
             return radius - glm::length(p);
         }
 
+        // platformSDF (negated to be positive inside)
         float platformSDF(const glm::vec3 &p) const {
-            // Rotate point to align with platform orientation
             glm::mat3 rotation = buildRotationMatrix(normal, up);
             glm::vec3 rotated = rotation * p;
 
-            // Platform is essentially a flattened box
             glm::vec3 halfSize = glm::vec3(sizeX, sizeY, sizeZ) * 0.5f;
             glm::vec3 q = glm::abs(rotated) - halfSize;
-            return glm::length(glm::max(q, 0.0f)) + glm::min(glm::max(q.x, glm::max(q.y, q.z)), 0.0f);
+            float outside = glm::length(glm::max(q, glm::vec3(0.0f)));
+            float inside = glm::min(glm::max(q.x, glm::max(q.y, q.z)), 0.0f);
+            // NEGATE: want positive inside (consistent with sphereSDF)
+            return -(outside + inside);
         }
 
         float wallSDF(const glm::vec3 &p) const {
-            // Rotate point to align with wall orientation
             glm::mat3 rotation = buildRotationMatrix(normal, up);
             glm::vec3 rotated = rotation * p;
 
-            // Wall is a thin box
             glm::vec3 halfSize = glm::vec3(sizeX, sizeY, sizeZ) * 0.5f;
             glm::vec3 q = glm::abs(rotated) - halfSize;
-            return glm::length(glm::max(q, 0.0f)) + glm::min(glm::max(q.x, glm::max(q.y, q.z)), 0.0f);
+            float outside = glm::length(glm::max(q, glm::vec3(0.0f)));
+            float inside = glm::min(glm::max(q.x, glm::max(q.y, q.z)), 0.0f);
+            return -(outside + inside);
         }
 
         float cubeSDF(const glm::vec3 &p) const {
             glm::vec3 halfSize = glm::vec3(sizeX, sizeY, sizeZ) * 0.5f;
             glm::vec3 q = glm::abs(p) - halfSize;
-            return glm::length(glm::max(q, 0.0f)) + glm::min(glm::max(q.x, glm::max(q.y, q.z)), 0.0f);
+            float outside = glm::length(glm::max(q, glm::vec3(0.0f)));
+            float inside = glm::min(glm::max(q.x, glm::max(q.y, q.z)), 0.0f);
+            return -(outside + inside);
         }
 
         float pyramidSDF(const glm::vec3 &p) const {
-            // Simple pyramid SDF (oriented along Y axis)
+            // Original implementation produced negative-inside convention — invert result
             float h = sizeY;
             float halfBase = sizeX * 0.5f;
 
             glm::vec2 q = glm::vec2(glm::length(glm::vec2(p.x, p.z)), p.y);
             float a = q.x - glm::min(q.x, (h - q.y) * (halfBase / h));
             float b = glm::max(q.x + q.y - h, 0.0f);
-            return glm::sqrt(a * a + b * b) * glm::sign(q.x - halfBase);
+            float val = glm::sqrt(a * a + b * b) * glm::sign(q.x - halfBase);
+            return -val; // negate so inside -> positive
         }
 
         float cylinderSDF(const glm::vec3 &p) const {
-            // Vertical cylinder
             glm::vec2 d = glm::abs(glm::vec2(glm::length(glm::vec2(p.x, p.z)), p.y)) -
                           glm::vec2(radius, sizeY * 0.5f);
-            return glm::min(glm::max(d.x, d.y), 0.0f) + glm::length(glm::max(d, 0.0f));
+            float outside = glm::length(glm::max(d, glm::vec2(0.0f)));
+            float inside = glm::min(glm::max(d.x, d.y), 0.0f);
+            return -(inside + outside);
         }
 
         glm::mat3 buildRotationMatrix(const glm::vec3 &forward, const glm::vec3 &up) const {
