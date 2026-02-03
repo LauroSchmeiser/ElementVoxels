@@ -303,7 +303,7 @@ namespace gl3 {
             v.targetPos = calculateFormationTarget(i, visualVoxels.size(),
                                                    adjustedFormation);
 
-            v.animationSpeed = strength * 1.5f;
+            v.animationSpeed = strength * 3.5f;
             v.isAnimating = true;
             v.hasArrived = false;
         }
@@ -333,8 +333,8 @@ namespace gl3 {
         const float packingEfficiency = 0.7f;
         constexpr float PI = 3.14159265358979323846f;
 
-        const float minWorldDim = gl3::VOXEL_SIZE * 0.5f; // don't shrink below half a voxel
-        const float maxScaleFactor = 10.0f; // safety cap if you want
+        const float minWorldDim = gl3::VOXEL_SIZE * 0.15f; // don't shrink below half a voxel
+        const float maxScaleFactor = 20.0f; // safety cap if you want
 
         switch(params.type) {
             case FormationType::SPHERE: {
@@ -1221,7 +1221,7 @@ namespace gl3 {
                                  uint64_t material, float strength) {
         FormationParams params = FormationParams::Platform(center, normal,
                                                            width, depth, thickness);
-        float searchRadius = glm::max(width, depth) * 0.75f;
+        float searchRadius = 10*4.5f*VOXEL_SIZE;
         castSpellWithFormation(center, searchRadius, material, strength, params);
     }
 
@@ -1230,7 +1230,7 @@ namespace gl3 {
                              uint64_t material, float strength) {
         FormationParams params = FormationParams::Wall(center, normal,
                                                        width, height, thickness);
-        float searchRadius = glm::max(width, height) * 4.5f*VOXEL_SIZE;
+        float searchRadius =  strength*4.5f*VOXEL_SIZE;
 
         castSpellWithFormation(center, searchRadius, material, strength, params);
     }
@@ -1432,7 +1432,7 @@ namespace gl3 {
                                 GLFW_KEY_W, GLFW_KEY_UP, GLFW_KEY_S, GLFW_KEY_DOWN,
                                 GLFW_KEY_A, GLFW_KEY_LEFT, GLFW_KEY_D, GLFW_KEY_RIGHT,
                                 GLFW_KEY_SPACE, GLFW_KEY_LEFT_SHIFT, GLFW_KEY_LEFT_CONTROL,
-                                GLFW_KEY_TAB, GLFW_KEY_ESCAPE,GLFW_KEY_E,GLFW_KEY_R
+                                GLFW_KEY_TAB, GLFW_KEY_ESCAPE,GLFW_KEY_E,GLFW_KEY_R,GLFW_KEY_F
                         });
 
         // Character movement
@@ -1449,6 +1449,7 @@ namespace gl3 {
         actions.addAction("Escape", {GLFW_KEY_ESCAPE});
         actions.addAction("CastSphere", {GLFW_KEY_E});
         actions.addAction("CastWall", {GLFW_KEY_R});
+        actions.addAction("AirReset", {GLFW_KEY_F});
 
     }
 
@@ -1958,21 +1959,36 @@ namespace gl3 {
             std::cout << "Wall Spell Triggered" << "\n";
             RayCastResult hit = rayCastFromCamera(250.0f);
             glm::vec3 spellCenter = hit.hit ? hit.hitPosition :
-                                    (cameraPos + getCameraFront() * 125.0f);
+                                    (cameraPos + getCameraFront() * 10.0f);
 
             // Get camera direction for wall orientation
             glm::vec3 cameraFront = getCameraFront();
 
             // Wall dimensions (tune these values)
-            float wallWidth = 10.0f*VOXEL_SIZE;    // Horizontal width
-            float wallHeight = 6.0f*VOXEL_SIZE;   // Vertical height
+            float wallWidth = 1.0f*VOXEL_SIZE;    // Horizontal width
+            float wallHeight = 0.5f*VOXEL_SIZE;   // Vertical height
+            float wallThickness = 2.0f*VOXEL_SIZE; // How thick the wall is
+
+            // Cast the wall spell
+            castSpellWall(spellCenter, glm::vec3(0,0,1),
+                          wallWidth, wallHeight, wallThickness,
+                          0, 2.0f*VOXEL_SIZE);
+        }
+        if (actions["AirReset"].wasJustPressed) {
+            std::cout << "Platform Spell Triggered" << "\n";
+            glm::vec3 spellCenter =(cameraPos + glm::vec3(0,-1,0) * 20.0f*VOXEL_SIZE);
+
+            // Wall dimensions (tune these values)
+            float wallWidth = 0.05f*VOXEL_SIZE;    // Horizontal width
+            float wallHeight = 0.05f*VOXEL_SIZE;   // Vertical height
             float wallThickness = 3.0f*VOXEL_SIZE; // How thick the wall is
 
             // Cast the wall spell
-            castSpellWall(spellCenter, cameraFront,
+            castSpellWall(spellCenter, glm::vec3(0,-1,0),
                           wallWidth, wallHeight, wallThickness,
-                          0, 4.0f*VOXEL_SIZE);
+                          0, 7.0f*VOXEL_SIZE);
         }
+
 
             // Character movement - perfect for your controller
 
