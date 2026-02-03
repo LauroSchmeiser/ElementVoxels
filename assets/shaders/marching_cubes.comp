@@ -95,23 +95,28 @@ vec3 vertexInterpolate(vec3 p1, vec3 p2, float d1, float d2) {
 
 
 // approximate normal by central differences on density samples
-vec3 computeNormal(vec3 worldPos) {
-    // convert world pos to voxel space (floating index)
+vec3 computeNormal(vec3 worldPos)
+{
+    // First check if we're near a chunk border
     vec3 inv = vec3(1.0 / voxelSize);
     vec3 idxF = (worldPos - gridOrigin) * inv;
-
     ivec3 p = ivec3(floor(idxF));
-    // sample neighbor densities (clamped)
-    float dX1 = sampleDensity(clamp(p + ivec3(1,0,0), ivec3(0), voxelGridDim - 1));
-    float dX0 = sampleDensity(clamp(p + ivec3(-1,0,0), ivec3(0), voxelGridDim - 1));
-    float dY1 = sampleDensity(clamp(p + ivec3(0,1,0), ivec3(0), voxelGridDim - 1));
-    float dY0 = sampleDensity(clamp(p + ivec3(0,-1,0), ivec3(0), voxelGridDim - 1));
-    float dZ1 = sampleDensity(clamp(p + ivec3(0,0,1), ivec3(0), voxelGridDim - 1));
-    float dZ0 = sampleDensity(clamp(p + ivec3(0,0,-1), ivec3(0), voxelGridDim - 1));
+
+    // IMPORTANT: Since we uploaded with border,
+    // p should now be in range 1..(CHUNK_SIZE-1) for interior,
+    // and we have valid data at borders too
+
+    // Sample with simple offset - no clamping needed if data is valid
+    float dX1 = sampleDensity(p + ivec3(1, 0, 0));
+    float dX0 = sampleDensity(p + ivec3(-1, 0, 0));
+    float dY1 = sampleDensity(p + ivec3(0, 1, 0));
+    float dY0 = sampleDensity(p + ivec3(0, -1, 0));
+    float dZ1 = sampleDensity(p + ivec3(0, 0, 1));
+    float dZ0 = sampleDensity(p + ivec3(0, 0, -1));
 
     vec3 g = vec3(dX1 - dX0, dY1 - dY0, dZ1 - dZ0);
     float len = length(g);
-    // return outward normal; you may flip sign if you prefer
+    // return outward normal
     return (len > 0.0001) ? -normalize(g) : vec3(0.0, 1.0, 0.0);
 }
 

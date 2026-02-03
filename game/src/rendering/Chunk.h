@@ -8,7 +8,7 @@
 namespace gl3 {
     struct Chunk {
         // Core voxel data
-        Voxel voxels[CHUNK_SIZE + 1][CHUNK_SIZE + 1][CHUNK_SIZE + 1];
+        Voxel voxels[CHUNK_SIZE+1][CHUNK_SIZE+1][CHUNK_SIZE+1];
         // Lighting data
         std::vector<VoxelLight> emissiveLights;
         bool lightingDirty = true;

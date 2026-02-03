@@ -2678,28 +2678,89 @@ namespace gl3 {
 
 // debug version: if doColorByDensity==true, set per-voxel color from density (visualize SDF)
     void Game::uploadVoxelChunk(const Chunk &chunk, const glm::vec3 *overrideColor) {
-        const int localDIM = DIM; // use class member
+        const int localDIM = DIM; // Should be CHUNK_SIZE + 2 for padding
         const size_t total = size_t(localDIM) * localDIM * localDIM;
         std::vector<CpuVoxel> voxels;
         voxels.resize(total);
 
-        // Copy samples [0 .. DIM-1] from chunk.voxels (Chunk stores CHUNK_SIZE+2 alloc, so this is safe).
-        for (int x = 0; x < localDIM; ++x) {
-            for (int y = 0; y < localDIM; ++y) {
-                for (int z = 0; z < localDIM; ++z) {
-                    int idx = x + y * localDIM + z * localDIM * localDIM;
-                    const auto &src = chunk.voxels[x][y][z];
-                    voxels[idx].density = src.density;
+        // We need to include a 1-voxel border from neighbors
+        // Let's assume DIM = CHUNK_SIZE + 2 (one extra voxel on each side)
+        for (int x = -1; x <= CHUNK_SIZE; ++x) {  // -1 to CHUNK_SIZE inclusive
+            for (int y = -1; y <= CHUNK_SIZE; ++y) {
+                for (int z = -1; z <= CHUNK_SIZE; ++z) {
+                    // Map to SSBO index (0..localDIM-1)
+                    int idxX = x + 1;
+                    int idxY = y + 1;
+                    int idxZ = z + 1;
+                    int idx = idxX + idxY * localDIM + idxZ * localDIM * localDIM;
+
+                    const Voxel* srcVoxel = nullptr;
+
+                    // Check if we need to sample from neighbor
+                    if (x == -1 || x == CHUNK_SIZE ||
+                        y == -1 || y == CHUNK_SIZE ||
+                        z == -1 || z == CHUNK_SIZE) {
+
+                        // Get neighbor chunk
+                        ChunkCoord neighborCoord = chunk.coord;
+                        int localX = x;
+                        int localY = y;
+                        int localZ = z;
+
+                        // Adjust for each axis
+                        if (x == -1) {
+                            neighborCoord.x -= 1;
+                            localX = CHUNK_SIZE - 1;
+                        } else if (x == CHUNK_SIZE) {
+                            neighborCoord.x += 1;
+                            localX = 0;
+                        }
+
+                        if (y == -1) {
+                            neighborCoord.y -= 1;
+                            localY = CHUNK_SIZE - 1;
+                        } else if (y == CHUNK_SIZE) {
+                            neighborCoord.y += 1;
+                            localY = 0;
+                        }
+
+                        if (z == -1) {
+                            neighborCoord.z -= 1;
+                            localZ = CHUNK_SIZE - 1;
+                        } else if (z == CHUNK_SIZE) {
+                            neighborCoord.z += 1;
+                            localZ = 0;
+                        }
+
+                        Chunk* neighbor = chunkManager->getChunk(neighborCoord);
+                        if (neighbor && localX >= 0 && localX <= CHUNK_SIZE &&
+                            localY >= 0 && localY <= CHUNK_SIZE &&
+                            localZ >= 0 && localZ <= CHUNK_SIZE) {
+                            srcVoxel = &neighbor->voxels[localX][localY][localZ];
+                        }
+                    }
+
+                    // If no neighbor data, use current chunk or default
+                    if (!srcVoxel) {
+                        // Clamp to valid range for current chunk
+                        int clampX = glm::clamp(x, 0, CHUNK_SIZE);
+                        int clampY = glm::clamp(y, 0, CHUNK_SIZE);
+                        int clampZ = glm::clamp(z, 0, CHUNK_SIZE);
+                        srcVoxel = &chunk.voxels[clampX][clampY][clampZ];
+                    }
+
+                    // Copy data
+                    voxels[idx].density = srcVoxel->density;
                     if (overrideColor) {
                         voxels[idx].color = glm::vec4(*overrideColor, 1.0f);
                     } else {
-                        voxels[idx].color = glm::vec4(src.color, 1.0f);
+                        voxels[idx].color = glm::vec4(srcVoxel->color, 1.0f);
                     }
                 }
             }
         }
 
-        // Upload to SSBO binding 0 (ssboVoxels was created with size voxelCount * sizeof(CpuVoxel))
+        // Upload to SSBO
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboVoxels);
         glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, voxels.size() * sizeof(CpuVoxel), voxels.data());
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
