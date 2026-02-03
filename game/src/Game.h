@@ -19,6 +19,7 @@
 #include "rendering/MultiGridChunkManager.h"
 #include "Input/InputActionMap.h"
 #include "CharacterController.h"
+#include "physics/SpellPhysicsManager.h"
 
 namespace gl3 {
     class Game {
@@ -298,6 +299,9 @@ namespace gl3 {
         //Physics:
         void updatePhysics();
 
+        void applyImpactAtPosition(const glm::vec3 &worldPos, float radius, float impulse, RigidBodyPayload* payload);
+
+
         void updateDeltaTime();
 
         //Lighting:
@@ -371,6 +375,8 @@ namespace gl3 {
         std::vector<gl3::VoxelLight> mergedEmissiveLightPool;
         static constexpr int LIGHT_UPDATE_INTERVAL = 15; // Update lights every 30 frames
         robin_hood::unordered_set<uint32_t> usedLightIDs;
+
+        std::unique_ptr<SpellPhysicsManager> spellPhysics;
 
 
         ////Camera-Variables:

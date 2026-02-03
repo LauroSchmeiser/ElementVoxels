@@ -7,6 +7,7 @@
 #include "rendering/Shader.h"
 #include "rendering/marchingTables.h"
 #include "rendering/SunBillboard.h"
+#include "physics/SpellPhysicsManager.h"
 
 
 namespace gl3 {
@@ -97,6 +98,14 @@ namespace gl3 {
 
         audio.init();
         audio.setGlobalVolume(0.1f);
+
+        spellPhysics = std::make_unique<SpellPhysicsManager>();
+        spellPhysics->init([this](const glm::vec3 &pos, float damageRadius, float impulse, RigidBodyPayload* payload) {
+                    // Called on physics tick when a collision exceeds threshold.
+                    // Forward to Game method on the main thread. We're already on the main thread in your single-threaded game loop,
+                    // but if you ever run Bullet on another thread dispatch this to the main thread.
+                    this->applyImpactAtPosition(pos, damageRadius, impulse, payload);
+        });
     }
 
 
@@ -943,6 +952,63 @@ namespace gl3 {
                 }
             }
         }
+        // after mesh regen loops and before final std::cout:
+        // Build triangle vertex list for newly generated chunks (to create physics body)
+        std::vector<glm::vec3> triangleVerts; triangleVerts.reserve(1024);
+
+        for (int cx = regenMinCX; cx <= regenMaxCX; ++cx) {
+            for (int cy = regenMinCY; cy <= regenMaxCY; ++cy) {
+                for (int cz = regenMinCZ; cz <= regenMaxCZ; ++cz) {
+                    ChunkCoord coord{cx, cy, cz};
+                    Chunk* chunk = chunkManager->getChunk(coord);
+                    if (!chunk) continue;
+                    if (!chunk->gpuCache.isValid) continue;
+                    if (chunk->gpuCache.vertexCount == 0) continue;
+
+                    // Map triangle SSBO and read OutVertex positions
+                    glBindBuffer(GL_SHADER_STORAGE_BUFFER, chunk->gpuCache.triangleSSBO);
+                    size_t vcount = chunk->gpuCache.vertexCount;
+                    size_t byteSize = vcount * sizeof(OutVertex);
+                    void* mapPtr = nullptr;
+                    if (byteSize > 0) {
+                        mapPtr = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, byteSize, GL_MAP_READ_BIT);
+                    }
+                    if (mapPtr) {
+                        OutVertex* ov = reinterpret_cast<OutVertex*>(mapPtr);
+                        for (size_t vi = 0; vi < vcount; ++vi) {
+                            glm::vec4 p = ov[vi].pos;
+                            triangleVerts.emplace_back(p.x, p.y, p.z);
+                        }
+                        glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+                    }
+                    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+                }
+            }
+        }
+
+        // With this corrected and safe check:
+        if (!triangleVerts.empty() && effectiveRadius > 0.01f /* has size */ && collectedVoxels > 0) {
+            // build unique vertex list then create rigidbody
+            auto uniqueVerts = SpellPhysicsManager::buildUniqueVertexList(triangleVerts);
+
+            // compute mass from collected voxels (rough)
+            float voxelVolume = VOXEL_SIZE * VOXEL_SIZE * VOXEL_SIZE;
+            float mass = static_cast<float>(collectedVoxels) * voxelVolume * 0.1f; // density multiplier tune
+
+            btTransform startTrans; startTrans.setIdentity();
+            startTrans.setOrigin(btVector3(center.x, center.y, center.z));
+
+            if (spellPhysics && !uniqueVerts.empty()) {
+                btRigidBody* rb = spellPhysics->createRigidBodyFromVertices(uniqueVerts, mass, startTrans, /*formationID=*/0, /*userData=*/nullptr, /*threshold=*/1.0f);
+                if (rb) {
+                    // Give initial velocity away from player for sphere spells
+                    glm::vec3 dir = glm::normalize(center - cameraPos);
+                    if (glm::length(dir) < 1e-6f) dir = getCameraFront();
+                    float speed = glm::clamp(strength * 8.0f, 2.0f, 120.0f); // tune
+                    rb->setLinearVelocity(btVector3(dir.x * speed, dir.y * speed, dir.z * speed));
+                }
+            }
+        }
         std::cout << "createSpellFormation: collected=" << collectedVoxels
                   << " => formation type=" << static_cast<int>(formationParams.type)
                   << ", radius=" << effectiveRadius << "\n";
@@ -1657,8 +1723,73 @@ namespace gl3 {
             characterController.update(deltaTime, moveInput, jump, sprint, crouch, mouseDelta, cameraFront, cameraRight);
 
             accumulator -= fixedTimeStep;
+            if (spellPhysics) {
+                spellPhysics->stepSimulation(deltaTime, 2, 1.0f/120.0f); // small substeps
+            }
         }
     }
+
+    void Game::applyImpactAtPosition(const glm::vec3 &worldPos, float radius, float impulse, RigidBodyPayload* payload) {
+        // tune these
+        const float damageScale = glm::clamp(impulse * 0.02f, 0.5f, 30.0f); // larger impulse -> stronger carving
+        const float maxRadius = glm::max(radius, damageScale);
+        const float radiusSq = maxRadius * maxRadius;
+
+        // Determine affected chunks in world-space (chunkWorldSize = CHUNK_SIZE * VOXEL_SIZE)
+        float chunkWorldSize = CHUNK_SIZE * VOXEL_SIZE;
+        int minCX = worldToChunk(worldPos.x - maxRadius);
+        int maxCX = worldToChunk(worldPos.x + maxRadius);
+        int minCY = worldToChunk(worldPos.y - maxRadius);
+        int maxCY = worldToChunk(worldPos.y + maxRadius);
+        int minCZ = worldToChunk(worldPos.z - maxRadius);
+        int maxCZ = worldToChunk(worldPos.z + maxRadius);
+
+        for (int cx = minCX; cx <= maxCX; ++cx) {
+            for (int cy = minCY; cy <= maxCY; ++cy) {
+                for (int cz = minCZ; cz <= maxCZ; ++cz) {
+                    ChunkCoord coord{cx, cy, cz};
+                    Chunk* chunk = chunkManager->getChunk(coord);
+                    if (!chunk) continue;
+
+                    glm::vec3 chunkMin = getChunkMin(coord);
+
+                    bool touched = false;
+                    // iterate chunk-local voxels
+                    for (int lx = 0; lx <= CHUNK_SIZE; ++lx) {
+                        for (int ly = 0; ly <= CHUNK_SIZE; ++ly) {
+                            for (int lz = 0; lz <= CHUNK_SIZE; ++lz) {
+                                glm::vec3 vWorld = chunkMin + glm::vec3((float)lx, (float)ly, (float)lz) * VOXEL_SIZE;
+                                glm::vec3 d = vWorld - worldPos;
+                                float distSq = glm::dot(d,d);
+                                if (distSq > radiusSq) continue;
+                                float dist = std::sqrt(distSq);
+                                float fall = 1.0f - (dist / maxRadius); // 1 at center -> 0 at edge
+                                float carveAmount = damageScale * fall;
+                                // reduce density
+                                float &density = chunk->voxels[lx][ly][lz].density;
+                                density -= carveAmount;
+                                if (density < 0.0f) {
+                                    chunk->voxels[lx][ly][lz].type = 0; // air
+                                }
+                                touched = true;
+                            }
+                        }
+                    }
+
+                    if (touched) {
+                        chunk->meshDirty = true;
+                        chunk->lightingDirty = true;
+                        markChunkModified(coord);
+                    }
+                }
+            }
+        }
+
+        // If you want visual effects or fragmentation hooks you can use payload->formationID/userData here
+        std::cout << "applyImpactAtPosition: hit at " << worldPos.x << "," << worldPos.y << "," << worldPos.z
+                  << " radius=" << maxRadius << " impulse=" << impulse << "\n";
+    }
+
     void Game::updateDeltaTime() {
         float frameTime = glfwGetTime();
         deltaTime = frameTime - lastFrameTime;
