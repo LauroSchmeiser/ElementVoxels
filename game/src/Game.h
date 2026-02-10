@@ -17,6 +17,9 @@
 #include "rendering/Chunk.h"
 #include "../robin_hood.h"
 #include "rendering/MultiGridChunkManager.h"
+#include "Input/InputActionMap.h"
+#include "CharacterController.h"
+#include "physics/SpellPhysicsManager.h"
 
 namespace gl3 {
     class Game {
@@ -41,8 +44,10 @@ namespace gl3 {
 
         bool hasSolidVoxels(const gl3::Chunk &chunk);
 
-        int worldToChunk(float worldPos) const;
+    public:
+        static int worldToChunk(float worldPos);
 
+    private:
         void markChunkModified(const ChunkCoord &coord);
 
         void unloadChunk(const ChunkCoord &coord);
@@ -53,7 +58,7 @@ namespace gl3 {
 
         bool isChunkVisible(const ChunkCoord &coord) const;
 
-////Structs::
+        ////Structs::
         struct Particle {
             glm::vec3 position;
             glm::vec3 velocity;
@@ -195,30 +200,78 @@ namespace gl3 {
 
 
         // Spell system methods
-        void castGravityWellSpell(const glm::vec3& center, float radius,
-                                  uint64_t targetMaterial, float strength);
+        void castSpellWithFormation(const glm::vec3& center, float radius,
+                                          uint64_t targetMaterial, float strength,
+                                          const FormationParams& baseFormationParams);
+
+        void adjustFormationForVolume(FormationParams& params, float volume);
+        glm::vec3 calculateFormationTarget(size_t index, size_t total,
+                                                 const FormationParams& params);
+
+        glm::vec3 calculateSphereDistribution(size_t index, size_t total,
+                                                    const FormationParams& params);
+
+        glm::vec3 calculatePlatformDistribution(size_t index, size_t total,
+                                                      const FormationParams& params);
+
+        glm::vec3 calculateWallDistribution(size_t index, size_t total,
+                                                  const FormationParams& params);
+
+        glm::vec3 calculateCubeDistribution(size_t index, size_t total,
+                                                  const FormationParams& params);
+
+        glm::vec3 calculateCylinderDistribution(size_t index, size_t total,
+                                                      const FormationParams& params);
+
+        glm::vec3 calculatePyramidDistribution(size_t index, size_t total,
+                                                     const FormationParams& params);
+
+        float haltonSequence(int index, int base);
 
         void updateSpells(float deltaTime);
 
         void cleanupFinishedSpells();
 
-        void findNearbyVoxelsForVisual(const glm::vec3& center, float radius,
-                                       uint64_t targetMaterial,
-                                       std::vector<AnimatedVoxel>& results,
-                                       float strength);
 
-        void createSpellFormation(const glm::vec3& center, float radius,
-                                  float strength, uint64_t material,
-                                  const glm::vec3& color,size_t collectedVoxels);
+        void findNearbyVoxelsForVisual(const glm::vec3& center, float radius,
+                                             uint64_t targetMaterial,
+                                             std::vector<AnimatedVoxel>& results,
+                                             float strength,
+                                             uint8_t& outDominantType);
+
+        void carveFormationWithSDF(const WorldPlanet& formation, uint64_t material,
+                                         const FormationParams& params);
+
+        void createSpellFormation(const glm::vec3& center,
+                                        const FormationParams& formationParams,
+                                        float strength, uint64_t material,
+                                        const glm::vec3& color, size_t collectedVoxels,
+                                        uint8_t dominantType);
+
 
         void createPartialFormation(const SpellEffect& spell, float completionRatio);
 
         void createExteriorSmoothCrater(Chunk* chunk, const glm::ivec3& voxelPos,
                                         const glm::vec3& worldPos);
 
-        void carveFormationIntoChunks(const WorldPlanet& formation, uint64_t material);
-
         float randomFloat(float min, float max);
+
+        void castSpellSphere(const glm::vec3& center, float radius,
+                                   uint64_t material = 0, float strength = 1.0f);
+        void castSpellPlatform(const glm::vec3& center, const glm::vec3& normal,
+                                     float width, float depth, float thickness = 0.5f,
+                                     uint64_t material = 0, float strength = 1.0f);
+        void castSpellWall(const glm::vec3& center, const glm::vec3& normal,
+                                 float width, float height, float thickness = 0.5f,
+                                 uint64_t material = 0, float strength = 1.0f);
+        void castSpellCube(const glm::vec3& center, const glm::vec3& size,
+                                 uint64_t material = 0, float strength = 1.0f);
+        void castSpellCylinder(const glm::vec3& center, float radius, float height,
+                                     uint64_t material = 0, float strength = 1.0f);
+        void castSpellCustom(const glm::vec3& center, float radius,
+                                   uint64_t material, float strength,
+                                   SDFFunction customSDF, void* userData = nullptr);
+
 
         ////Debugging:
         void debugComputeShaderState();
@@ -233,6 +286,8 @@ namespace gl3 {
         ////Initialization-Steps
         void setupSSBOsAndTables();
 
+        void setupInput();
+
         void setupCamera();
 
         void generateChunks();
@@ -243,6 +298,9 @@ namespace gl3 {
         ////Simulation-Steps
         //Physics:
         void updatePhysics();
+
+        void applyImpactAtPosition(const glm::vec3 &worldPos, float radius, float impulse, RigidBodyPayload* payload);
+
 
         void updateDeltaTime();
 
@@ -307,16 +365,18 @@ namespace gl3 {
 
         //Lighting-Variables:
         const int MAX_LIGHTS = 4; // has to match marching cubes shader
-        const float LIGHT_RADIUS = 400.0f * CHUNK_SIZE;
+        const float LIGHT_RADIUS = 220.0f * CHUNK_SIZE*VOXEL_SIZE*2;
         uint64_t frameCounter = 29; // Frame counter for light update staggering
         const float LIGHT_RADIUS_SQ = LIGHT_RADIUS * LIGHT_RADIUS;
         std::vector<const gl3::VoxelLight *> flatEmissiveLightList;
-        std::unordered_map<ChunkCoord, std::vector<VoxelLight *>, ChunkCoordHash> lightSpatialHash;
+        robin_hood::unordered_map<ChunkCoord, std::vector<VoxelLight *>, ChunkCoordHash> lightSpatialHash;
         // After building chunk-local lights we create a small merged pool to avoid seams.
         // Merged pool holds stable VoxelLight objects we point to from flatEmissiveLightList.
         std::vector<gl3::VoxelLight> mergedEmissiveLightPool;
-        static constexpr int LIGHT_UPDATE_INTERVAL = 15; // Update lights every 30 frames
-        std::unordered_set<uint32_t> usedLightIDs;
+        static constexpr int LIGHT_UPDATE_INTERVAL = 15; // Update lights every 15 frames
+        robin_hood::unordered_set<uint32_t> usedLightIDs;
+
+        std::unique_ptr<SpellPhysicsManager> spellPhysics;
 
 
         ////Camera-Variables:
@@ -326,15 +386,15 @@ namespace gl3 {
 
         ////Rendering-Variables:
         //World-Variables:
-        const int DIM = CHUNK_SIZE + 1; //Chunk Size with a bit off padding for marching cubes
+        const int DIM = CHUNK_SIZE + 2; //Chunk Size with a bit off padding for marching cubes
         size_t voxelCount = DIM * DIM * DIM; //How many voxels can be in one Chunk
-        static constexpr int ChunkCount = 50; //Total size of the Game World
-        static constexpr int RenderingRange = 25; //Range around Camera that is rendered
+        static constexpr int ChunkCount = 70; //Total size of the Game World
+        static constexpr int RenderingRange = 10; //Range around Camera that is rendered
 
         //Marching-cubes Variables
         size_t maxVerts =
                 CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5 * 3; //Max amount of vertices marching cubes can create
-        const int MAX_CHUNKS_PER_FRAME = 20;
+        const int MAX_CHUNKS_PER_FRAME = 10;
         //std::vector<Chunk> dirtyChunks;
         //SSBOs for marching cubes:
         GLuint ssboVoxels = 0, ssboEdgeTable = 0, ssboTriTable = 0,
@@ -345,8 +405,10 @@ namespace gl3 {
         std::vector<SunInstance> emissiveBillboards;
 
 
-        ////Lists (deprecated)
-        std::vector<WorldPlanet> fluidPlanets;
+        ////Input
+        CharacterController characterController;
+        InputManager input;
+        InputActionMap actions;
 
 
         ////Shader:
@@ -358,9 +420,11 @@ namespace gl3 {
         ////helper functions:
         RayCastResult rayCastFromCamera(float maxDistance = 1000.0f);
         glm::vec3 calculateNormalAt(Chunk* chunk, const glm::ivec3& pos);
-
-        bool isChunkOccluded(const ChunkCoord& targetCoord, const glm::vec3& cameraPos);
-        bool isChunkOccludedByDDA(const glm::vec3& start, const ChunkCoord& target, const glm::vec3& dir);
-        float Game::getChunkSolidity(const Chunk& chunk);
+        void updateCamera();
+        float sampleDensityAtWorld(const glm::vec3 &worldPos) const;
+        glm::vec3 sampleNormalAtWorld(const glm::vec3 &worldPos) const;
+        glm::vec2 getMouseDelta();
+        glm::dvec2 previousMousePos = glm::dvec2(0.0, 0.0);
+        bool hasPreviousMousePos = false;
     };
 }

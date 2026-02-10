@@ -7,6 +7,7 @@
 #include "rendering/Shader.h"
 #include "rendering/marchingTables.h"
 #include "rendering/SunBillboard.h"
+#include "physics/SpellPhysicsManager.h"
 
 
 namespace gl3 {
@@ -50,9 +51,13 @@ namespace gl3 {
 
 
     Game::Game(int width, int height, const std::string &title)
-            : windowWidth(width), windowHeight(height),
-              chunkManager(std::make_unique<MultiGridChunkManager>())  // Initialize manager
-            , cameraPos(0.0f, 0.0f, 50.0f), cameraRotation(-90.0f, 0.0f) {
+            : windowWidth(width),
+              windowHeight(height),
+              chunkManager(std::make_unique<MultiGridChunkManager>()),
+              cameraPos(0.0f, 0.0f, 35.0f),
+              cameraRotation(-90.0f, 0.0f),
+              characterController(chunkManager.get(), 1.8f, 1.0f)  // Use .get() on unique_ptr
+            {
         windowWidth = width;
         windowHeight = height;
 
@@ -93,6 +98,14 @@ namespace gl3 {
 
         audio.init();
         audio.setGlobalVolume(0.1f);
+
+        spellPhysics = std::make_unique<SpellPhysicsManager>();
+        spellPhysics->init([this](const glm::vec3 &pos, float damageRadius, float impulse, RigidBodyPayload* payload) {
+                    // Called on physics tick when a collision exceeds threshold.
+                    // Forward to Game method on the main thread. We're already on the main thread in your single-threaded game loop,
+                    // but if you ever run Bullet on another thread dispatch this to the main thread.
+                    this->applyImpactAtPosition(pos, damageRadius, impulse, payload);
+        });
     }
 
 
@@ -107,25 +120,10 @@ namespace gl3 {
         ////Initialization-Steps
         CpuTimer t0("ssbos");
         setupSSBOsAndTables();
+        setupInput();
         setupCamera();
         CpuTimer t1("generateChunks");
         generateChunks();
-
-        // DEBUG: Check if any chunks were created
-        auto allCoords = chunkManager->getAllChunkCoords();
-        std::cout << "Total chunks created: " << allCoords.size() << std::endl;
-
-        // DEBUG: Check a few chunks
-        int solidChunks = 0;
-        for (const auto& coord : allCoords) {
-            if (Chunk* chunk = chunkManager->getChunk(coord)) {
-                if (hasSolidVoxels(*chunk)) {
-                    solidChunks++;
-                }
-            }
-        }
-        std::cout << "Chunks with solid voxels: " << solidChunks << std::endl;
-
         setupVEffects();
 
         while (!glfwWindowShouldClose(window)) {
@@ -143,8 +141,9 @@ namespace gl3 {
             }
 
             ////Input-Steps
-            handleCameraInput();
+            //handleCameraInput();
             glfwPollEvents();
+            updatePhysics();
             update();
 
 
@@ -179,21 +178,34 @@ namespace gl3 {
 ////----Chunk Management Code-------------------------------------------------------------------------------------------------------------------
 
     bool Game::hasSolidVoxels(const gl3::Chunk &chunk) {
-        // Check if any voxel has density near the isosurface
-        for (int x = 0; x <= CHUNK_SIZE; ++x) {
-            for (int y = 0; y <= CHUNK_SIZE; ++y) {
-                for (int z = 0; z <= CHUNK_SIZE; ++z) {
-                    if (chunk.voxels[x][y][z].isSolid()&&chunk.voxels[x][y][z].density >= -1.0f && chunk.voxels[x][y][z].density <= 1.0f) {
-                        return true; // Voxel near isosurface
-                    }
-                }
-            }
-        }
+        for (int x = 0; x <= CHUNK_SIZE; ++x)
+            for (int y = 0; y <= CHUNK_SIZE; ++y)
+                for (int z = 0; z <= CHUNK_SIZE; ++z)
+                    if (chunk.voxels[x][y][z].isSolid())
+                        return true;
+        return false;
     }
 
-    int Game::worldToChunk(float worldPos) const {
-        return (int) std::floor(worldPos / CHUNK_SIZE);
+    int Game::worldToChunk(float worldPos){
+        // Each chunk covers CHUNK_SIZE voxels, each voxel is VOXEL_SIZE world units.
+        // So chunk world width = CHUNK_SIZE * VOXEL_SIZE.
+        float chunkWorldSize = CHUNK_SIZE * gl3::VOXEL_SIZE;
+        return (int) std::floor(worldPos / chunkWorldSize);
     }
+
+    glm::vec3 Game::getChunkMin(const ChunkCoord& coord) const {
+        // chunk origin in world units
+        return glm::vec3(coord.x * CHUNK_SIZE * gl3::VOXEL_SIZE,
+                         coord.y * CHUNK_SIZE * gl3::VOXEL_SIZE,
+                         coord.z * CHUNK_SIZE * gl3::VOXEL_SIZE);
+    }
+
+    glm::vec3 Game::getChunkMax(const ChunkCoord& coord) const {
+        return glm::vec3((coord.x + 1) * CHUNK_SIZE * gl3::VOXEL_SIZE,
+                         (coord.y + 1) * CHUNK_SIZE * gl3::VOXEL_SIZE,
+                         (coord.z + 1) * CHUNK_SIZE * gl3::VOXEL_SIZE);
+    }
+
 
 
     void Game::markChunkModified(const ChunkCoord &coord) {
@@ -225,19 +237,6 @@ namespace gl3 {
         }
     }
 
-    // Get chunk bounding box in world space
-    glm::vec3 Game::getChunkMin(const ChunkCoord& coord) const {
-        return glm::vec3(coord.x * CHUNK_SIZE,
-                         coord.y * CHUNK_SIZE,
-                         coord.z * CHUNK_SIZE);
-    }
-
-    glm::vec3 Game::getChunkMax(const ChunkCoord& coord) const {
-        return glm::vec3((coord.x + 1) * CHUNK_SIZE,
-                         (coord.y + 1) * CHUNK_SIZE,
-                         (coord.z + 1) * CHUNK_SIZE);
-    }
-
     // Check if chunk is visible (combination of distance and frustum culling)
     bool Game::isChunkVisible(const ChunkCoord& coord) const {
         // Quick distance check first (cheaper)
@@ -264,19 +263,24 @@ namespace gl3 {
 
 ////----Spell-System-Code-----------------------------------------------------------------------------------------------------------------------
 
-    void Game::castGravityWellSpell(const glm::vec3& center, float radius,
-                                    uint64_t targetMaterial, float strength) {
+
+    void Game::castSpellWithFormation(const glm::vec3& center, float radius,
+                                      uint64_t targetMaterial, float strength,
+                                      const FormationParams& baseFormationParams) {
         // Create spell effect
         SpellEffect spell;
-        spell.type = SpellEffect::Type::GRAVITY_WELL;
+        spell.type = SpellEffect::Type::CONSTRUCT;
         spell.center = center;
         spell.radius = radius;
         spell.strength = strength;
         spell.targetMaterial = targetMaterial;
+        spell.dominantType = 0;  // Will be set by findNearbyVoxelsForVisual
+        spell.formationParams = baseFormationParams; // Store the initial params
 
         // Step 1: Find voxels
         std::vector<AnimatedVoxel> visualVoxels;
-        findNearbyVoxelsForVisual(center, radius, targetMaterial, visualVoxels, strength);
+        findNearbyVoxelsForVisual(center, radius, targetMaterial,
+                                  visualVoxels, strength, spell.dominantType);
 
         if (visualVoxels.empty()) {
             std::cout << "No voxels found for spell\n";
@@ -286,53 +290,36 @@ namespace gl3 {
         // Step 2: Calculate formation properties
         glm::vec3 avgColor(0.0f);
 
-        // --- NEW: compute formation radius from number of collected voxels ---
+        // --- NEW: Compute optimal formation size based on collected voxels ---
         const size_t collected = visualVoxels.size();
-        // Treat each voxel as unit volume (1.0). Tune VOXEL_VOLUME if your world units differ.
-        constexpr float VOXEL_VOLUME = 1.0f;
-        constexpr float PI = 3.14159265358979323846f;
+        // Convert voxel count -> world-volume (each voxel is a cube of VOXEL_SIZE^3)
+        const float voxelVolumeWorld = gl3::VOXEL_SIZE * gl3::VOXEL_SIZE * gl3::VOXEL_SIZE;
+        float desiredVolumeWorld = static_cast<float>(collected) * voxelVolumeWorld;
 
-        // packingEfficiency lets you control how "tightly" the voxels should be packed into the
-        // spherical formation. Values <1.0 produce a larger radius for same voxel count (looser packing).
-        // Typical starting values: 0.5 - 0.75. Tune to taste.
-        const float packingEfficiency = 0.6f;
-
-        float desiredVolume = static_cast<float>(collected) * VOXEL_VOLUME;
-        // sphere radius from volume: V = 4/3 * PI * r^3  ->  r = cbrt( (3/(4*PI)) * V )
-        float computedRadius = std::cbrt((3.0f / (4.0f * PI)) * (desiredVolume / packingEfficiency));
-
-        // Clamp the formation radius so it doesn't exceed a sensible max (e.g., fraction of spell search radius)
-        // and so it has a reasonable minimum when few voxels were collected.
-        float maxFormationRadius = std::max(1.0f, radius * 0.75f); // won't grow beyond ~75% of search radius
-        float minFormationRadius = 0.4f; // tune to avoid too-tiny visuals
-
-        float formationRadius = glm::clamp(computedRadius, minFormationRadius, maxFormationRadius);
+        // Adjust formation parameters based on collected volume (in world^3)
+        FormationParams adjustedFormation = baseFormationParams;
+        adjustFormationForVolume(adjustedFormation, desiredVolumeWorld);
+        adjustedFormation.center = center;
+        spell.formationParams = adjustedFormation; // Store adjusted params
         // ----------------------------------------------------------------
 
-        // Assign targets and set up AnimatedVoxel entries. We'll assign stable ids as we push
+        // Assign targets and set up AnimatedVoxel entries
         for (size_t i = 0; i < visualVoxels.size(); ++i) {
             AnimatedVoxel &v = visualVoxels[i];
-
             avgColor += v.color;
 
-            float angle = randomFloat(0.0f, glm::two_pi<float>());
-            float height = randomFloat(-1.0f, 1.0f);
-            float circleRadius = std::sqrt(1.0f - height * height);
+            // Calculate target position on formation surface
+            v.targetPos = calculateFormationTarget(i, visualVoxels.size(),
+                                                   adjustedFormation);
 
-            v.targetPos = center + glm::vec3(
-                    std::cos(angle) * circleRadius * formationRadius,
-                    height * formationRadius,
-                    std::sin(angle) * circleRadius * formationRadius
-            );
-
-            v.animationSpeed = strength * 1.5f;
+            v.animationSpeed = strength * 3.5f;
             v.isAnimating = true;
             v.hasArrived = false;
         }
         avgColor /= (float)visualVoxels.size();
 
         spell.formationColor = avgColor;
-        spell.formationRadius = formationRadius;
+        spell.formationRadius = adjustedFormation.getBoundingRadius();
 
         // Step 3: Add visual voxels to global list and record their stable IDs in the spell
         for (auto &v : visualVoxels) {
@@ -346,56 +333,353 @@ namespace gl3 {
         activeSpells.push_back(spell);
 
         std::cout << "Spell cast! " << visualVoxels.size()
-                  << " voxels moving directly to formation (radius=" << formationRadius << ")\n";
+                  << " voxels moving to formation (type="
+                  << static_cast<int>(adjustedFormation.type) << ")\n";
+    }
+
+    // Helper function to adjust formation size based on collected volume
+    void Game::adjustFormationForVolume(FormationParams& params, float volume /*world^3*/) {
+        const float packingEfficiency = 0.7f;
+        constexpr float PI = 3.14159265358979323846f;
+
+        const float minWorldDim = gl3::VOXEL_SIZE * 0.15f; // don't shrink below half a voxel
+        const float maxScaleFactor = 20.0f; // safety cap if you want
+
+        switch(params.type) {
+            case FormationType::SPHERE: {
+                float computedRadius = std::cbrt((3.0f / (4.0f * PI)) * (volume / packingEfficiency));
+                float maxRadius = std::max(minWorldDim, params.radius * 0.75f);
+                float minRadius = minWorldDim;
+                params.radius = glm::clamp(computedRadius, minRadius, maxRadius);
+                break;
+            }
+            case FormationType::PLATFORM: {
+                // Keep thickness (sizeY) constant (world units), adjust width/depth (world units)
+                float area = volume / (params.sizeY * packingEfficiency);
+                float side = std::sqrt(glm::max(0.0f, area));
+                params.sizeX = glm::max(side, minWorldDim);
+                params.sizeZ = glm::max(side, minWorldDim);
+                break;
+            }
+            case FormationType::WALL: {
+                // Keep thickness (sizeZ) constant (world units), adjust width/height (world units)
+                float area = volume / (params.sizeZ * packingEfficiency);
+                float side = std::sqrt(glm::max(0.0f, area));
+                params.sizeX = glm::max(side, minWorldDim);
+                params.sizeY = glm::max(params.sizeX * 0.75f, minWorldDim);
+                break;
+            }
+            case FormationType::CUBE: {
+                float side = std::cbrt(glm::max(0.0f, volume / packingEfficiency));
+                params.sizeX = params.sizeY = params.sizeZ = glm::max(side, minWorldDim);
+                break;
+            }
+            case FormationType::CYLINDER: {
+                float computedRadius = std::cbrt((2.0f / (3.0f * PI)) * (volume / packingEfficiency));
+                params.radius = glm::max(computedRadius, minWorldDim);
+                params.sizeY = glm::max(params.radius * 2.0f, minWorldDim);
+                break;
+            }
+            case FormationType::PYRAMID: {
+                float side = std::cbrt((3.0f * volume) / (packingEfficiency * params.sizeY + 1e-6f));
+                params.sizeX = glm::max(side, minWorldDim);
+                params.sizeZ = glm::max(side, minWorldDim);
+                break;
+            }
+            default:
+                break;
+        }
+    }
+
+// Calculate target position on formation surface
+    glm::vec3 Game::calculateFormationTarget(size_t index, size_t total,
+                                             const FormationParams& params) {
+        // Use different distribution strategies based on formation type
+        switch(params.type) {
+            case FormationType::SPHERE:
+                return calculateSphereDistribution(index, total, params);
+            case FormationType::PLATFORM:
+                return calculatePlatformDistribution(index, total, params);
+            case FormationType::WALL:
+                return calculateWallDistribution(index, total, params);
+            case FormationType::CUBE:
+                return calculateCubeDistribution(index, total, params);
+            case FormationType::CYLINDER:
+                return calculateCylinderDistribution(index, total, params);
+            case FormationType::PYRAMID:
+                return calculatePyramidDistribution(index, total, params);
+            default:
+                // For custom, default to sphere distribution
+                return calculateSphereDistribution(index, total, params);
+        }
+    }
+
+    glm::vec3 Game::calculateSphereDistribution(size_t index, size_t total,
+                                                const FormationParams& params) {
+        // Fibonacci sphere distribution (even distribution on sphere)
+        float goldenAngle = glm::pi<float>() * (3.0f - glm::sqrt(5.0f));
+        float y = 1.0f - (static_cast<float>(index) / (static_cast<float>(total) - 1.0f)) * 2.0f;
+        float radiusAtY = std::sqrt(1.0f - y * y);
+        float theta = goldenAngle * static_cast<float>(index);
+
+        float x = std::cos(theta) * radiusAtY;
+        float z = std::sin(theta) * radiusAtY;
+
+        glm::vec3 localPos(x, y, z);
+        glm::vec3 worldPos = params.center + localPos * params.radius;
+        return worldPos;
+    }
+
+    glm::vec3 Game::calculatePlatformDistribution(size_t index, size_t total,
+                                                  const FormationParams& params) {
+        // Distribute evenly across platform surface (top face)
+        // Use Halton sequence for better distribution
+        float u = haltonSequence(index, 2) - 0.5f; // Center around 0
+        float v = haltonSequence(index, 3) - 0.5f;
+
+        // Generate points on platform surface (top face)
+        glm::vec3 localPos(
+                u * params.sizeX,
+                params.sizeY * 0.5f, // Top surface
+                v * params.sizeZ
+        );
+
+        // Apply orientation
+        glm::vec3 right = glm::normalize(glm::cross(params.normal, params.up));
+        glm::mat3 rotation(right, params.up, params.normal);
+
+        glm::vec3 worldPos = params.center + rotation * localPos;
+        return worldPos;
+    }
+
+    glm::vec3 Game::calculateWallDistribution(size_t index, size_t total,
+                                              const FormationParams& params) {
+        // Distribute evenly across wall surface (front face)
+        float u = haltonSequence(index, 2) - 0.5f;
+        float v = haltonSequence(index, 3) - 0.5f;
+
+        // Generate points on wall surface (front face)
+        glm::vec3 localPos(
+                u * params.sizeX,
+                v * params.sizeY,
+                params.sizeZ * 0.5f // Front surface
+        );
+
+        // Apply orientation
+        glm::vec3 right = glm::normalize(glm::cross(params.normal, params.up));
+        glm::mat3 rotation(right, params.up, params.normal);
+
+        glm::vec3 worldPos = params.center + rotation * localPos;
+        return worldPos;
+    }
+
+    glm::vec3 Game::calculateCubeDistribution(size_t index, size_t total,
+                                              const FormationParams& params) {
+        // Distribute on cube surface using face assignment
+        int faceIndex = index % 6;
+        float u = haltonSequence(index, 2) - 0.5f;
+        float v = haltonSequence(index, 3) - 0.5f;
+
+        glm::vec3 localPos;
+        switch(faceIndex) {
+            case 0: // +X
+                localPos = glm::vec3(params.sizeX * 0.5f, u * params.sizeY, v * params.sizeZ);
+                break;
+            case 1: // -X
+                localPos = glm::vec3(-params.sizeX * 0.5f, u * params.sizeY, v * params.sizeZ);
+                break;
+            case 2: // +Y
+                localPos = glm::vec3(u * params.sizeX, params.sizeY * 0.5f, v * params.sizeZ);
+                break;
+            case 3: // -Y
+                localPos = glm::vec3(u * params.sizeX, -params.sizeY * 0.5f, v * params.sizeZ);
+                break;
+            case 4: // +Z
+                localPos = glm::vec3(u * params.sizeX, v * params.sizeY, params.sizeZ * 0.5f);
+                break;
+            case 5: // -Z
+                localPos = glm::vec3(u * params.sizeX, v * params.sizeY, -params.sizeZ * 0.5f);
+                break;
+        }
+
+        glm::vec3 worldPos = params.center + localPos;
+        return worldPos;
+    }
+
+    glm::vec3 Game::calculateCylinderDistribution(size_t index, size_t total,
+                                                  const FormationParams& params) {
+        // Distribute on cylinder surface (side)
+        float angle = static_cast<float>(index) / static_cast<float>(total) * glm::two_pi<float>();
+        float height = haltonSequence(index, 2) - 0.5f;
+
+        glm::vec3 localPos(
+                std::cos(angle) * params.radius,
+                height * params.sizeY,
+                std::sin(angle) * params.radius
+        );
+
+        glm::vec3 worldPos = params.center + localPos;
+        return worldPos;
+    }
+
+    glm::vec3 Game::calculatePyramidDistribution(size_t index, size_t total,
+                                                 const FormationParams& params) {
+        // Distribute on pyramid surfaces
+        int surface = index % 5; // 4 sides + base
+
+        if (surface < 4) { // Side faces
+            float u = haltonSequence(index, 2);
+            float v = haltonSequence(index, 3);
+
+            // Calculate point on triangular side face
+            float baseX = (u - 0.5f) * params.sizeX;
+            float baseZ = (v - 0.5f) * params.sizeZ;
+
+            // Project onto appropriate side based on surface index
+            glm::vec3 localPos;
+            switch(surface) {
+                case 0: // +X side
+                    localPos = glm::vec3(baseX, 0.0f, params.sizeZ * 0.5f);
+                    break;
+                case 1: // -X side
+                    localPos = glm::vec3(baseX, 0.0f, -params.sizeZ * 0.5f);
+                    break;
+                case 2: // +Z side
+                    localPos = glm::vec3(params.sizeX * 0.5f, 0.0f, baseZ);
+                    break;
+                case 3: // -Z side
+                    localPos = glm::vec3(-params.sizeX * 0.5f, 0.0f, baseZ);
+                    break;
+            }
+
+            // Move up to pyramid surface
+            float heightRatio = haltonSequence(index, 5);
+            localPos.y = heightRatio * params.sizeY;
+            localPos.x *= (1.0f - heightRatio);
+            localPos.z *= (1.0f - heightRatio);
+
+            glm::vec3 worldPos = params.center + localPos;
+            return worldPos;
+        } else { // Base
+            float u = haltonSequence(index, 2) - 0.5f;
+            float v = haltonSequence(index, 3) - 0.5f;
+
+            glm::vec3 localPos(
+                    u * params.sizeX,
+                    0.0f, // Bottom
+                    v * params.sizeZ
+            );
+
+            glm::vec3 worldPos = params.center + localPos;
+            return worldPos;
+        }
+    }
+
+// Helper function for better distribution (Halton sequence)
+    float Game::haltonSequence(int index, int base) {
+        float result = 0.0f;
+        float f = 1.0f;
+        int i = index;
+
+        while (i > 0) {
+            f /= static_cast<float>(base);
+            result += f * static_cast<float>(i % base);
+            i = i / base;
+        }
+
+        return result;
     }
 
     void Game::findNearbyVoxelsForVisual(const glm::vec3& center, float radius,
                                          uint64_t targetMaterial,
                                          std::vector<AnimatedVoxel>& results,
-                                         float strength) {
+                                         float strength,
+                                         uint8_t& outDominantType) {  // ADD OUTPUT PARAMETER
         const float radiusSq = radius * radius;
         int maxVoxels = static_cast<int>(strength * 100.0f);
 
+        // Use array for type counting
+        int typeCounts[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+
         auto chunks = chunkManager->getChunksInRadius(center, radius);
 
-        // First, collect ALL potential voxels with their distances
+        // Use a more efficient candidate collection
         struct VoxelCandidate {
             glm::vec3 worldPos;
             glm::vec3 color;
             ChunkCoord chunkCoord;
             glm::ivec3 localPos;
             float distanceSq;
-            Chunk* chunk; // Pointer to chunk
+            Chunk* chunk;
+            uint8_t type;  // Store type here
         };
 
         std::vector<VoxelCandidate> candidates;
 
-        // Collect all candidates
+        // Pre-allocate to avoid reallocations
+        candidates.reserve(maxVoxels * 2);
+
+        // Collect candidates with early pruning
         for (const auto& [coord, chunk] : chunks) {
             if (!chunk || !hasSolidVoxels(*chunk)) continue;
 
             glm::vec3 chunkMin = getChunkMin(coord);
+            glm::vec3 chunkCenter = chunkMin + glm::vec3(CHUNK_SIZE/2) * VOXEL_SIZE;
 
-            for (int x = 0; x <= CHUNK_SIZE; ++x) {
-                for (int y = 0; y <= CHUNK_SIZE; ++y) {
-                    for (int z = 0; z <= CHUNK_SIZE; ++z) {
+            // Quick sphere-AABB test
+            float distToChunkCenter = glm::distance(chunkCenter, center);
+            float maxChunkDist = std::sqrt(3.0f) * (CHUNK_SIZE * VOXEL_SIZE / 2.0f);
+
+            if (distToChunkCenter > radius + maxChunkDist) {
+                continue;  // Chunk is definitely outside spell radius
+            }
+
+            // Get bounds for this chunk relative to spell center
+            glm::vec3 chunkRelMin = chunkMin - center;
+            glm::vec3 chunkRelMax = chunkRelMin + glm::vec3(CHUNK_SIZE) * VOXEL_SIZE;
+
+            // Early test: check if chunk bounding sphere intersects spell sphere
+            float chunkRadius = glm::length(chunkRelMax - chunkRelMin) / 2.0f;
+            glm::vec3 chunkCenterRel = (chunkRelMin + chunkRelMax) / 2.0f;
+            float centerDist = glm::length(chunkCenterRel);
+
+            if (centerDist > radius + chunkRadius) {
+                continue;  // No intersection
+            }
+
+            // Only iterate through potentially intersecting region
+            int startX = std::max(0, static_cast<int>((center.x - radius - chunkMin.x) / VOXEL_SIZE));
+            int endX = std::min(CHUNK_SIZE, static_cast<int>((center.x + radius - chunkMin.x) / VOXEL_SIZE) + 1);
+            int startY = std::max(0, static_cast<int>((center.y - radius - chunkMin.y) / VOXEL_SIZE));
+            int endY = std::min(CHUNK_SIZE, static_cast<int>((center.y + radius - chunkMin.y) / VOXEL_SIZE) + 1);
+            int startZ = std::max(0, static_cast<int>((center.z - radius - chunkMin.z) / VOXEL_SIZE));
+            int endZ = std::min(CHUNK_SIZE, static_cast<int>((center.z + radius - chunkMin.z) / VOXEL_SIZE) + 1);
+
+            for (int x = startX; x <= endX; ++x) {
+                for (int y = startY; y <= endY; ++y) {
+                    for (int z = startZ; z <= endZ; ++z) {
                         const Voxel& voxel = chunk->voxels[x][y][z];
 
                         if (voxel.isSolid() && voxel.material == targetMaterial) {
-                            glm::vec3 worldPos = chunkMin + glm::vec3(x, y, z);
+                            glm::vec3 worldPos = chunkMin + glm::vec3((float)x, (float)y, (float)z) * VOXEL_SIZE;
                             glm::vec3 diff = worldPos - center;
                             float distSq = glm::dot(diff, diff);
 
                             if (distSq <= radiusSq) {
-                                VoxelCandidate candidate;
-                                candidate.worldPos = worldPos;
-                                candidate.color = voxel.color;
-                                candidate.chunkCoord = coord;
-                                candidate.localPos = glm::ivec3(x, y, z);
-                                candidate.distanceSq = distSq;
-                                candidate.chunk = chunk;
+                                candidates.push_back({
+                                                             worldPos,
+                                                             voxel.color,
+                                                             coord,
+                                                             {x, y, z},
+                                                             distSq,
+                                                             chunk,
+                                                             voxel.type
+                                                     });
 
-                                candidates.push_back(candidate);
+                                // Count type immediately
+                                if (voxel.type < 8) {
+                                    typeCounts[voxel.type]++;
+                                }
                             }
                         }
                     }
@@ -403,18 +687,32 @@ namespace gl3 {
             }
         }
 
-        // Sort candidates by distance (closest first)
-        std::sort(candidates.begin(), candidates.end(),
-                  [](const VoxelCandidate& a, const VoxelCandidate& b) {
-                      return a.distanceSq < b.distanceSq;
-                  });
+        // Sort by distance
+        if (candidates.size() > static_cast<size_t>(maxVoxels)) {
+            std::nth_element(candidates.begin(),
+                             candidates.begin() + maxVoxels,
+                             candidates.end(),
+                             [](const VoxelCandidate& a, const VoxelCandidate& b) {
+                                 return a.distanceSq < b.distanceSq;
+                             });
 
-        // Take only the closest N voxels
-        int takeCount = std::min(maxVoxels, static_cast<int>(candidates.size()));
+            // Only keep closest maxVoxels
+            candidates.resize(maxVoxels);
+        }
 
-        for (int i = 0; i < takeCount; ++i) {
-            const auto& candidate = candidates[i];
+        // Determine dominant type from collected candidates
+        int maxCount = 0;
+        uint8_t dominantType = 1;  // Default to type 1
+        for (int i = 0; i < 8; ++i) {
+            if (typeCounts[i] > maxCount) {
+                maxCount = typeCounts[i];
+                dominantType = static_cast<uint8_t>(i);
+            }
+        }
+        outDominantType = dominantType;  // Set output parameter
 
+        // Process candidates (same as before, but now we have types counted)
+        for (const auto& candidate : candidates) {
             AnimatedVoxel animVoxel;
             animVoxel.currentPos = candidate.worldPos;
             animVoxel.isAnimating = true;
@@ -427,7 +725,7 @@ namespace gl3 {
             glm::vec3 litColor = glm::vec3(0.0f);
 
             // 1) Ambient term (global low ambient)
-            const float ambientStrength = 0.06f;
+            const float ambientStrength = 0.8f;
             litColor += baseColor * ambientStrength;
 
             // 2) Directional "sun" (cheap approximation so things look shaded)
@@ -484,131 +782,127 @@ namespace gl3 {
 
             animVoxel.normal = calculateNormalAt(candidate.chunk, candidate.localPos);
 
-            // Create crater at this voxel position (removes voxel from world)
+            // Create crater
             createExteriorSmoothCrater(candidate.chunk, candidate.localPos, candidate.worldPos);
 
             // Mark chunk as modified
             candidate.chunk->meshDirty = true;
             candidate.chunk->lightingDirty = true;
             markChunkModified(candidate.chunkCoord);
+
             results.push_back(animVoxel);
         }
 
         // Debug output
-        if (takeCount > 0) {
-            processEmissiveChunks();
-            float minDist = std::sqrt(candidates[0].distanceSq);
-            float maxDist = std::sqrt(candidates[takeCount-1].distanceSq);
-            std::cout << "Taking " << takeCount << " closest voxels (distances: "
-                      << minDist << " to " << maxDist << " units)\n";
+        if (!candidates.empty()) {
+            processEmissiveChunks();  // Consider calling this less frequently
+            float minDist = std::sqrt(candidates.front().distanceSq);
+            float maxDist = std::sqrt(candidates.back().distanceSq);
+            std::cout << "Taking " << candidates.size() << " closest voxels "
+                      << "(dominant type=" << (int)dominantType << ", "
+                      << "distances: " << minDist << " to " << maxDist << " units)\n";
         }
     }
 
 
-    void Game::createExteriorSmoothCrater(Chunk* chunk, const glm::ivec3& voxelPos,
-                                          const glm::vec3& worldPos) {
-        float craterRadius = 2.0f;
-        float maxCraterDepth = 2.5f;
+        void Game::createExteriorSmoothCrater(Chunk* chunk, const glm::ivec3& voxelPos,
+                                              const glm::vec3& worldPos) {
+            float craterRadius = 2.0f * gl3::VOXEL_SIZE; // scale crater size by voxel size
+            float maxCraterDepth = 2.5f; // this is a density amount, leave unless you need to tune
 
-        int range = static_cast<int>(std::ceil(craterRadius));
+            int range = static_cast<int>(std::ceil(craterRadius / gl3::VOXEL_SIZE));
 
-        for (int dx = -range; dx <= range; ++dx) {
-            for (int dy = -range; dy <= range; ++dy) {
-                for (int dz = -range; dz <= range; ++dz) {
-                    int nx = voxelPos.x + dx;
-                    int ny = voxelPos.y + dy;
-                    int nz = voxelPos.z + dz;
+            for (int dx = -range; dx <= range; ++dx) {
+                for (int dy = -range; dy <= range; ++dy) {
+                    for (int dz = -range; dz <= range; ++dz) {
+                        int nx = voxelPos.x + dx;
+                        int ny = voxelPos.y + dy;
+                        int nz = voxelPos.z + dz;
 
-                    if (nx < 0 || nx > CHUNK_SIZE || ny < 0 || ny > CHUNK_SIZE || nz < 0 || nz > CHUNK_SIZE) {
-                        continue;
-                    }
+                        if (nx < 0 || nx > CHUNK_SIZE || ny < 0 || ny > CHUNK_SIZE || nz < 0 || nz > CHUNK_SIZE) {
+                            continue;
+                        }
 
-                    float dist = std::sqrt(dx*dx + dy*dy + dz*dz);
-                    if (dist <= craterRadius) {
-                        float t = dist / craterRadius;
-                        float originalDensity = chunk->voxels[nx][ny][nz].density;
+                        glm::vec3 offset = glm::vec3((float)dx, (float)dy, (float)dz) * gl3::VOXEL_SIZE;
+                        float dist = glm::length(offset); // world distance
+                        if (dist <= craterRadius) {
+                            float t = dist / craterRadius;
+                            float originalDensity = chunk->voxels[nx][ny][nz].density;
 
-                        // KEY INSIGHT: For Marching Cubes to show a solid exterior,
-                        // the density should be POSITIVE at the surface (0 isosurface)
+                            // KEY INSIGHT: For Marching Cubes to show a solid exterior,
+                            // the density should be POSITIVE at the surface (0 isosurface)
 
-                        if (originalDensity >= 0.0f) {
-                            // This voxel was inside or at the surface of the planet
+                            if (originalDensity >= 0.0f) {
+                                // This voxel was inside or at the surface of the planet
 
-                            // Create crater shape that:
-                            // 1. Reduces density near center
-                            // 2. Keeps exterior surface positive
-                            // 3. Creates smooth transition
+                                // Create crater shape that:
+                                // 1. Reduces density near center
+                                // 2. Keeps exterior surface positive
+                                // 3. Creates smooth transition
 
-                            float craterShape = (1.0f - t * t); // Bowl shape
-                            float densityReduction = maxCraterDepth * craterShape;
+                                float craterShape = (1.0f - t * t); // Bowl shape
+                                float densityReduction = maxCraterDepth * craterShape;
 
-                            // Apply reduction, but ensure we don't go too negative
-                            float newDensity = originalDensity - densityReduction;
+                                // Apply reduction, but ensure we don't go too negative
+                                float newDensity = originalDensity - densityReduction;
 
-                            // If this was deep inside (high positive), keep it positive
-                            if (originalDensity > 2.0f) {
-                                newDensity = std::max(newDensity, 0.1f);
-                            }
+                                // If this was deep inside (high positive), keep it positive
+                                if (originalDensity > 2.0f) {
+                                    newDensity = std::max(newDensity, 0.1f);
+                                }
 
-                            chunk->voxels[nx][ny][nz].density = newDensity;
+                                chunk->voxels[nx][ny][nz].density = newDensity;
 
-                            // Update type - critical for Marching Cubes
-                            if (newDensity < -0.5f) {
-                                // Too negative = air (creates hole)
-                                chunk->voxels[nx][ny][nz].type = 0;
-                            } else if (newDensity < 0.0f) {
-                                // Negative but close to 0 = surface
-                                chunk->voxels[nx][ny][nz].type = 1;
-                            } else {
-                                // Positive = solid interior
-                                chunk->voxels[nx][ny][nz].type = 1;
+                                // Update type - critical for Marching Cubes
+                                if (newDensity < -0.5f) {
+                                    // Too negative = air (creates hole)
+                                    chunk->voxels[nx][ny][nz].type = 0;
+                                } else if (newDensity < 0.0f) {
+                                    // Negative but close to 0 = surface
+                                    chunk->voxels[nx][ny][nz].type = 1;
+                                } else {
+                                    // Positive = solid interior
+                                    chunk->voxels[nx][ny][nz].type = 1;
+                                }
                             }
                         }
                     }
                 }
             }
         }
-    }
 
-    // Updated to take collectedVoxels into account when computing the final carved radius.
-    void Game::createSpellFormation(const glm::vec3& center, float radius,
+    void Game::createSpellFormation(const glm::vec3& center,
+                                    const FormationParams& formationParams,
                                     float strength, uint64_t material,
-                                    const glm::vec3& color, size_t collectedVoxels) {
-        // Create a new "planet" at the spell center
+                                    const glm::vec3& color, size_t collectedVoxels,
+                                    uint8_t dominantType) {
+
         WorldPlanet newFormation;
         newFormation.worldPos = center;
         newFormation.color = color;
-        newFormation.type = 1; // Solid
+        newFormation.type = dominantType;
 
-        // --- Compute effective radius from collected voxels (volume preserving) ---
-        // Treat each voxel as unit volume. Tune VOXEL_VOLUME and packingEfficiency to taste.
-        constexpr float VOXEL_VOLUME = 0.5f;
-        constexpr float PI = 3.14159265358979323846f;
-        const float packingEfficiency = 1.0f; // <1.0 -> looser packing -> bigger radius for same N
-
-        float desiredVolume = static_cast<float>(collectedVoxels) * VOXEL_VOLUME;
-        // radius from sphere volume: r = cbrt((3/(4*PI)) * (V / packingEfficiency))
-        float computedRadius = std::cbrt((3.0f / (4.0f * PI)) * (desiredVolume / packingEfficiency));
-
-        // Clamp/min/max so very small pulls are still visible and we don't explode beyond the spell's search radius.
-        float minFormationRadius = 0.05f;
-        // Don't allow carving a formation larger than the spell's nominal radius (prevents creating material)
-        float maxFormationRadius = std::max(minFormationRadius, radius);
-
-        float effectiveRadius = glm::clamp(computedRadius, minFormationRadius, maxFormationRadius);
-
+        // Use formation's bounding radius
+        float effectiveRadius = formationParams.getBoundingRadius();
         newFormation.radius = effectiveRadius;
-        // ---------------------------------------------------------------------
 
-        // Ensure we preload enough chunks to cover either the nominal radius or the effective radius
-        float preloadRadius = std::max(radius, effectiveRadius);
+        // Pre-load chunks using effectiveRadius (world units)
+        float preloadRadius = effectiveRadius;
 
+        float chunkWorldSize = gl3::CHUNK_SIZE * gl3::VOXEL_SIZE;
         int minCX = worldToChunk(center.x - preloadRadius);
         int maxCX = worldToChunk(center.x + preloadRadius);
         int minCY = worldToChunk(center.y - preloadRadius);
         int maxCY = worldToChunk(center.y + preloadRadius);
         int minCZ = worldToChunk(center.z - preloadRadius);
         int maxCZ = worldToChunk(center.z + preloadRadius);
+
+        std::cout << "createSpellFormation: effectiveRadius=" << effectiveRadius
+                  << " (chunkWorldSize=" << chunkWorldSize << ")"
+                  << " chunksX=[" << minCX << "," << maxCX << "]"
+                  << " chunksY=[" << minCY << "," << maxCY << "]"
+                  << " chunksZ=[" << minCZ << "," << maxCZ << "]"
+                  << " center=(" << center.x << "," << center.y << "," << center.z << ")\n";
 
         // Load all chunks first (force create if missing)
         for (int cx = minCX; cx <= maxCX; ++cx) {
@@ -629,11 +923,13 @@ namespace gl3 {
                 }
             }
         }
+        FormationParams paramsCopy = formationParams;
+        paramsCopy.center = center;
 
-        // Now carve into chunks using the effective, material-limited radius
-        carveFormationIntoChunks(newFormation, material);
+        // Now call carve using paramsCopy so the SDF uses the correct world-space center:
+        carveFormationWithSDF(newFormation, material, paramsCopy);
 
-        // Force immediate mesh regeneration for affected chunks (cover effectiveRadius)
+        // Force immediate mesh regeneration for affected chunks
         int regenMinCX = worldToChunk(center.x - effectiveRadius);
         int regenMaxCX = worldToChunk(center.x + effectiveRadius);
         int regenMinCY = worldToChunk(center.y - effectiveRadius);
@@ -656,20 +952,86 @@ namespace gl3 {
                 }
             }
         }
+        // after mesh regen loops and before final std::cout:
+        // Build triangle vertex list for newly generated chunks (to create physics body)
+        std::vector<glm::vec3> triangleVerts; triangleVerts.reserve(1024);
 
+        for (int cx = regenMinCX; cx <= regenMaxCX; ++cx) {
+            for (int cy = regenMinCY; cy <= regenMaxCY; ++cy) {
+                for (int cz = regenMinCZ; cz <= regenMaxCZ; ++cz) {
+                    ChunkCoord coord{cx, cy, cz};
+                    Chunk* chunk = chunkManager->getChunk(coord);
+                    if (!chunk) continue;
+                    if (!chunk->gpuCache.isValid) continue;
+                    if (chunk->gpuCache.vertexCount == 0) continue;
+
+                    // Map triangle SSBO and read OutVertex positions
+                    glBindBuffer(GL_SHADER_STORAGE_BUFFER, chunk->gpuCache.triangleSSBO);
+                    size_t vcount = chunk->gpuCache.vertexCount;
+                    size_t byteSize = vcount * sizeof(OutVertex);
+                    void* mapPtr = nullptr;
+                    if (byteSize > 0) {
+                        mapPtr = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, byteSize, GL_MAP_READ_BIT);
+                    }
+                    if (mapPtr) {
+                        OutVertex* ov = reinterpret_cast<OutVertex*>(mapPtr);
+                        for (size_t vi = 0; vi < vcount; ++vi) {
+                            glm::vec4 p = ov[vi].pos;
+                            triangleVerts.emplace_back(p.x, p.y, p.z);
+                        }
+                        glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+                    }
+                    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+                }
+            }
+        }
+
+        // With this corrected and safe check:
+        if (!triangleVerts.empty() && effectiveRadius > 0.01f /* has size */ && collectedVoxels > 0) {
+            // build unique vertex list then create rigidbody
+            auto uniqueVerts = SpellPhysicsManager::buildUniqueVertexList(triangleVerts);
+
+            // compute mass from collected voxels (rough)
+            float voxelVolume = VOXEL_SIZE * VOXEL_SIZE * VOXEL_SIZE;
+            float mass = static_cast<float>(collectedVoxels) * voxelVolume * 0.1f; // density multiplier tune
+
+            btTransform startTrans; startTrans.setIdentity();
+            startTrans.setOrigin(btVector3(center.x, center.y, center.z));
+
+            if (spellPhysics && !uniqueVerts.empty()) {
+                btRigidBody* rb = spellPhysics->createRigidBodyFromVertices(uniqueVerts, mass, startTrans, /*formationID=*/0, /*userData=*/nullptr, /*threshold=*/1.0f);
+                if (rb) {
+                    // Give initial velocity away from player for sphere spells
+                    glm::vec3 dir = glm::normalize(center - cameraPos);
+                    if (glm::length(dir) < 1e-6f) dir = getCameraFront();
+                    float speed = glm::clamp(strength * 50.0f, 50.0f, 500.0f); // tune
+                    rb->setLinearVelocity(btVector3(dir.x * speed, dir.y * speed, dir.z * speed));
+                }
+            }
+        }
         std::cout << "createSpellFormation: collected=" << collectedVoxels
-                  << " => effectiveRadius=" << effectiveRadius << "\n";
+                  << " => formation type=" << static_cast<int>(formationParams.type)
+                  << ", radius=" << effectiveRadius << "\n";
     }
 
+    void Game::carveFormationWithSDF(const WorldPlanet& formation, uint64_t material,
+                                     const FormationParams& params) {
+        float boundingRadius = params.getBoundingRadius();
+        std::cout << "carveFormationWithSDF: boundingRadius=" << boundingRadius
+                  << " center=(" << formation.worldPos.x << "," << formation.worldPos.y << "," << formation.worldPos.z << ")\n";
+// sample a couple of points
+        float centerVal = params.evaluate(formation.worldPos);
+        float atRadiusVal = params.evaluate(formation.worldPos + glm::vec3(boundingRadius,0,0));
+        std::cout << " SDF(center)=" << centerVal << " SDF(center+radius)=" << atRadiusVal << "\n";
 
-    void Game::carveFormationIntoChunks(const WorldPlanet& formation, uint64_t material) {
+
         // Determine which chunks this formation affects
-        int minCX = worldToChunk(formation.worldPos.x - formation.radius);
-        int maxCX = worldToChunk(formation.worldPos.x + formation.radius);
-        int minCY = worldToChunk(formation.worldPos.y - formation.radius);
-        int maxCY = worldToChunk(formation.worldPos.y + formation.radius);
-        int minCZ = worldToChunk(formation.worldPos.z - formation.radius);
-        int maxCZ = worldToChunk(formation.worldPos.z + formation.radius);
+        int minCX = worldToChunk(formation.worldPos.x - boundingRadius);
+        int maxCX = worldToChunk(formation.worldPos.x + boundingRadius);
+        int minCY = worldToChunk(formation.worldPos.y - boundingRadius);
+        int maxCY = worldToChunk(formation.worldPos.y + boundingRadius);
+        int minCZ = worldToChunk(formation.worldPos.z - boundingRadius);
+        int maxCZ = worldToChunk(formation.worldPos.z + boundingRadius);
 
         for (int cx = minCX; cx <= maxCX; ++cx) {
             for (int cy = minCY; cy <= maxCY; ++cy) {
@@ -693,22 +1055,22 @@ namespace gl3 {
                     glm::vec3 chunkOrigin = getChunkMin(coord);
                     bool chunkTouched = false;
 
-                    // Carve sphere into chunk
+                    // Carve formation into chunk using its SDF
                     for (int lx = 0; lx <= CHUNK_SIZE; ++lx) {
                         for (int ly = 0; ly <= CHUNK_SIZE; ++ly) {
                             for (int lz = 0; lz <= CHUNK_SIZE; ++lz) {
-                                glm::vec3 worldPos = chunkOrigin + glm::vec3(lx, ly, lz);
-                                float dist = glm::distance(worldPos, formation.worldPos);
+                                glm::vec3 worldPos = chunkOrigin +
+                                                     glm::vec3((float)lx, (float)ly, (float)lz) * gl3::VOXEL_SIZE;
 
-                                float formationDensity = formation.radius - dist;
+                                // Use formation SDF instead of sphere distance
+                                float formationDensity = params.evaluate(worldPos);
 
                                 float existingDensity = chunk->voxels[lx][ly][lz].density;
 
-                                // SDF UNION: Take the MAXIMUM density
+                                // SDF UNION: Take the MAXIMUM density (preserves existing terrain)
                                 if (formationDensity > existingDensity) {
                                     chunk->voxels[lx][ly][lz].density = formationDensity;
 
-                                    // Set type and color
                                     if (formationDensity >= -1.0f) {
                                         chunk->voxels[lx][ly][lz].type = formation.type;
                                         chunk->voxels[lx][ly][lz].color = formation.color;
@@ -732,6 +1094,7 @@ namespace gl3 {
                 }
             }
         }
+        processEmissiveChunks();
     }
 
     void Game::updateSpells(float deltaTime) {
@@ -763,17 +1126,17 @@ namespace gl3 {
                     glm::vec3 toTarget = voxel.targetPos - voxel.currentPos;
                     float distance = glm::length(toTarget);
 
-                    if (distance < 0.35f) {
+                    if (distance < 1.0f*VOXEL_SIZE) {
                         // Arrived!
                         voxel.isAnimating = false;
                         voxel.hasArrived = true;
                         newlyArrivedIDs.push_back(id);
                     } else {
-                        glm::vec3 dir = glm::normalize(toTarget);
+                        //glm::vec3 dir = glm::normalize(toTarget);
                         float speed = voxel.animationSpeed;
-                        float slowdown = glm::clamp(distance / 3.0f, 0.2f, 1.0f);
+                        float slowdown = glm::clamp(distance / 2.0f, 0.75f, 1.0f);
 
-                        voxel.velocity = dir * speed * slowdown;
+                        voxel.velocity = (toTarget/glm::vec3(VOXEL_SIZE*CHUNK_SIZE)) * speed * slowdown*4.0f;
                         voxel.currentPos += voxel.velocity * deltaTime;
                     }
                 } else {
@@ -803,13 +1166,18 @@ namespace gl3 {
                     std::cout << arrivedCount << "/" << total
                               << " voxels arrived. Creating final geometry...\n";
 
-                    createSpellFormation(spellIt->center, spellIt->formationRadius,
-                                         spellIt->strength, spellIt->targetMaterial,
-                                         spellIt->formationColor, spellIt->animatedVoxelIDs.size());
+                    // Use the spell's stored formation parameters
+                    createSpellFormation(spellIt->center,
+                                         spellIt->formationParams, // Use stored params
+                                         spellIt->strength,
+                                         spellIt->targetMaterial,
+                                         spellIt->formationColor,
+                                         spellIt->animatedVoxelIDs.size(),
+                                         spellIt->dominantType);
                     spellIt->geometryCreated = true;
-                } else if (arrivalRatio > 0.3f) {
+                } else if (arrivalRatio > 0.0005f) {
                     // optional partial formation
-                    // createPartialFormation(*spellIt, arrivalRatio);
+                    createPartialFormation(*spellIt, arrivalRatio);
                 }
             }
 
@@ -859,41 +1227,106 @@ namespace gl3 {
     }
 
     void Game::createPartialFormation(const SpellEffect& spell, float completionRatio) {
-        // Create a weaker/smaller version of the formation
-        // This shows the geometry building up gradually
-
         WorldPlanet partialFormation;
         partialFormation.worldPos = spell.center;
+        partialFormation.color = spell.formationColor;
+        partialFormation.type = spell.dominantType;
 
-        // Scale radius based on completion
-        partialFormation.radius = spell.formationRadius * (completionRatio * 0.7f + 0.3f);
+        // Scale the formation parameters based on completion
+        FormationParams partialParams = spell.formationParams;
 
-        // Fade in color based on completion
-        partialFormation.color = spell.formationColor * glm::vec3(completionRatio * 0.8f + 0.2f);
-        partialFormation.type = 1;
+        switch(partialParams.type) {
+            case FormationType::SPHERE:
+                partialParams.radius *= (completionRatio * 0.7f + 0.3f);
+                break;
+            case FormationType::PLATFORM:
+            case FormationType::WALL:
+            case FormationType::CUBE:
+                partialParams.sizeX *= (completionRatio * 0.7f + 0.3f);
+                partialParams.sizeY *= (completionRatio * 0.7f + 0.3f);
+                partialParams.sizeZ *= (completionRatio * 0.7f + 0.3f);
+                break;
+            case FormationType::CYLINDER:
+                partialParams.radius *= (completionRatio * 0.7f + 0.3f);
+                partialParams.sizeY *= (completionRatio * 0.7f + 0.3f);
+                break;
+        }
 
-        // Temporarily carve partial formation (will be overwritten by final)
-        carveFormationIntoChunks(partialFormation, spell.targetMaterial);
+        // Temporarily carve partial formation
+        carveFormationWithSDF(partialFormation, spell.targetMaterial, partialParams);
     }
 
-    void Game::cleanupFinishedSpells() {
-        // This is now redundant since we clean up in updateSpells
-        // But keep it for safety
-        for (auto voxelIt = animatedVoxels.begin(); voxelIt != animatedVoxels.end(); ) {
-            if (!voxelIt->isAnimating) {
-                voxelIt = animatedVoxels.erase(voxelIt);
-            } else {
-                ++voxelIt;
+        void Game::cleanupFinishedSpells() {
+            // This is now redundant since we clean up in updateSpells
+            // But keep it for safety
+            for (auto voxelIt = animatedVoxels.begin(); voxelIt != animatedVoxels.end(); ) {
+                if (!voxelIt->isAnimating) {
+                    voxelIt = animatedVoxels.erase(voxelIt);
+                } else {
+                    ++voxelIt;
+                }
             }
         }
+
+        float Game::randomFloat(float min, float max) {
+            static std::random_device rd;
+            static std::mt19937 gen(rd());
+            static std::uniform_real_distribution<float> dis(0.0f, 1.0f);
+
+            return min + dis(gen) * (max - min);
+        }
+
+    void Game::castSpellSphere(const glm::vec3& center, float radius,
+                               uint64_t material, float strength) {
+        FormationParams params = FormationParams::Sphere(center, radius);
+        castSpellWithFormation(center, radius * 1.5f, material, strength, params);
     }
 
-    float Game::randomFloat(float min, float max) {
-        static std::random_device rd;
-        static std::mt19937 gen(rd());
-        static std::uniform_real_distribution<float> dis(0.0f, 1.0f);
+    void Game::castSpellPlatform(const glm::vec3& center, const glm::vec3& normal,
+                                 float width, float depth, float thickness,
+                                 uint64_t material, float strength) {
+        FormationParams params = FormationParams::Platform(center, normal,
+                                                           width, depth, thickness);
+        float searchRadius = 10*4.5f*VOXEL_SIZE;
+        castSpellWithFormation(center, searchRadius, material, strength, params);
+    }
 
-        return min + dis(gen) * (max - min);
+    void Game::castSpellWall(const glm::vec3& center, const glm::vec3& normal,
+                             float width, float height, float thickness,
+                             uint64_t material, float strength) {
+        FormationParams params = FormationParams::Wall(center, normal,
+                                                       width, height, thickness);
+        float searchRadius =  strength*4.5f*VOXEL_SIZE;
+
+        castSpellWithFormation(center, searchRadius, material, strength, params);
+    }
+
+    void Game::castSpellCube(const glm::vec3& center, const glm::vec3& size,
+                             uint64_t material, float strength) {
+        FormationParams params = FormationParams::Cube(center, size);
+        float searchRadius = glm::length(size) * 0.75f;
+        castSpellWithFormation(center, searchRadius, material, strength, params);
+    }
+
+    void Game::castSpellCylinder(const glm::vec3& center, float radius, float height,
+                                 uint64_t material, float strength) {
+        FormationParams params = FormationParams::Cylinder(center, radius, height);
+        float searchRadius = glm::max(radius, height * 0.5f) * 1.5f;
+        castSpellWithFormation(center, searchRadius, material, strength, params);
+    }
+
+    // Custom spell with user-defined SDF
+    void Game::castSpellCustom(const glm::vec3& center, float radius,
+                               uint64_t material, float strength,
+                               SDFFunction customSDF, void* userData) {
+        FormationParams params;
+        params.type = FormationType::CUSTOM_SDF;
+        params.center = center;
+        params.radius = radius;
+        params.customSDF = customSDF;
+        params.customUserData = userData;
+
+        castSpellWithFormation(center, radius, material, strength, params);
     }
 
 ////----Debugging Code--------------------------------------------------------------------------------------------------------------------------
@@ -1059,295 +1492,168 @@ namespace gl3 {
 
     }
 
-    void Game::setupCamera() {
-        // Position camera above the terrain looking at it
-        cameraPos = glm::vec3(0.0f, 60.0f, 30.0f); // Higher Y, closer Z
-        cameraRotation = glm::vec2(-30.0f, -90.0f); // Look slightly downward
+    void Game::setupInput() {
+        // Track all keys we'll use
+        input.trackKeys({
+                                GLFW_KEY_W, GLFW_KEY_UP, GLFW_KEY_S, GLFW_KEY_DOWN,
+                                GLFW_KEY_A, GLFW_KEY_LEFT, GLFW_KEY_D, GLFW_KEY_RIGHT,
+                                GLFW_KEY_SPACE, GLFW_KEY_LEFT_SHIFT, GLFW_KEY_LEFT_CONTROL,
+                                GLFW_KEY_TAB, GLFW_KEY_ESCAPE,GLFW_KEY_E,GLFW_KEY_R,GLFW_KEY_F
+                        });
 
+        // Character movement
+        actions.addAction("MoveForward", {GLFW_KEY_W, GLFW_KEY_UP});
+        actions.addAction("MoveBack", {GLFW_KEY_S, GLFW_KEY_DOWN});
+        actions.addAction("MoveLeft", {GLFW_KEY_A, GLFW_KEY_LEFT});
+        actions.addAction("MoveRight", {GLFW_KEY_D, GLFW_KEY_RIGHT});
+        actions.addAction("Jump", {GLFW_KEY_SPACE});
+        actions.addAction("Sprint", {GLFW_KEY_LEFT_SHIFT});
+        actions.addAction("Crouch", {GLFW_KEY_LEFT_CONTROL});
+
+        // Debug/UI actions
+        actions.addAction("ToggleDebug", {GLFW_KEY_TAB});
+        actions.addAction("Escape", {GLFW_KEY_ESCAPE});
+        actions.addAction("CastSphere", {GLFW_KEY_E});
+        actions.addAction("CastWall", {GLFW_KEY_R});
+        actions.addAction("AirReset", {GLFW_KEY_F});
+
+    }
+
+    void Game::setupCamera() {
+        // --- Camera setup ---
+        cameraPos = glm::vec3(0.0f, 0.0f, 80.0f);
+        cameraRotation = glm::vec2(0.0f, -90.0f);
         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
     }
 
 
     void Game::generateChunks() {
-        // Clear existing chunks first
-        chunkManager->clear();
-
-        // Terrain generation parameters
-        const int WORLD_HEIGHT = 3; // Number of chunks in Y direction for terrain
-        const int BEDROCK_LEVEL = 1; // How many layers of bedrock at bottom
-        const int BEDROCK_SIDE_THICKNESS = 1; // Thickness of side walls
-        const int WORLD_RADIUS = ChunkCount; // Increased from ChunkCount*2 to 15 (30 chunks across)
-
-        // Create random generators
         std::mt19937 rng(std::random_device{}());
-        std::uniform_real_distribution<float> heightVariation(-2.0f, 4.0f);
-        std::uniform_real_distribution<float> colorVariation(0.7f, 1.0f);
 
-        // Terrain materials
-        glm::vec3 stoneColor = glm::vec3(0.5f, 0.5f, 0.5f); // Grayish
-        glm::vec3 dirtColor = glm::vec3(0.6f, 0.4f, 0.2f);  // Brownish
-        glm::vec3 grassColor = glm::vec3(0.2f, 0.6f, 0.3f); // Green
-        glm::vec3 bedrockColor = glm::vec3(0.1f, 0.1f, 0.1f); // Black
+        std::uniform_real_distribution<float> distPos(-(ChunkCount * 4), (ChunkCount * 4)); // Reduced range
+        std::uniform_real_distribution<float> distScale(0.5f, 3.0f);
+        std::uniform_real_distribution<float> distColor(0.3f, 1.0f);
 
-        size_t solidVoxels = 0;
-        std::unordered_set<ChunkCoord, ChunkCoordHash> createdChunks;
+        std::vector<WorldPlanet> worldPlanets;
 
-        // Generate terrain plane with some height variation
-        for (int cx = -WORLD_RADIUS; cx <= WORLD_RADIUS; ++cx) {
-            for (int cz = -WORLD_RADIUS; cz <= WORLD_RADIUS; ++cz) {
-                // Calculate base height for this column (in voxels)
-                float baseHeightVoxels = 40.0f + heightVariation(rng) *
-                                                 sin(cx * 0.3f) * cos(cz * 0.3f);
-
-                // Generate chunks in this column
-                for (int cy = 0; cy < WORLD_HEIGHT; ++cy) {
-                    ChunkCoord coord{cx, cy, cz};
-
-                    // Skip chunks that would be outside world boundaries
-                    if (abs(cx) > WORLD_RADIUS - BEDROCK_SIDE_THICKNESS ||
-                        abs(cz) > WORLD_RADIUS - BEDROCK_SIDE_THICKNESS) {
-                        // This is a side wall - make it bedrock using SDF approach
-                        chunkManager->addChunk(coord, VoxelCategory::STATIC);
-                        Chunk* chunk = chunkManager->getChunk(coord);
-                        if (chunk) {
-                            chunk->coord = coord;
-                            chunk->clear(); // Sets density to -1000.0f
-
-                            // Fill with bedrock SDF (local implementation)
-                            {
-                                glm::vec3 chunkOrigin(coord.x * CHUNK_SIZE, coord.y * CHUNK_SIZE, coord.z * CHUNK_SIZE);
-
-                                // Determine which wall we're creating
-                                bool isXWall = abs(coord.x) > ChunkCount * 2 - 1;
-                                bool isZWall = abs(coord.z) > ChunkCount * 2 - 1;
-
-                                for (int x = 0; x <= CHUNK_SIZE; ++x) {
-                                    for (int y = 0; y <= CHUNK_SIZE; ++y) {
-                                        for (int z = 0; z <= CHUNK_SIZE; ++z) {
-                                            glm::vec3 worldPos = chunkOrigin + glm::vec3(x, y, z);
-                                            float density = -1000.0f; // Start with air
-
-                                            if (isXWall) {
-                                                // X wall SDF
-                                                float wallX = (coord.x > 0) ? (ChunkCount * 2 * CHUNK_SIZE) : (-ChunkCount * 2 * CHUNK_SIZE);
-                                                float wallDensity = 5.0f - abs(worldPos.x - wallX); // Positive inside wall
-                                                density = std::max(density, wallDensity);
-                                            }
-
-                                            if (isZWall) {
-                                                // Z wall SDF
-                                                float wallZ = (coord.z > 0) ? (ChunkCount * 2 * CHUNK_SIZE) : (-ChunkCount * 2 * CHUNK_SIZE);
-                                                float wallDensity = 5.0f - abs(worldPos.z - wallZ); // Positive inside wall
-                                                density = std::max(density, wallDensity);
-                                            }
-
-                                            // Always have a floor
-                                            float floorDensity = (worldPos.y + 5.0f);
-                                            density = std::max(density, floorDensity);
-
-                                            chunk->voxels[x][y][z].density = density;
-
-                                            if (density >= -1.0f) {
-                                                chunk->voxels[x][y][z].type = 4;
-                                                chunk->voxels[x][y][z].material = 0;
-                                                chunk->voxels[x][y][z].color = bedrockColor * glm::vec3(colorVariation(rng));
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            createdChunks.insert(coord);
-                            chunk->meshDirty = true;
-                            chunk->lightingDirty = true;
-                            FilledChunks++;
-                        }
-                        continue;
-                    }
-
-                    // Always create chunk for this coordinate
-                    chunkManager->addChunk(coord, VoxelCategory::DYNAMIC);
-                    Chunk* chunk = chunkManager->getChunk(coord);
-                    if (!chunk) continue;
-
-                    chunk->coord = coord;
-                    chunk->clear(); // IMPORTANT: This sets all densities to -1000.0f
-                    createdChunks.insert(coord);
-
-                    glm::vec3 chunkOrigin(cx * CHUNK_SIZE, cy * CHUNK_SIZE, cz * CHUNK_SIZE);
-                    bool chunkTouched = false;
-
-                    // Fill chunk with terrain using SDF approach for smooth surfaces
-                    for (int lx = 0; lx <= CHUNK_SIZE; ++lx) {
-                        for (int ly = 0; ly <= CHUNK_SIZE; ++ly) {
-                            for (int lz = 0; lz <= CHUNK_SIZE; ++lz) {
-                                glm::vec3 voxelWorldPos = chunkOrigin + glm::vec3(lx, ly, lz);
-
-                                // Calculate density for terrain height field
-                                {
-                                    // Start with negative value (air)
-                                    float density = -1000.0f;
-
-                                    // Add bedrock floor
-                                    float bedrockDensity = (voxelWorldPos.y + 5.0f); // Positive when y > -5
-                                    density = std::max(density, bedrockDensity);
-
-                                    // Add terrain height field
-                                    float terrainSurface = baseHeightVoxels;
-                                    float terrainDensity = terrainSurface - voxelWorldPos.y; // Positive below surface
-
-                                    // Smooth transition for natural terrain
-                                    float noise = 0.5f * sin(voxelWorldPos.x * 0.1f) * cos(voxelWorldPos.z * 0.1f);
-                                    terrainDensity += noise;
-
-                                    // Take maximum (SDF union)
-                                    density = std::max(density, terrainDensity);
-
-                                    float existingDensity = chunk->voxels[lx][ly][lz].density;
-
-                                    // SDF UNION: Take maximum density
-                                    if (density > existingDensity) {
-                                        chunk->voxels[lx][ly][lz].density = density;
-
-                                        // Set type and color if near surface
-                                        if (density >= -1.0f) {
-                                            // Determine material based on height
-                                            if (cy < BEDROCK_LEVEL) {
-                                                // Bedrock layer
-                                                chunk->voxels[lx][ly][lz].type = 4;
-                                                chunk->voxels[lx][ly][lz].material = 0;
-                                                chunk->voxels[lx][ly][lz].color = bedrockColor *
-                                                                                  glm::vec3(colorVariation(rng));
-                                            } else if (voxelWorldPos.y < baseHeightVoxels - CHUNK_SIZE) {
-                                                // Deep stone
-                                                chunk->voxels[lx][ly][lz].type = 1;
-                                                chunk->voxels[lx][ly][lz].material = 0;
-                                                chunk->voxels[lx][ly][lz].color = stoneColor *
-                                                                                  glm::vec3(colorVariation(rng));
-                                            } else if (voxelWorldPos.y < baseHeightVoxels - 2) {
-                                                // Upper stone
-                                                chunk->voxels[lx][ly][lz].type = 1;
-                                                chunk->voxels[lx][ly][lz].material = 0;
-                                                chunk->voxels[lx][ly][lz].color = stoneColor *
-                                                                                  glm::vec3(0.8f + colorVariation(rng) * 0.2f);
-                                            } else if (voxelWorldPos.y < baseHeightVoxels) {
-                                                // Dirt layer
-                                                chunk->voxels[lx][ly][lz].type = 1;
-                                                chunk->voxels[lx][ly][lz].material = 1;
-                                                chunk->voxels[lx][ly][lz].color = dirtColor *
-                                                                                  glm::vec3(colorVariation(rng));
-                                            } else if (voxelWorldPos.y < baseHeightVoxels + 1) {
-                                                // Surface (grass or dirt)
-                                                if (fmod(voxelWorldPos.x * voxelWorldPos.z, 3.0f) < 1.0f) {
-                                                    chunk->voxels[lx][ly][lz].type = 1;
-                                                    chunk->voxels[lx][ly][lz].material = 2;
-                                                    chunk->voxels[lx][ly][lz].color = grassColor *
-                                                                                      glm::vec3(colorVariation(rng));
-                                                } else {
-                                                    chunk->voxels[lx][ly][lz].type = 1;
-                                                    chunk->voxels[lx][ly][lz].material = 1;
-                                                    chunk->voxels[lx][ly][lz].color = dirtColor *
-                                                                                      glm::vec3(colorVariation(rng));
-                                                }
-                                            }
-
-                                            if (density >= 0) {
-                                                solidVoxels++;
-                                                chunkTouched = true;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if (chunkTouched) {
-                        chunk->meshDirty = true;
-                        chunk->lightingDirty = true;
-                        FilledChunks++;
-                    }
-                }
-            }
+        // Create solid planets (type 1)
+        int planetCount = 20;
+        for (int i = 0; i < planetCount; ++i) {
+            WorldPlanet p;
+            p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
+            p.radius = distScale(rng) * CHUNK_SIZE;
+            p.color = glm::vec3(distColor(rng), distColor(rng), distColor(rng));
+            p.type = 1; // solid
+            worldPlanets.push_back(p);
         }
 
-        // Add suns in the sky
-        std::uniform_real_distribution<float> sunDistPos(-1, 1);
-        std::uniform_real_distribution<float> sunDistScale(2.0f, 4.0f);
-        std::uniform_real_distribution<float> sunDistHeight(WORLD_RADIUS*4.0, WORLD_RADIUS*5); // High up
+        // Create suns (type 2 - fire)
+        std::uniform_real_distribution<float> lavaDistColorR(0.8f, 1.0f);
+        std::uniform_real_distribution<float> lavaDistColorG(0.2f, 0.5f);
+        std::uniform_real_distribution<float> lavaDistColorB(0.0f, 0.1f);
 
-        int sunCount = 2 + (rng() % 2); // 1-2 suns
+        int lavaCount = 4 + (rng() % 5);
+        for (int i = 0; i < lavaCount; ++i) {
+            WorldPlanet p;
+            p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
+            p.radius = distScale(rng) * CHUNK_SIZE;
+            p.color = glm::vec3(lavaDistColorR(rng), lavaDistColorG(rng), lavaDistColorB(rng));
+            p.type = 2; // fire
+            worldPlanets.push_back(p);
+        }
 
-        for (int i = 0; i < sunCount; ++i) {
-            // Create sun sphere
-            glm::vec3 sunPos = glm::vec3(
-                    sunDistPos(rng),
-                    sunDistHeight(rng), // High in the sky
-                    sunDistPos(rng)
-            );
+        // Create water planets (type 3)
+        std::uniform_real_distribution<float> waterDistColorR(0.0f, 0.2f);
+        std::uniform_real_distribution<float> waterDistColorG(0.2f, 0.8f);
+        std::uniform_real_distribution<float> waterDistColorB(0.8f, 1.0f);
 
-            float sunRadius = sunDistScale(rng) * CHUNK_SIZE;
+        int waterCount = 0 + (rng() % 1);
+        for (int i = 0; i < waterCount; ++i) {
+            WorldPlanet p;
+            p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
+            p.radius = distScale(rng) * CHUNK_SIZE;
+            p.color = glm::vec3(waterDistColorR(rng), waterDistColorG(rng), waterDistColorB(rng));
+            p.type = 3; // water
+            worldPlanets.push_back(p);
+        }
 
-            // Sun colors
-            glm::vec3 sunColor;
-            if (i == 0) {
-                sunColor = glm::vec3(1.0f, 0.5f, 0.0f); // Yellowish sun
-            } else {
-                sunColor = glm::vec3(0.8f, 0.7f, 0.0f); // Greenish sun
-            }
+        // Carve planets into chunks
+        size_t solidVoxels = 0;
 
-            // Carve sun sphere into chunks
-            int minCX = worldToChunk(sunPos.x - sunRadius);
-            int maxCX = worldToChunk(sunPos.x + sunRadius);
-            int minCY = worldToChunk(sunPos.y - sunRadius);
-            int maxCY = worldToChunk(sunPos.y + sunRadius);
-            int minCZ = worldToChunk(sunPos.z - sunRadius);
-            int maxCZ = worldToChunk(sunPos.z + sunRadius);
+        // DEBUG: Track how many chunks we create
+        std::unordered_set<ChunkCoord, ChunkCoordHash> createdChunks;
+
+        for (const auto &planet: worldPlanets) {
+            // Determine which chunks this planet affects
+            int minCX = worldToChunk(planet.worldPos.x - planet.radius);
+            int maxCX = worldToChunk(planet.worldPos.x + planet.radius);
+            int minCY = worldToChunk(planet.worldPos.y - planet.radius);
+            int maxCY = worldToChunk(planet.worldPos.y + planet.radius);
+            int minCZ = worldToChunk(planet.worldPos.z - planet.radius);
+            int maxCZ = worldToChunk(planet.worldPos.z + planet.radius);
 
             for (int cx = minCX; cx <= maxCX; ++cx) {
                 for (int cy = minCY; cy <= maxCY; ++cy) {
                     for (int cz = minCZ; cz <= maxCZ; ++cz) {
                         ChunkCoord coord{cx, cy, cz};
 
-                        // Get or create chunk
-                        Chunk* chunk = chunkManager->getChunk(coord);
+                        // Get or create chunk using MultiGridChunkManager
+                        Chunk *chunk = chunkManager->getChunk(coord);
                         if (!chunk) {
-                            chunkManager->addChunk(coord, VoxelCategory::EMISSIVE);
+                            // Determine category based on planet type
+                            VoxelCategory category;
+                            switch (planet.type) {
+                                case 2:
+                                    category = VoxelCategory::EMISSIVE;
+                                    break; // Fire
+                                case 3:
+                                    category = VoxelCategory::FLUID;
+                                    break;    // Water
+                                default:
+                                    category = VoxelCategory::STATIC;
+                                    break;  // Solid
+                            }
+                            chunkManager->addChunk(coord, category);
                             chunk = chunkManager->getChunk(coord);
+
                             if (chunk) {
+                                // Initialize the chunk if newly created
                                 chunk->coord = coord;
-                                chunk->clear();
+                                chunk->clear(); // IMPORTANT: Initialize all densities to -1000
                                 createdChunks.insert(coord);
                             }
                         }
 
                         if (!chunk) continue;
 
-                        glm::vec3 chunkOrigin(cx * CHUNK_SIZE, cy * CHUNK_SIZE, cz * CHUNK_SIZE);
+                        glm::vec3 chunkOrigin(cx * CHUNK_SIZE*VOXEL_SIZE, cy * CHUNK_SIZE*VOXEL_SIZE, cz * CHUNK_SIZE*VOXEL_SIZE);
                         bool chunkTouched = false;
 
-                        // Carve sphere into chunk
+                        // Carve sphere into chunk - FIXED: Use SDF union operation
                         for (int lx = 0; lx <= CHUNK_SIZE; ++lx) {
                             for (int ly = 0; ly <= CHUNK_SIZE; ++ly) {
                                 for (int lz = 0; lz <= CHUNK_SIZE; ++lz) {
-                                    glm::vec3 worldPos = chunkOrigin + glm::vec3(lx, ly, lz);
-                                    float dist = glm::distance(worldPos, sunPos);
+                                    glm::vec3 worldPos = chunkOrigin + glm::vec3(lx, ly, lz)*VOXEL_SIZE;
+                                    float dist = glm::distance(worldPos, planet.worldPos);
 
-                                    float sunDensity = sunRadius - dist;
+                                    // Calculate this planet's SDF value
+                                    float planetDensity = planet.radius - dist; // Positive inside, negative outside
 
-                                    // Get existing density
+                                    // Get existing density (initialized to -1000 for air)
                                     float existingDensity = chunk->voxels[lx][ly][lz].density;
 
-                                    // SDF UNION
-                                    if (sunDensity > existingDensity) {
-                                        chunk->voxels[lx][ly][lz].density = sunDensity;
+                                    // SDF UNION: Take the MAXIMUM density (most solid)
+                                    // For Marching Cubes, positive = inside, negative = outside
+                                    if (planetDensity > existingDensity) {
+                                        // This planet is "more solid" at this point
+                                        chunk->voxels[lx][ly][lz].density = planetDensity;
 
-                                        if (sunDensity >= -1.0f) {
-                                            chunk->voxels[lx][ly][lz].type = 2; // Fire/emissive
-                                            chunk->voxels[lx][ly][lz].material = 0;
-                                            chunk->voxels[lx][ly][lz].color = sunColor;
+                                        // Set type and color if we're inside or near the surface
+                                        if (planetDensity >= -1.0f) { // Near the isosurface (density ~0)
+                                            chunk->voxels[lx][ly][lz].type = planet.type;
+                                            chunk->voxels[lx][ly][lz].color = planet.color;
 
-                                            if (sunDensity >= 0) {
+                                            if (planetDensity >= 0) { // Actually inside the solid
                                                 solidVoxels++;
                                                 chunkTouched = true;
                                             }
@@ -1362,70 +1668,20 @@ namespace gl3 {
                             chunk->lightingDirty = true;
                             FilledChunks++;
 
-                            // Add lighting for sun
-                            rebuildChunkLights(coord);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Add ceiling bedrock layer at the top of the world using SDF
-        int ceilingLevel = WORLD_HEIGHT - 1;
-        float ceilingY = ceilingLevel * CHUNK_SIZE + CHUNK_SIZE / 2.0f;
-
-        for (int cx = -WORLD_RADIUS; cx <= WORLD_RADIUS; ++cx) {
-            for (int cz = -WORLD_RADIUS; cz <= WORLD_RADIUS; ++cz) {
-                ChunkCoord coord{cx, ceilingLevel, cz};
-
-                chunkManager->addChunk(coord, VoxelCategory::STATIC);
-                Chunk* chunk = chunkManager->getChunk(coord);
-                if (chunk) {
-                    chunk->coord = coord;
-                    chunk->clear();
-
-                    // Fill with ceiling SDF
-                    {
-                        glm::vec3 chunkOrigin(coord.x * CHUNK_SIZE, coord.y * CHUNK_SIZE, coord.z * CHUNK_SIZE);
-
-                        for (int x = 0; x <= CHUNK_SIZE; ++x) {
-                            for (int y = 0; y <= CHUNK_SIZE; ++y) {
-                                for (int z = 0; z <= CHUNK_SIZE; ++z) {
-                                    glm::vec3 worldPos = chunkOrigin + glm::vec3(x, y, z);
-
-                                    // Ceiling SDF: positive below ceiling, negative above
-                                    float ceilingDensity = ceilingY - worldPos.y - 2.0f;
-
-                                    // Start with existing density (from chunk->clear() = -1000)
-                                    float existingDensity = chunk->voxels[x][y][z].density;
-
-                                    // SDF union
-                                    if (ceilingDensity > existingDensity) {
-                                        chunk->voxels[x][y][z].density = ceilingDensity;
-
-                                        if (ceilingDensity >= -1.0f) {
-                                            chunk->voxels[x][y][z].type = 4;
-                                            chunk->voxels[x][y][z].material = 0;
-                                            chunk->voxels[x][y][z].color = bedrockColor * glm::vec3(colorVariation(rng));
-                                        }
-                                    }
-                                }
+                            // Rebuild lights for this chunk if it contains fire
+                            if (planet.type == 2) {
+                                rebuildChunkLights(coord);
                             }
                         }
                     }
-
-                    createdChunks.insert(coord);
-                    chunk->meshDirty = true;
-                    chunk->lightingDirty = true;
-                    FilledChunks++;
                 }
             }
         }
 
         // Statistics
-        std::cout << "Generated " << createdChunks.size() << " chunks\n";
+        std::cout << "Generated " << worldPlanets.size() << " planets\n";
+        std::cout << "Touched " << FilledChunks << " chunks\n";
         std::cout << "Created " << solidVoxels << " solid voxels\n";
-        std::cout << "Added " << sunCount << " sun(s) in the sky\n";
     }
 
     void Game::setupVEffects() {
@@ -1444,10 +1700,96 @@ namespace gl3 {
         accumulator += deltaTime;
         if (accumulator >= fixedTimeStep) {
             // Update the entities based on what happened in the physics step
+            // Get input for character
+            glm::vec3 moveInput(0.0f);
+            if (actions["MoveForward"].isPressed) moveInput.z += 10.0f;
+            if (actions["MoveBack"].isPressed) moveInput.z -= 10.0f;
+            if (actions["MoveLeft"].isPressed) moveInput.x -= 10.0f;
+            if (actions["MoveRight"].isPressed) moveInput.x += 10.0f;
+
+            bool jump = actions["Jump"].wasJustPressed;
+            bool sprint = actions["Sprint"].isPressed;
+            bool crouch = actions["Crouch"].isPressed;
+
+            // Get mouse delta (you'll need to implement this)
+            glm::vec3 cameraFront = getCameraFront();
+            glm::vec3 cameraRight = glm::normalize(glm::cross(cameraFront, glm::vec3(0.0f, 1.0f, 0.0f)));
+
+            // Get mouse delta
+            glm::vec2 mouseDelta = getMouseDelta();
+
+            std::cout<<"move Input: "<<moveInput.x<<" X,"<<moveInput.y<<" Y,"<<moveInput.z<<" Z,"<<"\n";
+            // Update character with camera-relative movement
+            characterController.update(deltaTime, moveInput, jump, sprint, crouch, mouseDelta, cameraFront, cameraRight);
 
             accumulator -= fixedTimeStep;
+            if (spellPhysics) {
+                spellPhysics->stepSimulation(deltaTime, 2, 1.0f/120.0f); // small substeps
+            }
         }
     }
+
+    void Game::applyImpactAtPosition(const glm::vec3 &worldPos, float radius, float impulse, RigidBodyPayload* payload) {
+        // tune these
+        const float damageScale = glm::clamp(impulse * 0.02f, 0.5f, 30.0f); // larger impulse -> stronger carving
+        const float maxRadius = glm::max(radius, damageScale);
+        const float radiusSq = maxRadius * maxRadius;
+
+        // Determine affected chunks in world-space (chunkWorldSize = CHUNK_SIZE * VOXEL_SIZE)
+        float chunkWorldSize = CHUNK_SIZE * VOXEL_SIZE;
+        int minCX = worldToChunk(worldPos.x - maxRadius);
+        int maxCX = worldToChunk(worldPos.x + maxRadius);
+        int minCY = worldToChunk(worldPos.y - maxRadius);
+        int maxCY = worldToChunk(worldPos.y + maxRadius);
+        int minCZ = worldToChunk(worldPos.z - maxRadius);
+        int maxCZ = worldToChunk(worldPos.z + maxRadius);
+
+        for (int cx = minCX; cx <= maxCX; ++cx) {
+            for (int cy = minCY; cy <= maxCY; ++cy) {
+                for (int cz = minCZ; cz <= maxCZ; ++cz) {
+                    ChunkCoord coord{cx, cy, cz};
+                    Chunk* chunk = chunkManager->getChunk(coord);
+                    if (!chunk) continue;
+
+                    glm::vec3 chunkMin = getChunkMin(coord);
+
+                    bool touched = false;
+                    // iterate chunk-local voxels
+                    for (int lx = 0; lx <= CHUNK_SIZE; ++lx) {
+                        for (int ly = 0; ly <= CHUNK_SIZE; ++ly) {
+                            for (int lz = 0; lz <= CHUNK_SIZE; ++lz) {
+                                glm::vec3 vWorld = chunkMin + glm::vec3((float)lx, (float)ly, (float)lz) * VOXEL_SIZE;
+                                glm::vec3 d = vWorld - worldPos;
+                                float distSq = glm::dot(d,d);
+                                if (distSq > radiusSq) continue;
+                                float dist = std::sqrt(distSq);
+                                float fall = 1.0f - (dist / maxRadius); // 1 at center -> 0 at edge
+                                float carveAmount = damageScale * fall;
+                                // reduce density
+                                float &density = chunk->voxels[lx][ly][lz].density;
+                                density -= carveAmount;
+                                if (density < 0.0f) {
+                                    chunk->voxels[lx][ly][lz].type = 0; // air
+                                }
+                                touched = true;
+                            }
+                        }
+                    }
+
+                    if (touched) {
+                        chunk->meshDirty = true;
+                        chunk->lightingDirty = true;
+                        markChunkModified(coord);
+                    }
+                }
+            }
+        }
+
+        // If you want visual effects or fragmentation hooks you can use payload->formationID/userData here
+        std::cout << "applyImpactAtPosition: hit at " << worldPos.x << "," << worldPos.y << "," << worldPos.z
+                  << " radius=" << maxRadius << " impulse=" << impulse << "\n";
+    }
+
     void Game::updateDeltaTime() {
         float frameTime = glfwGetTime();
         deltaTime = frameTime - lastFrameTime;
@@ -1551,21 +1893,27 @@ namespace gl3 {
 
         chunk->emissiveLights.clear();
 
-        glm::vec3 chunkOrigin(coord.x * CHUNK_SIZE, coord.y * CHUNK_SIZE, coord.z * CHUNK_SIZE);
+        // chunk origin in world units
+        glm::vec3 chunkOrigin(
+                coord.x * CHUNK_SIZE * gl3::VOXEL_SIZE,
+                coord.y * CHUNK_SIZE * gl3::VOXEL_SIZE,
+                coord.z * CHUNK_SIZE * gl3::VOXEL_SIZE
+        );
 
         // Cluster emissive voxels within this chunk
         glm::vec3 sumPos(0.0f);
         glm::vec3 sumColor(0.0f);
         int count = 0;
 
-        for (int x = 0; x < CHUNK_SIZE; ++x) {
-            for (int y = 0; y < CHUNK_SIZE; ++y) {
-                for (int z = 0; z < CHUNK_SIZE; ++z) {
+        for (int x = 0; x <= CHUNK_SIZE; ++x) {
+            for (int y = 0; y <= CHUNK_SIZE; ++y) {
+                for (int z = 0; z <= CHUNK_SIZE; ++z) {
                     const auto &vox = chunk->voxels[x][y][z];
-                    if (vox.type == 2) { // Fire voxel
-                        sumPos += chunkOrigin + glm::vec3(x, y, z);
+                    if (vox.type == 2) { // Fire / emissive voxel
+                        glm::vec3 voxelWorldPos = chunkOrigin + glm::vec3((float)x, (float)y, (float)z) * gl3::VOXEL_SIZE;
+                        sumPos += voxelWorldPos;
                         sumColor += vox.color;
-                        count++;
+                        ++count;
                     }
                 }
             }
@@ -1575,7 +1923,8 @@ namespace gl3 {
             VoxelLight light;
             light.pos = sumPos / float(count);
             light.color = sumColor / float(count);
-            light.intensity = float(count) * 155.0f; // Scale intensity
+            // Tune intensity scaling if VOXEL_SIZE changes (it affects perceived scale)
+            light.intensity = float(count) * 35.0f;
             light.id = makeLightID(coord.x, coord.y, coord.z);
 
             chunk->emissiveLights.push_back(light);
@@ -1689,7 +2038,7 @@ namespace gl3 {
                 if (usedLightIDs.insert(light.id).second) {
                     SunInstance inst;
                     inst.position = light.pos;
-                    inst.scale = std::sqrt(light.intensity) * 0.5f;
+                    inst.scale = std::sqrt(light.intensity)/VOXEL_SIZE * 0.5f;
                     inst.color = light.color * 2.5f;
                     emissiveBillboards.push_back(inst);
                 }
@@ -1706,64 +2055,76 @@ namespace gl3 {
 ////----Input Code------------------------------------------------------------------------------------------------------------------------------
 
     void Game::update() {
-        if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
-            glfwSetWindowShouldClose(window, true);
-        }
-        if (glfwGetKey(window, GLFW_KEY_TAB) == GLFW_PRESS) {
-            if (DebugMode1) {
-                voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel.frag");
-                DebugMode1 = false;
-            } else {
-                voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel_debug.frag");
-                DebugMode1 = true;
-                activeDebugMode = 0;
+            input.update(window);
+            actions.update(input);
+
+            // Now use clean, readable input checks
+            if (actions["Escape"].wasJustPressed) {
+                glfwSetWindowShouldClose(window, true);
             }
-        }
-        if (glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS) {
-            activeDebugMode = 1;
-        }
-        if (glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS) {
-            activeDebugMode = 2;
-        }
-        if (glfwGetKey(window, GLFW_KEY_3) == GLFW_PRESS) {
-            activeDebugMode = 3;
-        }
-        if (glfwGetKey(window, GLFW_KEY_4) == GLFW_PRESS) {
-            activeDebugMode = 4;
-        }
-        if (glfwGetKey(window, GLFW_KEY_5) == GLFW_PRESS) {
-            activeDebugMode = 5;
-        }
 
-        if (glfwGetKey(window, GLFW_KEY_CAPS_LOCK) == GLFW_PRESS) {
-            DebugMode2 = (!DebugMode2);
-        }
+            if (actions["ToggleDebug"].wasJustPressed) {
+                DebugMode1 = !DebugMode1;
+                std::cout << "Debug mode: " << (DebugMode1 ? "ON" : "OFF") << "\n";
 
-        // Cast gravity well spell on right mouse click
-        static bool wasMousePressed = false;
-        // In update() function:
-        if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
-            if (!wasMousePressed) {
-                RayCastResult hit = rayCastFromCamera(250.0f);
-                glm::vec3 spellCenter = hit.hit ? hit.hitPosition :
-                                        (cameraPos + getCameraFront() * 125.0f);
-
-                // Different spells with different delays
-                float delay = 2.0f; // Default 2 second delay
-
-                // Optional: Change delay based on modifier keys
-                if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
-                    delay = 0.5f; // Fast spell with Shift
-                } else if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS) {
-                    delay = 3.0f; // Slow spell with Ctrl
+                // Optional: Update shaders like before
+                if (DebugMode1) {
+                    voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel_debug.frag");
+                    activeDebugMode = 0;
+                } else {
+                    voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel.frag");
                 }
-
-                castGravityWellSpell(spellCenter, 300.0f, 0, 10.0f);
-                wasMousePressed = true;
             }
-        } else {
-            wasMousePressed = false;
+
+        if (actions["CastSphere"].wasJustPressed) {
+            std::cout << "Spell Triggered" << "\n";
+            RayCastResult hit = rayCastFromCamera(250.0f);
+            glm::vec3 spellCenter = hit.hit ? hit.hitPosition :
+                                    (cameraPos + getCameraFront() * 125.0f);
+
+            // Replace castGravityWellSpell with castSpellSphere
+            castSpellSphere(spellCenter, 100.0f, 0, 10.0f);
         }
+
+        if (actions["CastWall"].wasJustPressed) {
+            std::cout << "Wall Spell Triggered" << "\n";
+            RayCastResult hit = rayCastFromCamera(250.0f);
+            glm::vec3 spellCenter = hit.hit ? hit.hitPosition :
+                                    (cameraPos + getCameraFront() * 10.0f);
+
+            // Get camera direction for wall orientation
+            glm::vec3 cameraFront = getCameraFront();
+
+            // Wall dimensions (tune these values)
+            float wallWidth = 1.0f*VOXEL_SIZE;    // Horizontal width
+            float wallHeight = 0.5f*VOXEL_SIZE;   // Vertical height
+            float wallThickness = 2.0f*VOXEL_SIZE; // How thick the wall is
+
+            // Cast the wall spell
+            castSpellWall(spellCenter, glm::vec3(0,0,1),
+                          wallWidth, wallHeight, wallThickness,
+                          0, 2.0f*VOXEL_SIZE);
+        }
+        if (actions["AirReset"].wasJustPressed) {
+            std::cout << "Platform Spell Triggered" << "\n";
+            glm::vec3 spellCenter =(cameraPos + glm::vec3(0,-1,0) * 20.0f*VOXEL_SIZE);
+
+            // Wall dimensions (tune these values)
+            float wallWidth = 0.05f*VOXEL_SIZE;    // Horizontal width
+            float wallHeight = 0.05f*VOXEL_SIZE;   // Vertical height
+            float wallThickness = 3.0f*VOXEL_SIZE; // How thick the wall is
+
+            // Cast the wall spell
+            castSpellWall(spellCenter, glm::vec3(0,-1,0),
+                          wallWidth, wallHeight, wallThickness,
+                          0, 7.0f*VOXEL_SIZE);
+        }
+
+
+            // Character movement - perfect for your controller
+
+            // Update camera to follow character
+            updateCamera();
 
         // Update dynamic chunks
         // chunkManager->forEachDynamicChunk([this](Chunk* chunk) {
@@ -1778,8 +2139,9 @@ namespace gl3 {
 
 
     void Game::handleCameraInput() {
-        float speed = 20.0f * deltaTime;
+        float speed = 20.0f*VOXEL_SIZE * deltaTime;
 
+        /*
         // WASD movement (relative to view)
         if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
             cameraPos += speed * getCameraFront();
@@ -1795,6 +2157,7 @@ namespace gl3 {
             cameraPos.y += speed;   // Fly up
         if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS)
             cameraPos.y -= speed;   // Fly down (or use GLFW_KEY_LEFT_SHIFT if you prefer)
+*/
 
         // Mouse rotation
         double xpos, ypos;
@@ -1836,13 +2199,13 @@ namespace gl3 {
     void Game::renderChunks() {
         int built = 0;
         int lighted = 0;
-        int culledChunks = 0;
-        int occludedChunks = 0; // Track occlusion culled chunks
+        int culledChunks=0;
 
-        std::cout << "\nFrame:" << (frameCounter - 29) << "\n";
+        std::cout<<"\nFrame:"<<(frameCounter-29)<<"\n";
         if (DebugMode2) {
             glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-        } else {
+        }
+        else {
             glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
         }
         float aspect = (windowHeight == 0) ? (float) windowWidth / 1.0f : (float) windowWidth / (float) windowHeight;
@@ -1866,184 +2229,196 @@ namespace gl3 {
         int meshRegens = 0;
         int totalChecked = 0;
 
+
         // STEP 1: Update global light spatial hash (replaces grid)
         if (frameCounter % 30 == 0) { // Update every 30 frames
             CpuTimer t7("\n Update Light Spacial Hash");
             updateLightSpatialHash();
         }
 
-        // STEP 1.5: Pre-calculate visible chunks with occlusion culling
-        // We'll use a simple approach: chunks that are behind solid terrain from camera view
-        std::vector<std::pair<ChunkCoord, Chunk*>> visibleChunks;
-        visibleChunks.reserve(totalChunks / 4); // Reserve some space
-
-        // For terrain, we can use ray-marching or height-based occlusion
-        // Simple approach: Only render chunks within a certain distance and not occluded
-
+        // STEP 2: First, generate meshes for dirty chunks
         const int renderRadius = RenderingRange;
-
-        // Get camera direction
-        glm::vec3 cameraDir = getCameraFront();
-
-        // STEP 2: First, generate meshes for dirty chunks and collect visible chunks
+        //if(DebugMode1) {CpuTimer t8("Generate Meshes");}
         for (int cx = camCX - renderRadius; cx <= camCX + renderRadius; ++cx) {
             for (int cy = camCY - renderRadius; cy <= camCY + renderRadius; ++cy) {
                 for (int cz = camCZ - renderRadius; cz <= camCZ + renderRadius; ++cz) {
                     totalChecked++;
                     ChunkCoord coord{cx, cy, cz};
+                    if(!isChunkVisible(coord))
+                    {
+                        culledChunks++;
+                        continue;
+                    }
+                    Chunk *chunk = chunkManager->getChunk(coord);
 
-
-                    Chunk* chunk = chunkManager->getChunk(coord);
                     if (!chunk) continue;
                     if (!hasSolidVoxels(*chunk)) continue;
 
-                    // Occlusion culling for terrain
-                    if (isChunkOccluded(coord, cameraPos)) {
-                        occludedChunks++;
-                        continue;
-                    }
-
-                    // Add to visible chunks list
-                    visibleChunks.emplace_back(coord, chunk);
-
                     // Regenerate mesh if dirty
-                    if ((chunk->meshDirty && built < MAX_CHUNKS_PER_FRAME) ||
-                        (!chunk->gpuCache.isValid && built < MAX_CHUNKS_PER_FRAME)) {
+                    if (chunk->meshDirty&&built < MAX_CHUNKS_PER_FRAME || !chunk->gpuCache.isValid&&built < MAX_CHUNKS_PER_FRAME) {
                         built++;
-                        if (built <= 1 && DebugMode1) {
+                        if(built<=1&&DebugMode1)
+                        {
                             CpuTimer t5("generateChunkMesh");
                             generateChunkMesh(chunk);
-                        } else {
-                            generateChunkMesh(chunk);
                         }
-                        if (built <= 1) {
+                        else{
+                        generateChunkMesh(chunk);
+                        }
+                        if(built<=1) {
                             std::cout << "approximate Mesh Progress: "
-                                      << ((float)(frameCounter - 29) * MAX_CHUNKS_PER_FRAME / FilledChunks) * 100.0f
+                                      << ((float) (frameCounter - 29) * MAX_CHUNKS_PER_FRAME / FilledChunks) * 100.0f
                                       << "% \n";
                         }
                         meshRegens++;
                     }
 
                     // Rebuild lighting if dirty
-                    if (chunk->lightingDirty && lighted < MAX_CHUNKS_PER_FRAME) {
+                    if (chunk->lightingDirty&&lighted<MAX_CHUNKS_PER_FRAME) {
                         lighted++;
-                        if (lighted == 1 && DebugMode1) {
+                        if(lighted==1&&DebugMode1)
+                        {
                             CpuTimer t4("rebuildChunkLights");
                             rebuildChunkLights(coord);
-                        } else {
+                        }
+                        else {
                             rebuildChunkLights(coord);
                         }
-                        if (lighted <= 1) {
+                        if(lighted<=1) {
                             std::cout << "approximate Lighting Progress: "
-                                      << ((float)(frameCounter - 29) * MAX_CHUNKS_PER_FRAME / FilledChunks) * 100.0f
-                                      << "% \n";
+                                    <<((float) (frameCounter - 29) * MAX_CHUNKS_PER_FRAME / FilledChunks) * 100.0f
+                                    << "% \n";
                         }
                         chunk->lightingDirty = false;
                     }
+
                 }
             }
         }
-
-        if (DebugMode1) {
-            std::cout << "Mesh generation: culled " << culledChunks << " of " << totalChecked
-                      << " chunks (" << (100.0f * culledChunks / totalChecked) << "% culled)\n";
-            std::cout << "Occlusion culled: " << occludedChunks << " chunks\n";
-        }
-
-        // STEP 3: Sort visible chunks by distance to camera (front-to-back for better occlusion)
-        std::sort(visibleChunks.begin(), visibleChunks.end(),
-                  [&](const std::pair<ChunkCoord, Chunk*>& a, const std::pair<ChunkCoord, Chunk*>& b) {
-                      glm::vec3 aCenter = glm::vec3(
-                              a.first.x * CHUNK_SIZE + CHUNK_SIZE / 2,
-                              a.first.y * CHUNK_SIZE + CHUNK_SIZE / 2,
-                              a.first.z * CHUNK_SIZE + CHUNK_SIZE / 2
-                      );
-                      glm::vec3 bCenter = glm::vec3(
-                              b.first.x * CHUNK_SIZE + CHUNK_SIZE / 2,
-                              b.first.y * CHUNK_SIZE + CHUNK_SIZE / 2,
-                              b.first.z * CHUNK_SIZE + CHUNK_SIZE / 2
-                      );
-
-                      // Calculate squared distances (faster than actual distance)
-                      float distA2 = glm::dot(aCenter - cameraPos, aCenter - cameraPos);
-                      float distB2 = glm::dot(bCenter - cameraPos, bCenter - cameraPos);
-                      return distA2 < distB2;
-                  });
-
-        // STEP 4: Now RENDER only visible chunks
+        if(DebugMode1) {std::cout << "Mesh generation: culled " << culledChunks << " of " << totalChecked
+                  << " chunks (" << (100.0f * culledChunks / totalChecked) << "% culled)\n";}
+        culledChunks = 0;
+        totalChecked = 0;
+        // STEP 3: Now RENDER all visible chunks
         voxelShader->use();  // Activate RENDER shader
 
         // Set common uniforms that don't change per chunk
+
         voxelShader->setMatrix("model", glm::mat4(1.0f));
         voxelShader->setMatrix("mvp", pv);
         voxelShader->setVec3("viewPos", cameraPos);
-        voxelShader->setVec3("ambientColor", glm::vec3(0.0002f));
+        voxelShader->setVec3("ambientColor", glm::vec3(0.02f));
 
+// or show signed N·L for the strongest light (index 0)
         if (DebugMode1) {
             voxelShader->setInt("debugMode", activeDebugMode % 5);
         } else {
             voxelShader->setFloat("emission", 0.0f);
         }
 
-        // Render visible chunks
-        for (const auto& [coord, chunk] : visibleChunks) {
-            // Skip if no geometry
-            if (chunk->gpuCache.vertexCount == 0 || !chunk->gpuCache.isValid) {
-                continue;
-            }
+        std::vector<Chunk> emissiveChunks;
+        chunkManager->forEachEmissiveChunk([this, &emissiveChunks](Chunk *chunk) {
+                emissiveChunks.push_back(*chunk);
+        });
 
-            // Update lights for this chunk (check if outdated)
-            if (frameCounter - chunk->gpuCache.lastLightUpdateFrame > LIGHT_UPDATE_INTERVAL ||
-                chunk->gpuCache.nearbyLights.empty()) {
-                updateChunkLights(chunk);
-            }
+        //if(DebugMode1) {CpuTimer t6("ChunkLighting");}
+        for (int cx = camCX - renderRadius; cx <= camCX + renderRadius; ++cx) {
+            for (int cy = camCY - renderRadius; cy <= camCY + renderRadius; ++cy) {
+                for (int cz = camCZ - renderRadius; cz <= camCZ + renderRadius; ++cz) {
+                    totalChecked++;
+                    ChunkCoord coord{cx, cy, cz};
+                    if(!isChunkVisible(coord))
+                    {
+                        culledChunks++;
+                        continue;
+                    }
+                    Chunk *chunk = chunkManager->getChunk(coord);
+                    if (!chunk || !hasSolidVoxels(*chunk)) continue;
 
-            // Collect billboards from emissive chunks
-            for (const auto& light : chunk->emissiveLights) {
-                if (usedLightIDs.insert(light.id).second) {
-                    SunInstance inst;
-                    inst.position = light.pos;
-                    inst.scale = std::sqrt(light.intensity) * 0.5f;
-                    inst.color = light.color * 1.0f;
-                    emissiveBillboards.push_back(inst);
+                    // Skip if no geometry
+                    if (chunk->gpuCache.vertexCount == 0 || !chunk->gpuCache.isValid) {
+                        continue;
+                    }
+
+                    // Update lights for this chunk (check if outdated)
+                    if (frameCounter - chunk->gpuCache.lastLightUpdateFrame > LIGHT_UPDATE_INTERVAL ||
+                        chunk->gpuCache.nearbyLights.empty()) {
+                        updateChunkLights(chunk);
+                    }
+
+                    // Collect billboards from emissive chunks
+                    for (const auto &light: chunk->emissiveLights) {
+                        if (usedLightIDs.insert(light.id).second) {
+                            SunInstance inst;
+                            inst.position = light.pos;
+                            inst.scale = std::sqrt(light.intensity) * 0.5f;
+                            inst.color = light.color * 1.0f;
+                            emissiveBillboards.push_back(inst);
+                        }
+                    }
+
+                    //std::cout<<(chunk->gpuCache.nearbyLights.size())<<"\n";
+
+                    // Set per-chunk uniforms (lights)
+                    /*if((chunk->gpuCache.nearbyLights.size()>0)) {
+                        std::cout << "lights exist for this chunk: "<< chunk->gpuCache.nearbyLights.size() << "\n";
+                    }*/
+                    bool skip=false;
+                    for(int k=0; k<emissiveChunks.size();k++)
+                    {
+                        if(emissiveChunks.at(k).coord==chunk->coord)
+                        {
+                            skip=true;
+                            continue;
+                        }
+                    }
+                    if(skip)
+                    {
+                        continue;
+                    }
+                    int numLights = std::min((int) chunk->gpuCache.nearbyLights.size(), MAX_LIGHTS);
+                    voxelShader->setInt("numLights", numLights);
+                    for (int i = 0; i < numLights; ++i) {
+                        const VoxelLight *light = chunk->gpuCache.nearbyLights[i];
+                        voxelShader->setVec3("lightPos[" + std::to_string(i) + "]", light->pos);
+                        voxelShader->setVec3("lightColor[" + std::to_string(i) + "]", light->color);
+                        voxelShader->setFloat("lightIntensity[" + std::to_string(i) + "]", light->intensity);
+                    }
+
+                    // For remaining light slots, set them to zero
+                    for (int i = numLights; i < MAX_LIGHTS; ++i) {
+                        voxelShader->setVec3("lightPos[" + std::to_string(i) + "]", glm::vec3(0.0f));
+                        voxelShader->setVec3("lightColor[" + std::to_string(i) + "]", glm::vec3(0.0f));
+                        voxelShader->setFloat("lightIntensity[" + std::to_string(i) + "]", 0.0f);
+                    }
+
+                    // Draw from chunk's VAO
+                    glBindVertexArray(chunk->gpuCache.vao);
+                    glDrawArrays(GL_TRIANGLES, 0, chunk->gpuCache.vertexCount);
+                    glBindVertexArray(0);
+
+                    renderedChunks++;
                 }
             }
-
-            int numLights = std::min((int)chunk->gpuCache.nearbyLights.size(), MAX_LIGHTS);
-            voxelShader->setInt("numLights", numLights);
-            for (int i = 0; i < numLights; ++i) {
-                const VoxelLight* light = chunk->gpuCache.nearbyLights[i];
-                voxelShader->setVec3("lightPos[" + std::to_string(i) + "]", light->pos);
-                voxelShader->setVec3("lightColor[" + std::to_string(i) + "]", light->color);
-                voxelShader->setFloat("lightIntensity[" + std::to_string(i) + "]", light->intensity);
-            }
-
-            // For remaining light slots, set them to zero
-            for (int i = numLights; i < MAX_LIGHTS; ++i) {
-                voxelShader->setVec3("lightPos[" + std::to_string(i) + "]", glm::vec3(0.0f));
-                voxelShader->setVec3("lightColor[" + std::to_string(i) + "]", glm::vec3(0.0f));
-                voxelShader->setFloat("lightIntensity[" + std::to_string(i) + "]", 0.0f);
-            }
-
-            // Draw from chunk's VAO
-            glBindVertexArray(chunk->gpuCache.vao);
-            glDrawArrays(GL_TRIANGLES, 0, chunk->gpuCache.vertexCount);
-            glBindVertexArray(0);
-
-            renderedChunks++;
         }
 
-        if (DebugMode1) {
-            std::cout << "Rendered " << renderedChunks << " of " << visibleChunks.size()
-                      << " visible chunks (Regenerated: " << meshRegens << ")\n";
-            std::cout << "Total occlusion: " << (culledChunks + occludedChunks) << " chunks culled\n";
-        }
+        if(DebugMode1) {
+            std::cout << "Lighting/Rendering: culled " << culledChunks << " of " << totalChecked
+                      << " chunks (" << (100.0f * culledChunks / totalChecked) << "% culled)\n";
 
+            // Also add frustum culling statistics
+            std::cout << "Frustum culling effectiveness: "
+                      << (100.0f * (totalChunks - totalChecked + culledChunks) / totalChunks)
+                      << "% of chunks were culled\n";
+        }
         // Render billboards
         if (!emissiveBillboards.empty() && !DebugMode1) {
-            sunBillboards.render(emissiveBillboards, view, projection, (float)glfwGetTime());
+            sunBillboards.render(emissiveBillboards, view, projection, (float) glfwGetTime());
         }
+
+        //std::cout << "Rendered " << renderedChunks << " chunks (Regenerated: " << meshRegens << ")\n";
     }
+
 
     void Game::renderAnimatedVoxels() {
         if (animatedVoxels.empty()) return;
@@ -2069,7 +2444,7 @@ namespace gl3 {
 
         instancedShader.setMatrix("pv", pv);
         instancedShader.setVec3("viewPos", cameraPos);
-        instancedShader.setVec3("ambientColor", glm::vec3(0.0002f)); // match your chunk ambient
+        instancedShader.setVec3("ambientColor", glm::vec3(0.02f)); // match your chunk ambient
 
         // Choose lights for animated voxels:
         // Use mergedEmissiveLightPool (already kept up to date) and pick up to MAX_LIGHTS
@@ -2225,7 +2600,7 @@ namespace gl3 {
 
         // Billboards
         std::vector<SunInstance> billboardInstances;
-        billboardInstances.reserve(fluidPlanets.size());
+        //billboardInstances.reserve(fluidPlanets.size());
 
         // Clear field storage
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, fieldBitsSSBO);
@@ -2241,8 +2616,8 @@ namespace gl3 {
                 {0.15f, 0.70f, 0.90f}
         };
 
-        for (size_t i = 0; i < fluidPlanets.size(); i++) {
-            WorldPlanet &planet = fluidPlanets[i];
+        for (size_t i = 0; i < 1; i++) {
+            //WorldPlanet &planet = fluidPlanets[i];
 
             // Pick blue/green color
             glm::vec3 planetColor = baseColors[i % 5];
@@ -2254,7 +2629,7 @@ namespace gl3 {
             // Voxel splat into a field
             // -------------------------
             voxelSplatShader->use();
-            voxelSplatShader->setVec3("gridOrigin", planet.worldPos - 0.5f * glm::vec3(CHUNK_SIZE));
+           // voxelSplatShader->setVec3("gridOrigin", planet.worldPos - 0.5f * glm::vec3(CHUNK_SIZE));
             voxelSplatShader->setFloat("voxelSize", 0.25f);
             voxelSplatShader->setFloat("influenceRadius", 10.0f);
 
@@ -2270,7 +2645,7 @@ namespace gl3 {
             // Marching cubes
             // -------------------------
             marchingCubesShader->use();
-            marchingCubesShader->setVec3("gridOrigin", planet.worldPos - 0.5f * glm::vec3(GRID_X, GRID_Y, GRID_Z));
+            //marchingCubesShader->setVec3("gridOrigin", planet.worldPos - 0.5f * glm::vec3(GRID_X, GRID_Y, GRID_Z));
             marchingCubesShader->setFloat("voxelSize", 0.25f);
 
             resetAtomicCounter();
@@ -2281,13 +2656,13 @@ namespace gl3 {
             // -------------------------
             voxelShader->use();
             voxelShader->setInt("numLights", 0); // not emissive — no lights needed
-            voxelShader->setVec3("ambientColor", {0.05f, 0.08f, 0.10f});
+            voxelShader->setVec3("ambientColor", glm::vec3(0.02f));
             voxelShader->setVec3("viewPos", cameraPos);
             voxelShader->setMatrix("model", glm::mat4(1.0f));
             voxelShader->setMatrix("mvp", pv);
 
-            voxelShader->setFloat("emission", 0.0f);          // not emissive
-            voxelShader->setVec3("emissionColor", {0, 0, 0});   // no glow in mesh
+            voxelShader->setFloat("emission", 100.0f);          // not emissive
+            voxelShader->setVec3("emissionColor", planetColor);   // no glow in mesh
             voxelShader->setVec3("uniformColor", planetColor);
 
             //drawTriangles(*voxelShader);
@@ -2296,11 +2671,11 @@ namespace gl3 {
             // Billboard glow (fluid look)
             // -------------------------
             SunInstance inst;
-            inst.position =
-                    planet.worldPos + (cameraPos - planet.worldPos) * 0.25f;
+            //inst.position =
+            //        planet.worldPos + (cameraPos - planet.worldPos) * 0.25f;
 
-            float r = (CHUNK_SIZE * 0.25f) * glm::length(planet.radius);
-            inst.scale = r * 2.5f;       // glow radius
+           // float r = (CHUNK_SIZE * 0.25f) * glm::length(planet.radius);
+            //inst.scale = r * 2.5f;       // glow radius
             inst.color = planetColor;    // same as planet
 
             billboardInstances.push_back(inst);
@@ -2329,9 +2704,9 @@ namespace gl3 {
         }
 
         glm::vec3 chunkOrigin(
-                chunk->coord.x * CHUNK_SIZE,
-                chunk->coord.y * CHUNK_SIZE,
-                chunk->coord.z * CHUNK_SIZE
+                chunk->coord.x * CHUNK_SIZE * gl3::VOXEL_SIZE,
+                chunk->coord.y * CHUNK_SIZE * gl3::VOXEL_SIZE,
+                chunk->coord.z * CHUNK_SIZE * gl3::VOXEL_SIZE
         );
 
         // PHASE 1: Use COMPUTE SHADER to generate mesh
@@ -2434,28 +2809,89 @@ namespace gl3 {
 
 // debug version: if doColorByDensity==true, set per-voxel color from density (visualize SDF)
     void Game::uploadVoxelChunk(const Chunk &chunk, const glm::vec3 *overrideColor) {
-        const int localDIM = DIM; // use class member
+        const int localDIM = DIM; // Should be CHUNK_SIZE + 2 for padding
         const size_t total = size_t(localDIM) * localDIM * localDIM;
         std::vector<CpuVoxel> voxels;
         voxels.resize(total);
 
-        // Copy samples [0 .. DIM-1] from chunk.voxels (Chunk stores CHUNK_SIZE+2 alloc, so this is safe).
-        for (int x = 0; x < localDIM; ++x) {
-            for (int y = 0; y < localDIM; ++y) {
-                for (int z = 0; z < localDIM; ++z) {
-                    int idx = x + y * localDIM + z * localDIM * localDIM;
-                    const auto &src = chunk.voxels[x][y][z];
-                    voxels[idx].density = src.density;
+        // We need to include a 1-voxel border from neighbors
+        // Let's assume DIM = CHUNK_SIZE + 2 (one extra voxel on each side)
+        for (int x = -1; x <= CHUNK_SIZE; ++x) {  // -1 to CHUNK_SIZE inclusive
+            for (int y = -1; y <= CHUNK_SIZE; ++y) {
+                for (int z = -1; z <= CHUNK_SIZE; ++z) {
+                    // Map to SSBO index (0..localDIM-1)
+                    int idxX = x + 1;
+                    int idxY = y + 1;
+                    int idxZ = z + 1;
+                    int idx = idxX + idxY * localDIM + idxZ * localDIM * localDIM;
+
+                    const Voxel* srcVoxel = nullptr;
+
+                    // Check if we need to sample from neighbor
+                    if (x == -1 || x == CHUNK_SIZE ||
+                        y == -1 || y == CHUNK_SIZE ||
+                        z == -1 || z == CHUNK_SIZE) {
+
+                        // Get neighbor chunk
+                        ChunkCoord neighborCoord = chunk.coord;
+                        int localX = x;
+                        int localY = y;
+                        int localZ = z;
+
+                        // Adjust for each axis
+                        if (x == -1) {
+                            neighborCoord.x -= 1;
+                            localX = CHUNK_SIZE - 1;
+                        } else if (x == CHUNK_SIZE) {
+                            neighborCoord.x += 1;
+                            localX = 0;
+                        }
+
+                        if (y == -1) {
+                            neighborCoord.y -= 1;
+                            localY = CHUNK_SIZE - 1;
+                        } else if (y == CHUNK_SIZE) {
+                            neighborCoord.y += 1;
+                            localY = 0;
+                        }
+
+                        if (z == -1) {
+                            neighborCoord.z -= 1;
+                            localZ = CHUNK_SIZE - 1;
+                        } else if (z == CHUNK_SIZE) {
+                            neighborCoord.z += 1;
+                            localZ = 0;
+                        }
+
+                        Chunk* neighbor = chunkManager->getChunk(neighborCoord);
+                        if (neighbor && localX >= 0 && localX <= CHUNK_SIZE &&
+                            localY >= 0 && localY <= CHUNK_SIZE &&
+                            localZ >= 0 && localZ <= CHUNK_SIZE) {
+                            srcVoxel = &neighbor->voxels[localX][localY][localZ];
+                        }
+                    }
+
+                    // If no neighbor data, use current chunk or default
+                    if (!srcVoxel) {
+                        // Clamp to valid range for current chunk
+                        int clampX = glm::clamp(x, 0, CHUNK_SIZE);
+                        int clampY = glm::clamp(y, 0, CHUNK_SIZE);
+                        int clampZ = glm::clamp(z, 0, CHUNK_SIZE);
+                        srcVoxel = &chunk.voxels[clampX][clampY][clampZ];
+                    }
+
+                    // Copy data
+                    voxels[idx].density = srcVoxel->density;
                     if (overrideColor) {
                         voxels[idx].color = glm::vec4(*overrideColor, 1.0f);
                     } else {
-                        voxels[idx].color = glm::vec4(src.color, 1.0f);
+                        voxels[idx].color = glm::vec4(srcVoxel->color, 1.0f);
                     }
                 }
             }
         }
 
-        // Upload to SSBO binding 0 (ssboVoxels was created with size voxelCount * sizeof(CpuVoxel))
+        // Upload to SSBO
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboVoxels);
         glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, voxels.size() * sizeof(CpuVoxel), voxels.data());
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
@@ -2473,7 +2909,9 @@ namespace gl3 {
                                   Shader &computeShader) {
         computeShader.use();
 
-        const float voxelSize = 1.0f;
+        // tell compute shader the voxel size in world units
+        const float voxelSize = gl3::VOXEL_SIZE;
+
         // voxelGridDim equals DIM (number of sample points along each axis)
         computeShader.setVec3("gridOrigin", chunkOrigin); // index (0,0,0) maps to chunkOrigin
         computeShader.setFloat("voxelSize", voxelSize);
@@ -2618,169 +3056,172 @@ namespace gl3 {
         return glm::vec3(0, 1, 0);
     }
 
+    // New: get mouse delta (single place to read cursor movement)
+    glm::vec2 Game::getMouseDelta() {
+        double xpos, ypos;
+        glfwGetCursorPos(window, &xpos, &ypos);
 
-    bool Game::isChunkOccluded(const ChunkCoord& targetCoord, const glm::vec3& cameraPos) {
-        // DISABLE OCCLUSION CULLING WHEN CAMERA IS HIGH ABOVE TERRAIN
-        // When camera is high, we want to see more terrain, not less
+        glm::dvec2 curPos(xpos, ypos);
+        glm::vec2 delta(0.0f, 0.0f);
 
-        float cameraHeight = cameraPos.y;
-        float targetHeight = targetCoord.y * CHUNK_SIZE;
-
-        // If camera is very high above the target, disable occlusion
-        if (cameraHeight - targetHeight > 50.0f) {
-            return false; // Don't occlude when looking down from high up
+        if (!hasPreviousMousePos) {
+            previousMousePos = curPos;
+            hasPreviousMousePos = true;
+            return delta;
         }
 
-        // Get the center of the target chunk
-        glm::vec3 targetCenter = glm::vec3(
-                targetCoord.x * CHUNK_SIZE + CHUNK_SIZE / 2.0f,
-                targetCoord.y * CHUNK_SIZE + CHUNK_SIZE / 2.0f,
-                targetCoord.z * CHUNK_SIZE + CHUNK_SIZE / 2.0f
-        );
+        glm::dvec2 d = curPos - previousMousePos;
+        previousMousePos = curPos;
 
-        // Vector from camera to target
-        glm::vec3 rayDir = glm::normalize(targetCenter - cameraPos);
-
-        // Use DDA algorithm to step through chunks
-        return isChunkOccludedByDDA(cameraPos, targetCoord, rayDir);
+        // return as floats (x,y)
+        delta.x = static_cast<float>(d.x);
+        delta.y = static_cast<float>(d.y);
+        return delta;
     }
 
-    bool Game::isChunkOccludedByDDA(const glm::vec3& start, const ChunkCoord& target, const glm::vec3& dir) {
-        // Convert start position to chunk coordinates
-        ChunkCoord current = {
-                worldToChunk(start.x),
-                worldToChunk(start.y),
-                worldToChunk(start.z)
-        };
 
-        // Don't check the starting chunk (where camera is)
-        if (current == target) return false;
+    // -----------------------
+    // SDF sampling helpers
+    // -----------------------
+    float Game::sampleDensityAtWorld(const glm::vec3 &worldPos) const {
+        if (!chunkManager) return -10000.0f;
+            const float chunkWorldSize = CHUNK_SIZE * VOXEL_SIZE;
+            int baseCX = worldToChunk(worldPos.x);
+            int baseCY = worldToChunk(worldPos.y);
+            int baseCZ = worldToChunk(worldPos.z);
+            glm::vec3 chunkMin = glm::vec3(baseCX * chunkWorldSize,baseCY * chunkWorldSize,baseCZ * chunkWorldSize);
+            glm::vec3 local = (worldPos - chunkMin) / VOXEL_SIZE;
+            int ix = static_cast<int>(std::floor(local.x));
+            int iy = static_cast<int>(std::floor(local.y));
+            int iz = static_cast<int>(std::floor(local.z));
+            float fx = local.x - ix;
+            float fy = local.y - iy;
+            float fz = local.z - iz;
 
-        // DDA algorithm parameters
-        float t = 0.0f;
-        float tMaxX, tMaxY, tMaxZ;
-        float tDeltaX, tDeltaY, tDeltaZ;
+            // gather 8 corner samples by querying the chunk manager (handles chunk boundaries)
+            auto sampleCorner = [&](int sx, int sy, int sz)->float {
+            // corner world position:
+            glm::vec3 cornerWorld = chunkMin + glm::vec3((float)(ix + sx), (float)(iy + sy), (float)(iz + sz)) * VOXEL_SIZE;
+            int cx = worldToChunk(cornerWorld.x);
+            int cy = worldToChunk(cornerWorld.y);
+            int cz = worldToChunk(cornerWorld.z);
+            ChunkCoord coord{cx, cy, cz};
+            Chunk* chunk = chunkManager->getChunk(coord);
+            if (!chunk) return -1000.0f;
+            // local index inside that chunk (0..CHUNK_SIZE)
+            glm::vec3 localCorner = (cornerWorld - getChunkMin(coord)) / VOXEL_SIZE;
+            int lx = glm::clamp((int)std::round(localCorner.x), 0, CHUNK_SIZE);
+            int ly = glm::clamp((int)std::round(localCorner.y), 0, CHUNK_SIZE);
+            int lz = glm::clamp((int)std::round(localCorner.z), 0, CHUNK_SIZE);
+            return chunk->voxels[lx][ly][lz].density;
+            };
 
-        int stepX, stepY, stepZ;
+        float s000 = sampleCorner(0,0,0);
+        float s100 = sampleCorner(1,0,0);
+        float s010 = sampleCorner(0,1,0);
+        float s110 = sampleCorner(1,1,0);
+        float s001 = sampleCorner(0,0,1);
+        float s101 = sampleCorner(1,0,1);
+        float s011 = sampleCorner(0,1,1);
+        float s111 = sampleCorner(1,1,1);
 
-        // Initialize DDA
-        glm::vec3 rayStart = start;
-        glm::vec3 rayDir = dir;
+        auto lerp = [](float a, float b, float t){ return a + (b - a) * t; };
+        float c00 = lerp(s000, s100, fx);
+        float c10 = lerp(s010, s110, fx);
+        float c01 = lerp(s001, s101, fx);
+        float c11 = lerp(s011, s111, fx);
 
-        // Avoid division by zero
-        if (rayDir.x == 0) rayDir.x = 0.0001f;
-        if (rayDir.y == 0) rayDir.y = 0.0001f;
-        if (rayDir.z == 0) rayDir.z = 0.0001f;
-
-        // Determine step direction and initialize tMax
-        if (rayDir.x > 0) {
-            stepX = 1;
-            tMaxX = ((current.x + 1) * CHUNK_SIZE - rayStart.x) / rayDir.x;
-        } else {
-            stepX = -1;
-            tMaxX = (current.x * CHUNK_SIZE - rayStart.x) / rayDir.x;
+        float c0 = lerp(c00, c10, fy);
+        float c1 = lerp(c01, c11, fy);
+        return lerp(c0, c1, fz);
         }
 
-        if (rayDir.y > 0) {
-            stepY = 1;
-            tMaxY = ((current.y + 1) * CHUNK_SIZE - rayStart.y) / rayDir.y;
-        } else {
-            stepY = -1;
-            tMaxY = (current.y * CHUNK_SIZE - rayStart.y) / rayDir.y;
+    glm::vec3 Game::sampleNormalAtWorld(const glm::vec3 &worldPos) const {
+        const float e = VOXEL_SIZE * 0.5f;
+        float dx = sampleDensityAtWorld(worldPos + glm::vec3(e,0,0)) - sampleDensityAtWorld(worldPos - glm::vec3(e,0,0));
+        float dy = sampleDensityAtWorld(worldPos + glm::vec3(0,e,0)) - sampleDensityAtWorld(worldPos - glm::vec3(0,e,0));
+        float dz = sampleDensityAtWorld(worldPos + glm::vec3(0,0,e)) - sampleDensityAtWorld(worldPos - glm::vec3(0,0,e));
+        glm::vec3 g(dx,dy,dz);
+        float len = glm::length(g);
+        if (len < 1e-6f) return glm::vec3(0.0f, 1.0f, 0.0f);
+        // density increases INTO solid => gradient points inward; we want outward normal
+        return -glm::normalize(g);
         }
 
-        if (rayDir.z > 0) {
-            stepZ = 1;
-            tMaxZ = ((current.z + 1) * CHUNK_SIZE - rayStart.z) / rayDir.z;
-        } else {
-            stepZ = -1;
-            tMaxZ = (current.z * CHUNK_SIZE - rayStart.z) / rayDir.z;
-        }
-
-        // tDelta is the distance along the ray between chunk boundaries
-        tDeltaX = CHUNK_SIZE / std::abs(rayDir.x);
-        tDeltaY = CHUNK_SIZE / std::abs(rayDir.y);
-        tDeltaZ = CHUNK_SIZE / std::abs(rayDir.z);
-
-        // Max distance to check
-        float maxDistance = glm::distance(
-                glm::vec3(target.x * CHUNK_SIZE, target.y * CHUNK_SIZE, target.z * CHUNK_SIZE),
-                rayStart
-        ) + CHUNK_SIZE * 4.0f;
-
-        // Track how many solid chunks we encounter
-        int solidChunksFound = 0;
-        const int SOLID_CHUNKS_THRESHOLD = 3; // Need at least N solid chunks to occlude
-
-        // Step through chunks
-        while (t < maxDistance) {
-            // Check if we reached the target chunk
-            if (current == target) {
-                // We reached target
-                return (solidChunksFound >= SOLID_CHUNKS_THRESHOLD);
-            }
-
-            // Check if current chunk is solid
-            Chunk* chunk = chunkManager->getChunk(current);
-            if (chunk && hasSolidVoxels(*chunk)) {
-                // Check how "solid" this chunk is (percentage of solid voxels)
-                float solidity = getChunkSolidity(*chunk);
-
-                // Only count as "occluding" if chunk is mostly solid
-                if (solidity > 0.5f) { // 70% solid or more
-                    solidChunksFound++;
-
-                    // EARLY OUT: If we found enough solid chunks, occlude immediately
-                    if (solidChunksFound >= SOLID_CHUNKS_THRESHOLD) {
-                        return true;
-                    }
+    // -----------------------
+    // Camera update with collision-safe offset behind player
+    // -----------------------
+    void Game::updateCamera() {
+        // Get player head/eye position
+        glm::vec3 headPos = characterController.getCameraPosition();
+        // Desired camera offset behind the player (tweak this)
+        const float cameraFollowDistance = 1.75f * VOXEL_SIZE; // how far behind the head
+        const float cameraHeightOffset = 2.5f*VOXEL_SIZE;                // extra vertical offset if needed
+        glm::vec3 viewDir = getCameraFront();
+        glm::vec3 desiredCam = headPos - viewDir * cameraFollowDistance + glm::vec3(0.0f, cameraHeightOffset, 0.0f);
+        // Camera collision params
+        const float cameraRadius = 0.35f * VOXEL_SIZE; // radius of camera sphere
+        const float skinWidth = 0.02f * VOXEL_SIZE;   // small gap to keep off surface
+        const int steps = glm::max(4, (int)std::ceil(glm::length(desiredCam - headPos) / (VOXEL_SIZE * 0.25f)));
+        // Walk from headPos outward toward desiredCam and find first penetration
+        glm::vec3 safePos = headPos; // starts at head (should be non-penetrating)
+        bool collided = false;
+        glm::vec3 collidedNormal(0.0f);
+        for (int i = 1; i <= steps; ++i) {
+            float t = (float)i / (float)steps;
+                    glm::vec3 samplePos = glm::mix(headPos, desiredCam, t);
+                    float sdf = sampleDensityAtWorld(samplePos); // positive = inside solid
+                    float sphereSigned = sdf - cameraRadius;     // positive => penetration
+            if (sphereSigned > 0.0f) {
+                            // penetration at this sample -- step back to previous safe sample and push out
+                                    collided = true;
+                            // previous sample (clamped)
+                                    float prevT = (float)(i - 1) / (float)steps;
+                            glm::vec3 prevPos = glm::mix(headPos, desiredCam, prevT);
+                            // get normal at collision location (best attempt)
+                                    glm::vec3 n = sampleNormalAtWorld(samplePos);
+                            if (glm::length(n) < 1e-6f) n = glm::vec3(0,1,0);
+                            collidedNormal = glm::normalize(n);
+                            // place camera at prevPos plus offset OUT of surface
+                                    safePos = prevPos + collidedNormal * (cameraRadius + skinWidth);
+                            break;
+                        } else {
+                            safePos = samplePos; // this sample is safe; remember it
+                        }
                 }
-            }
 
-            // Step to next chunk boundary
-            if (tMaxX < tMaxY) {
-                if (tMaxX < tMaxZ) {
-                    t = tMaxX;
-                    tMaxX += tDeltaX;
-                    current.x += stepX;
-                } else {
-                    t = tMaxZ;
-                    tMaxZ += tDeltaZ;
-                    current.z += stepZ;
-                }
-            } else {
-                if (tMaxY < tMaxZ) {
-                    t = tMaxY;
-                    tMaxY += tDeltaY;
-                    current.y += stepY;
-                } else {
-                    t = tMaxZ;
-                    tMaxZ += tDeltaZ;
-                    current.z += stepZ;
-                }
-            }
+                    // If we never collided, but desiredCam is safe then use desiredCam (we already set safePos along the loop)
+                    // If we started inside geometry (rare), project outward using normal at headPos#//
+                    if (!collided) {
+                    float headSdf = sampleDensityAtWorld(safePos);
+                    float headSphereSigned = headSdf - cameraRadius;
+                    if (headSphereSigned > 0.0f) {
+                            glm::vec3 n = sampleNormalAtWorld(safePos);
+                            safePos = safePos + glm::normalize(n) * (headSphereSigned + skinWidth);
+                        }
+               }
+
+                    // Smooth camera movement to reduce snapping (tweak lerp factor)
+                            const float smoothingLerp = 0.55f; // 0 => no smoothing (immediate), <1 => smooth
+            cameraPos = glm::mix(cameraPos, safePos, smoothingLerp);
+
+                    // Finally update camera rotation based on cursor
+                            double xpos, ypos;
+            glfwGetCursorPos(window, &xpos, &ypos);
+            static double lastX = xpos, lastY = ypos;
+
+                    float sensitivity = 0.1f;
+            float dx = (xpos - lastX) * sensitivity;
+            float dy = (lastY - ypos) * sensitivity; // invert Y movement
+
+                    cameraRotation.y += dx; // yaw
+           cameraRotation.x += dy; // pitch
+
+                    // Clamp pitch to avoid gimbal lock
+                            if (cameraRotation.x > 89.0f) cameraRotation.x = 89.0f;
+           if (cameraRotation.x < -89.0f) cameraRotation.x = -89.0f;
+
+                    lastX = xpos;
+            lastY = ypos;
         }
-
-        return false;
-    }
-
-// Replace isChunkFullyOpaque with getChunkSolidity
-    float Game::getChunkSolidity(const Chunk& chunk) {
-        int solidVoxels = 0;
-        int totalVoxels = 0;
-
-        // Sample every 4th voxel for performance
-        for (int x = 0; x <= CHUNK_SIZE; x += 2) {
-            for (int y = 0; y <= CHUNK_SIZE; y += 2) {
-                for (int z = 0; z <= CHUNK_SIZE; z += 2) {
-                    totalVoxels++;
-                    if (chunk.voxels[x][y][z].density >= 0.0f) {
-                        solidVoxels++;
-                    }
-                }
-            }
-        }
-
-        return totalVoxels > 0 ? (float)solidVoxels / totalVoxels : 0.0f;
-    }
 }

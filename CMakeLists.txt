@@ -10,5 +10,6 @@ add_subdirectory(extern/soloud)
 add_subdirectory(extern/tinygltf)
 add_definitions(-DNOMINMAX)
 add_subdirectory(extern/reactphysics3d)
+add_subdirectory(extern/bullet3-3.25)
 
 add_subdirectory(game)
