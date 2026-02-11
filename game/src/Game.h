@@ -230,8 +230,7 @@ namespace gl3 {
 
         void updateSpells(float deltaTime);
 
-        void cleanupFinishedSpells();
-
+        void cleanupExpiredSpells();
 
         void findNearbyVoxelsForVisual(const glm::vec3& center, float radius,
                                              uint64_t targetMaterial,
@@ -272,6 +271,16 @@ namespace gl3 {
                                    uint64_t material, float strength,
                                    SDFFunction customSDF, void* userData = nullptr);
 
+        void createPhysicsBodyForSpell(SpellEffect& spell);
+        void destroyPhysicsBodyForSpell(SpellEffect& spell);
+        void createPhysicsMeshData(SpellEffect& spell,
+                                   const std::vector<glm::vec3>& vertices,
+                                   const std::vector<glm::vec3>& normals,
+                                   const std::vector<glm::vec3>& colors);
+        void removeFormationVoxels(const SpellEffect& spell);
+        void onFormationImpact(const glm::vec3& impactPos, float damageRadius,
+                               float impulse, RigidBodyPayload* payload,
+                               SpellEffect* spell);
 
         ////Debugging:
         void debugComputeShaderState();
@@ -331,6 +340,7 @@ namespace gl3 {
         //General Rendering:
         void renderChunks();
         void renderAnimatedVoxels();
+        void renderPhysicsFormations();
         void renderFluidPlanets();
 
         //marching cubes Shader:
@@ -389,7 +399,7 @@ namespace gl3 {
         const int DIM = CHUNK_SIZE + 2; //Chunk Size with a bit off padding for marching cubes
         size_t voxelCount = DIM * DIM * DIM; //How many voxels can be in one Chunk
         static constexpr int ChunkCount = 70; //Total size of the Game World
-        static constexpr int RenderingRange = 10; //Range around Camera that is rendered
+        static constexpr int RenderingRange = 12; //Range around Camera that is rendered
 
         //Marching-cubes Variables
         size_t maxVerts =

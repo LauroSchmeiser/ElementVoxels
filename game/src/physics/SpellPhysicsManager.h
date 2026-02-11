@@ -72,7 +72,7 @@ public:
 
         dynamicsWorld = std::make_unique<btDiscreteDynamicsWorld>(
                 dispatcher.get(), broadphase.get(), solver.get(), collisionConfiguration.get());
-        dynamicsWorld->setGravity(btVector3(0.0f, -9.81f, 0.0f));
+        dynamicsWorld->setGravity(btVector3(0.0f, 0.0f, 0.0f));
 
         // register tick callback to scan contacts each step
         dynamicsWorld->setInternalTickCallback(&SpellPhysicsManager::internalTickCallback, this, true);
