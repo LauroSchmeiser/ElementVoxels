@@ -123,9 +123,9 @@ namespace gl3 {
         CpuTimer t0("ssbos");
         setupSSBOsAndTables();
         setupInput();
-        setupCamera();
         CpuTimer t1("generateChunks");
         generateChunks();
+        setupCamera();
         setupVEffects();
 
         while (!glfwWindowShouldClose(window)) {
@@ -1125,7 +1125,7 @@ namespace gl3 {
             }
 
             // CREATE PHYSICS BODY AFTER GEOMETRY IS READY
-            if (spellIt->geometryCreated && !spellIt->isPhysicsEnabled &&
+            if (spellIt->geometryCreated && spellIt->isPhysicsEnabled &&
                 spellIt->rigidBody == nullptr) {
                 createPhysicsBodyForSpell(*spellIt);
             }
@@ -1266,7 +1266,7 @@ namespace gl3 {
             // Calculate launch direction (from camera toward target)
             glm::vec3 launchDir = glm::normalize(center - cameraPos);
             float launchSpeed = glm::clamp(strength * 2.5f*VOXEL_SIZE, 2.0f*VOXEL_SIZE, 25.0f*VOXEL_SIZE);
-
+            lastSpell.isPhysicsEnabled=true;
             lastSpell.initialVelocity = launchDir * launchSpeed;
 
 
@@ -1649,7 +1649,7 @@ namespace gl3 {
             }
 
             // Remove physics body
-            //destroyPhysicsBodyForSpell(*spell);
+            destroyPhysicsBodyForSpell(*spell);
         }
     }
 
@@ -1846,7 +1846,6 @@ namespace gl3 {
 
     void Game::setupCamera() {
         // --- Camera setup ---
-        cameraPos = glm::vec3(0.0f, 0.0f, 80.0f);
         cameraRotation = glm::vec2(0.0f, -90.0f);
         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
     }
@@ -1863,6 +1862,15 @@ namespace gl3 {
 
         // Create solid planets (type 1)
         int planetCount = 20;
+
+        WorldPlanet p;
+        p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
+        p.radius = distScale(rng) * CHUNK_SIZE;
+        p.color = glm::vec3(distColor(rng), distColor(rng), distColor(rng));
+        p.type = 1; // solid
+        worldPlanets.push_back(p);
+        cameraPos=p.worldPos+glm::vec3(0,VOXEL_SIZE,0);
+        characterController.setPosition(cameraPos);
         for (int i = 0; i < planetCount; ++i) {
             WorldPlanet p;
             p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
@@ -2957,7 +2965,7 @@ namespace gl3 {
             btQuaternion rot = trans.getRotation();
 
             // Build model matrix from physics transform
-            glm::mat4 model = glm::translate(glm::mat4(1.0f),
+            glm::mat4 model = glm::translate(glm::mat4(VOXEL_SIZE),
                                              glm::vec3(pos.x(), pos.y(), pos.z()));
 
             glm::quat rotation(rot.w(), rot.x(), rot.y(), rot.z());
