@@ -1048,10 +1048,6 @@ namespace gl3 {
     }
 
     void Game::updateSpells(float dt) {
-        // First update all physics bodies
-        if (voxelPhysics) {
-            voxelPhysics->update(dt);
-        }
 
         // Update each active spell
         for (auto spellIt = activeSpells.begin(); spellIt != activeSpells.end(); ) {
@@ -1273,7 +1269,7 @@ namespace gl3 {
         if (!spell) return;
 
         // Handle different spell types on collision
-        /*
+
         switch (spell->type) {
             case SpellEffect::Type::CONSTRUCT:
                 // Construct spells might just bounce
@@ -1294,7 +1290,7 @@ namespace gl3 {
             default:
                 break;
         }
-*/
+
         std::cout << "Spell collided at ("
                   << hitPos.x << "," << hitPos.y << "," << hitPos.z
                   << ") with impact speed " << impactSpeed << "\n";
@@ -1319,7 +1315,7 @@ namespace gl3 {
 
             // Calculate launch direction (from camera toward target)
             glm::vec3 launchDir = glm::normalize(center - cameraPos);
-            float launchSpeed = glm::clamp(strength * 2.5f*VOXEL_SIZE, 2.0f*VOXEL_SIZE, 25.0f*VOXEL_SIZE);
+            float launchSpeed = glm::clamp(strength * 100.5f*VOXEL_SIZE, 2.0f*VOXEL_SIZE, 1000.0f*VOXEL_SIZE);
             lastSpell.isPhysicsEnabled=true;
             lastSpell.creationTime = 0.0f;
             lastSpell.lifetime = 100000.0f;
@@ -2128,6 +2124,11 @@ namespace gl3 {
             characterController.update(deltaTime, moveInput, jump, sprint, crouch, mouseDelta, cameraFront, cameraRight, airSlam );
 
             accumulator -= fixedTimeStep;
+
+            // First update all physics bodies
+            if (voxelPhysics) {
+                voxelPhysics->update(deltaTime);
+            }
         }
     }
 
@@ -3028,23 +3029,21 @@ namespace gl3 {
         // Render each physics-enabled formation
         for (const auto& spell : activeSpells) {
             if (!spell.isPhysicsEnabled || !spell.physicsBody) continue;
-            if (!spell.physicsMesh.isValid) continue;  // ← CHECK THIS
-
-            // Pulse alpha or color to see if object is being rendered
-            glm::vec3 pulseColor = spell.formationColor * (0.5f + 0.5f * sin(time * 5.0f));
-            voxelShader->setVec3("debugColor", pulseColor); // Add this uniform to your shader
-
             if (!spell.physicsMesh.isValid) {
                 std::cout << "Physics mesh invalid for spell!\n";
                 continue;
             }
             // Use stored position and orientation directly
-            glm::vec3 pos = spell.physicsBody->position;
+            int currentChunkX = worldToChunk(spell.physicsBody->position.x);
+            int currentChunkY = worldToChunk(spell.physicsBody->position.x);
+            int currentChunkZ = worldToChunk(spell.physicsBody->position.x);
+
+            glm::vec3 pos = glm::vec3(currentChunkX,currentChunkY,currentChunkZ) ;
             glm::quat rot = spell.physicsBody->orientation;
 
             // Build model matrix
             glm::mat4 model = glm::translate(glm::mat4(1.0f), pos);
-            model *= glm::mat4_cast(rot);
+            //model *= glm::mat4_cast(rot);
             //model = glm::scale(model, glm::vec3(VOXEL_SIZE));  // Apply VOXEL_SIZE scaling
 
             voxelShader->setMatrix("model", model);

@@ -8,7 +8,7 @@ namespace gl3 {
 
 struct VoxelPhysicsBody {
     // Transform
-    glm::vec3 position=glm::vec3(0,0,0);
+    glm::vec3 position;
     glm::vec3 velocity;
     glm::vec3 angularVelocity;
     glm::quat orientation;

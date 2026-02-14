@@ -209,9 +209,9 @@ namespace gl3 {
             float penetration,
             float impactSpeed
     ) {
-        /*
+
         // Push body out of collision
-        body.position += normal * (penetration + 0.0001f * VOXEL_SIZE);
+        body.position += normal * (penetration + 0.00001f * VOXEL_SIZE);
 
         // Reflect velocity
         float velDotNormal = glm::dot(body.velocity, normal);
@@ -230,7 +230,7 @@ namespace gl3 {
 
         // Dampen angular velocity on impact
         body.angularVelocity *= 0.9f;
-         */
+
     }
 
     void VoxelPhysicsManager::removeBody(uint64_t id) {
