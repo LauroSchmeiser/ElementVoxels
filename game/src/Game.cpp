@@ -1252,13 +1252,7 @@ namespace gl3 {
                 spellIt->markForRemoval = true;
             }
             */
-
-            if (spellIt->markForRemoval) {
-                destroyPhysicsBodyForSpell(*spellIt);
-                spellIt = activeSpells.erase(spellIt);
-            } else {
-                ++spellIt;
-            }
+            ++spellIt;
         }
     }
 
@@ -1268,8 +1262,31 @@ namespace gl3 {
                                 float impactSpeed) {
         if (!spell) return;
 
-        // Handle different spell types on collision
+        // Verify the spell is still valid
+        bool spellValid = false;
+        for (const auto& s : activeSpells) {
+            if (&s == spell) {
+                spellValid = true;
+                break;
+            }
+        }
 
+        if (!spellValid) {
+            std::cout << "Collision callback for invalid spell, ignoring\n";
+            return;
+        }
+
+        // Now safe to access spell
+        float mass = spell->physicsBody ? spell->physicsBody->mass : 1.0f;
+        applyImpactAtPosition(hitPos, spell->radius, impactSpeed, mass);
+
+        std::cout << "Spell collided at ("
+                  << hitPos.x << "," << hitPos.y << "," << hitPos.z
+                  << ") with impact speed " << impactSpeed << "\n";
+
+        //destroyPhysicsBodyForSpell(*spell);
+        // Handle different spell types on collision
+        /*
         switch (spell->type) {
             case SpellEffect::Type::CONSTRUCT:
                 // Construct spells might just bounce
@@ -1290,10 +1307,7 @@ namespace gl3 {
             default:
                 break;
         }
-
-        std::cout << "Spell collided at ("
-                  << hitPos.x << "," << hitPos.y << "," << hitPos.z
-                  << ") with impact speed " << impactSpeed << "\n";
+*/
     }
 
         float Game::randomFloat(float min, float max) {
@@ -1318,9 +1332,8 @@ namespace gl3 {
             float launchSpeed = glm::clamp(strength * 100.5f*VOXEL_SIZE, 2.0f*VOXEL_SIZE, 1000.0f*VOXEL_SIZE);
             lastSpell.isPhysicsEnabled=true;
             lastSpell.creationTime = 0.0f;
-            lastSpell.lifetime = 100000.0f;
+            lastSpell.lifetime = 5.0f;
             lastSpell.initialVelocity = launchDir * launchSpeed;
-            //lastSpell.initialVelocity = glm::vec3(0);
 
 
             std::cout << "Sphere spell velocity set: " << glm::length(lastSpell.initialVelocity)
@@ -1380,6 +1393,60 @@ namespace gl3 {
 
         float effectiveRadius = spell.formationParams.getBoundingRadius();
 
+        // Create a spatial hash of target positions for quick lookup
+        struct TargetKey {
+            int64_t x, y, z;
+            bool operator==(const TargetKey& other) const {
+                return x == other.x && y == other.y && z == other.z;
+            }
+        };
+
+        struct TargetKeyHash {
+            std::size_t operator()(const TargetKey& k) const {
+                return ((k.x * 73856093) ^ (k.y * 19349663) ^ (k.z * 83492791)) % 1000000;
+            }
+        };
+
+        // Map from voxel grid position to whether we expect geometry there
+        std::unordered_map<TargetKey, bool, TargetKeyHash> expectedVoxels;
+        std::unordered_map<TargetKey, bool, TargetKeyHash> boundaryVoxels;
+
+        // Populate with target positions from animated voxels
+        for (uint64_t id : spell.animatedVoxelIDs) {
+            auto it = animatedVoxelIndexMap.find(id);
+            if (it != animatedVoxelIndexMap.end()) {
+                const AnimatedVoxel& voxel = animatedVoxels[it->second];
+
+                // Round target position to nearest voxel center
+                TargetKey key{
+                        static_cast<int64_t>(std::round(voxel.targetPos.x / VOXEL_SIZE)),
+                        static_cast<int64_t>(std::round(voxel.targetPos.y / VOXEL_SIZE)),
+                        static_cast<int64_t>(std::round(voxel.targetPos.z / VOXEL_SIZE))
+                };
+                expectedVoxels[key] = true;
+            }
+        }
+
+        // Also mark boundary voxels (neighbors of expected voxels)
+        // This ensures we keep triangles on the surface
+        for (const auto& [key, _] : expectedVoxels) {
+            for (int dx = -1; dx <= 1; ++dx) {
+                for (int dy = -1; dy <= 1; ++dy) {
+                    for (int dz = -1; dz <= 1; ++dz) {
+                        TargetKey neighbor{
+                                key.x + dx,
+                                key.y + dy,
+                                key.z + dz
+                        };
+                        boundaryVoxels[neighbor] = true;
+                    }
+                }
+            }
+        }
+
+        std::cout << "Expected formation has " << expectedVoxels.size()
+                  << " voxels, with " << boundaryVoxels.size() << " boundary voxels\n";
+
         // Collect triangle vertices from the formation chunks
         std::vector<glm::vec3> triangleVerts;
         std::vector<glm::vec3> triangleNormals;
@@ -1412,15 +1479,100 @@ namespace gl3 {
                                                         byteSize, GL_MAP_READ_BIT);
                         if (mapPtr) {
                             OutVertex* ov = reinterpret_cast<OutVertex*>(mapPtr);
-                            for (size_t vi = 0; vi < vcount; ++vi) {
-                                glm::vec4 p = ov[vi].pos;
-                                glm::vec4 n = ov[vi].normal;
-                                glm::vec4 c = ov[vi].color;
 
-                                triangleVerts.emplace_back(p.x, p.y, p.z);
-                                triangleNormals.emplace_back(n.x, n.y, n.z);
-                                triangleColors.emplace_back(c.x, c.y, c.z);
+                            // Process triangles
+                            for (size_t vi = 0; vi < vcount; vi += 3) {
+                                // Get all three vertices
+                                glm::vec3 v0(ov[vi].pos.x, ov[vi].pos.y, ov[vi].pos.z);
+                                glm::vec3 v1(ov[vi + 1].pos.x, ov[vi + 1].pos.y, ov[vi + 1].pos.z);
+                                glm::vec3 v2(ov[vi + 2].pos.x, ov[vi + 2].pos.y, ov[vi + 2].pos.z);
+
+                                // Calculate triangle center and bounding box
+                                glm::vec3 center = (v0 + v1 + v2) / 3.0f;
+
+                                // Calculate triangle bounding box to check if any part is near expected voxels
+                                glm::vec3 triMin = glm::min(glm::min(v0, v1), v2);
+                                glm::vec3 triMax = glm::max(glm::max(v0, v1), v2);
+
+                                // Expand by a small margin to catch edge cases
+                                triMin -= glm::vec3(VOXEL_SIZE * 0.5f);
+                                triMax += glm::vec3(VOXEL_SIZE * 0.5f);
+
+                                // Convert to voxel grid coordinates
+                                TargetKey minKey{
+                                        static_cast<int64_t>(std::floor(triMin.x / VOXEL_SIZE)),
+                                        static_cast<int64_t>(std::floor(triMin.y / VOXEL_SIZE)),
+                                        static_cast<int64_t>(std::floor(triMin.z / VOXEL_SIZE))
+                                };
+
+                                TargetKey maxKey{
+                                        static_cast<int64_t>(std::ceil(triMax.x / VOXEL_SIZE)),
+                                        static_cast<int64_t>(std::ceil(triMax.y / VOXEL_SIZE)),
+                                        static_cast<int64_t>(std::ceil(triMax.z / VOXEL_SIZE))
+                                };
+
+                                // Check if this triangle touches any expected or boundary voxel
+                                bool shouldKeep = false;
+
+                                // First check: if triangle center is near expected voxels (strict)
+                                TargetKey centerKey{
+                                        static_cast<int64_t>(std::round(center.x / VOXEL_SIZE)),
+                                        static_cast<int64_t>(std::round(center.y / VOXEL_SIZE)),
+                                        static_cast<int64_t>(std::round(center.z / VOXEL_SIZE))
+                                };
+
+                                // Check center and neighbors (quick test)
+                                for (int dx = -1; dx <= 1 && !shouldKeep; ++dx) {
+                                    for (int dy = -1; dy <= 1 && !shouldKeep; ++dy) {
+                                        for (int dz = -1; dz <= 1 && !shouldKeep; ++dz) {
+                                            TargetKey neighbor{
+                                                    centerKey.x + dx,
+                                                    centerKey.y + dy,
+                                                    centerKey.z + dz
+                                            };
+                                            if (expectedVoxels.find(neighbor) != expectedVoxels.end()) {
+                                                shouldKeep = true;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Second check: if any part of the triangle touches boundary voxels (more permissive)
+                                if (!shouldKeep) {
+                                    for (int64_t x = minKey.x; x <= maxKey.x && !shouldKeep; ++x) {
+                                        for (int64_t y = minKey.y; y <= maxKey.y && !shouldKeep; ++y) {
+                                            for (int64_t z = minKey.z; z <= maxKey.z && !shouldKeep; ++z) {
+                                                TargetKey voxelKey{x, y, z};
+                                                if (boundaryVoxels.find(voxelKey) != boundaryVoxels.end()) {
+                                                    shouldKeep = true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Third check: SDF fallback with larger threshold
+                                if (!shouldKeep) {
+                                    float sdf = spell.formationParams.evaluate(center);
+                                    // Use a larger threshold to catch everything near the surface
+                                    if (std::abs(sdf) < VOXEL_SIZE * 2.0f) {
+                                        shouldKeep = true;
+                                    }
+                                }
+
+                                if (shouldKeep) {
+                                    for (int j = 0; j < 3; ++j) {
+                                        glm::vec4 p = ov[vi + j].pos;
+                                        glm::vec4 n = ov[vi + j].normal;
+                                        glm::vec4 c = ov[vi + j].color;
+
+                                        triangleVerts.emplace_back(p.x, p.y, p.z);
+                                        triangleNormals.emplace_back(n.x, n.y, n.z);
+                                        triangleColors.emplace_back(c.x, c.y, c.z);
+                                    }
+                                }
                             }
+
                             glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
                         }
                     }
@@ -1430,11 +1582,30 @@ namespace gl3 {
         }
 
         if (triangleVerts.empty()) {
-            std::cout << "createPhysicsBody: No triangles found for spell!\n";
+            std::cout << "createPhysicsBody: No triangles found for spell after filtering!\n";
             return;
         }
 
-        std::cout << "Found " << triangleVerts.size() << " triangles for physics body\n";
+        std::cout << "Found " << triangleVerts.size() << " triangles for physics body (after filtering)\n";
+
+        // Optional: Ensure manifold mesh by checking for holes
+        // This is a simple check - you might want more sophisticated hole detection
+        if (triangleVerts.size() < 12) { // Less than 4 triangles
+            std::cout << "Warning: Very small mesh, might be incomplete\n";
+        }
+
+        // Calculate the actual bounds of the collected geometry
+        glm::vec3 minBound = triangleVerts[0];
+        glm::vec3 maxBound = triangleVerts[0];
+        for (const auto& v : triangleVerts) {
+            minBound = glm::min(minBound, v);
+            maxBound = glm::max(maxBound, v);
+        }
+        glm::vec3 geomCenter = (minBound + maxBound) * 0.5f;
+        glm::vec3 geomExtents = (maxBound - minBound) * 0.5f;
+
+        // Expand extents slightly to ensure collision hull contains mesh
+        geomExtents += glm::vec3(VOXEL_SIZE * 0.1f);
 
         // Determine shape type based on formation
         gl3::VoxelPhysicsBody::ShapeType shapeType;
@@ -1443,40 +1614,32 @@ namespace gl3 {
         switch(spell.formationParams.type) {
             case FormationType::SPHERE:
                 shapeType = gl3::VoxelPhysicsBody::ShapeType::SPHERE;
-                extents = glm::vec3(spell.formationParams.radius);
+                extents = glm::vec3(glm::length(geomExtents)); // Use actual geometry bounds
                 break;
             case FormationType::PLATFORM:
             case FormationType::WALL:
             case FormationType::CUBE:
                 shapeType = gl3::VoxelPhysicsBody::ShapeType::BOX;
-                extents = glm::vec3(
-                        spell.formationParams.sizeX * 0.5f,
-                        spell.formationParams.sizeY * 0.5f,
-                        spell.formationParams.sizeZ * 0.5f
-                );
+                extents = geomExtents; // Use actual geometry bounds
                 break;
             case FormationType::CYLINDER:
-                shapeType = gl3::VoxelPhysicsBody::ShapeType::BOX; // Approximate cylinder with box
-                extents = glm::vec3(
-                        spell.formationParams.radius,
-                        spell.formationParams.sizeY * 0.5f,
-                        spell.formationParams.radius
-                );
+                shapeType = gl3::VoxelPhysicsBody::ShapeType::BOX;
+                extents = geomExtents;
                 break;
             default:
                 shapeType = gl3::VoxelPhysicsBody::ShapeType::SPHERE;
-                extents = glm::vec3(spell.formationParams.radius);
+                extents = glm::vec3(glm::length(geomExtents));
                 break;
         }
 
-        // Calculate mass based on collected voxels
+        // Calculate mass based on collected voxels (use animatedVoxelIDs size)
         float voxelVolume = VOXEL_SIZE * VOXEL_SIZE * VOXEL_SIZE;
         float mass = static_cast<float>(spell.animatedVoxelIDs.size()) * voxelVolume * 0.5f;
         mass = glm::clamp(mass, 1.0f, 1000.0f);
 
-        // Create physics body using your VoxelPhysicsManager
+        // Create physics body at the geometry's actual center, not the spell center
         spell.physicsBody = voxelPhysics->createBody(
-                spell.center,  // Initial position
+                geomCenter,  // Use actual geometry center
                 mass,
                 shapeType,
                 extents
@@ -1498,6 +1661,8 @@ namespace gl3 {
             std::cout << "Physics body created: mass=" << mass
                       << ", renderVerts=" << triangleVerts.size()
                       << ", velocity=" << glm::length(spell.initialVelocity) << "\n";
+            std::cout << "Geometry bounds: center(" << geomCenter.x << "," << geomCenter.y << "," << geomCenter.z
+                      << ") extents(" << extents.x << "," << extents.y << "," << extents.z << ")\n";
         }
 
         // Remove voxels from chunks now that we have the mesh
@@ -1644,78 +1809,6 @@ namespace gl3 {
             spell.physicsMesh.vao = 0;
             spell.physicsMesh.vbo = 0;
             spell.physicsMesh.isValid = false;
-        }
-    }
-
-    void Game::onFormationImpact(const glm::vec3& impactPos, float damageRadius,
-                                 float impulse, RigidBodyPayload* payload,
-                                 SpellEffect* spell) {
-        std::cout << "Formation impact at (" << impactPos.x << "," << impactPos.y
-                  << "," << impactPos.z << ") radius=" << damageRadius
-                  << " impulse=" << impulse << "\n";
-
-        // Calculate destruction based on impulse
-        float destructionRadius = damageRadius * glm::clamp(impulse * 0.05f, 0.5f, 3.0f);
-
-        // Apply damage to terrain at impact point
-        applyImpactAtPosition(impactPos, destructionRadius, impulse, payload);
-
-        // If impulse is high enough, destroy the formation itself
-        if (impulse > 150.0f && spell) {
-            std::cout << "High impact - destroying formation\n";
-
-            // Carve the formation's voxels based on impact
-            float formationDamageRadius = spell->formationParams.getBoundingRadius() * 0.3f;
-
-            int minCX = worldToChunk(spell->center.x - formationDamageRadius);
-            int maxCX = worldToChunk(spell->center.x + formationDamageRadius);
-            int minCY = worldToChunk(spell->center.y - formationDamageRadius);
-            int maxCY = worldToChunk(spell->center.y + formationDamageRadius);
-            int minCZ = worldToChunk(spell->center.z - formationDamageRadius);
-            int maxCZ = worldToChunk(spell->center.z + formationDamageRadius);
-
-            for (int cx = minCX; cx <= maxCX; ++cx) {
-                for (int cy = minCY; cy <= maxCY; ++cy) {
-                    for (int cz = minCZ; cz <= maxCZ; ++cz) {
-                        ChunkCoord coord{cx, cy, cz};
-                        Chunk* chunk = chunkManager->getChunk(coord);
-                        if (!chunk) continue;
-
-                        glm::vec3 chunkMin = getChunkMin(coord);
-                        bool touched = false;
-
-                        for (int lx = 0; lx <= CHUNK_SIZE; ++lx) {
-                            for (int ly = 0; ly <= CHUNK_SIZE; ++ly) {
-                                for (int lz = 0; lz <= CHUNK_SIZE; ++lz) {
-                                    glm::vec3 vWorld = chunkMin +
-                                                       glm::vec3((float)lx, (float)ly, (float)lz) * VOXEL_SIZE;
-
-                                    float dist = glm::distance(vWorld, spell->center);
-                                    if (dist < formationDamageRadius) {
-                                        // Reduce density based on distance from center
-                                        float falloff = 1.0f - (dist / formationDamageRadius);
-                                        chunk->voxels[lx][ly][lz].density -= 10.0f * falloff;
-
-                                        if (chunk->voxels[lx][ly][lz].density < 0.0f) {
-                                            chunk->voxels[lx][ly][lz].type = 0; // air
-                                        }
-                                        touched = true;
-                                    }
-                                }
-                            }
-                        }
-
-                        if (touched) {
-                            chunk->meshDirty = true;
-                            chunk->lightingDirty = true;
-                            markChunkModified(coord);
-                        }
-                    }
-                }
-            }
-
-            // Remove physics body
-            destroyPhysicsBodyForSpell(*spell);
         }
     }
 
@@ -2125,16 +2218,28 @@ namespace gl3 {
 
             accumulator -= fixedTimeStep;
 
-            // First update all physics bodies
+            // Update physics and get bodies that were removed
+            std::vector<uint64_t> removedBodyIds;
             if (voxelPhysics) {
-                voxelPhysics->update(deltaTime);
+                voxelPhysics->update(deltaTime, removedBodyIds);  // Pass in the vector
+            }
+
+            // Mark spells for removal whose physics bodies were removed
+            for (uint64_t id : removedBodyIds) {
+                for (auto& spell : activeSpells) {
+                    if (spell.physicsBody && spell.physicsBody->id == id) {
+                        spell.markForRemoval = true;
+                        std::cout << "Marking spell for removal due to physics body removal\n";
+                        break;
+                    }
+                }
             }
         }
     }
 
-    void Game::applyImpactAtPosition(const glm::vec3 &worldPos, float radius, float impulse, RigidBodyPayload* payload) {
+    void Game::applyImpactAtPosition(const glm::vec3 &worldPos, float radius, float impulse, float mass) {
         // tune these
-        const float damageScale = glm::clamp(impulse * 0.02f, 0.5f, 30.0f); // larger impulse -> stronger carving
+        const float damageScale = glm::clamp(impulse * 0.15f*deltaTime, 0.5f, 30.0f); // larger impulse -> stronger carving
         const float maxRadius = glm::max(radius, damageScale);
         const float radiusSq = maxRadius * maxRadius;
 

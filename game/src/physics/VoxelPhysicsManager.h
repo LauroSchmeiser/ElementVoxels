@@ -30,8 +30,7 @@ namespace gl3 {
         );
 
         // Update all bodies
-        void update(float dt);
-
+        void update(float dt, std::vector<uint64_t>& removedBodies);
         // Set collision callback
         void setCollisionCallback(CollisionCallback cb) {
             collisionCallback = cb;

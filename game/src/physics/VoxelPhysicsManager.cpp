@@ -40,7 +40,9 @@ namespace gl3 {
         return &bodies.back();
     }
 
-    void VoxelPhysicsManager::update(float dt) {
+    void VoxelPhysicsManager::update(float dt, std::vector<uint64_t>& removedBodies) {
+        removedBodies.clear();
+
         for (auto it = bodies.begin(); it != bodies.end(); ) {
             VoxelPhysicsBody& body = *it;
 
@@ -48,6 +50,7 @@ namespace gl3 {
             if (body.lifetime > 0) {
                 body.lifetime -= dt;
                 if (body.lifetime <= 0) {
+                    removedBodies.push_back(body.id);  // Record removed ID
                     it = bodies.erase(it);
                     continue;
                 }
@@ -60,27 +63,13 @@ namespace gl3 {
 
             // Apply gravity
             body.velocity += gravity * dt;
-            std::cout<<"Velocity of: "<<body.id<<" , Velocity:"<<body.velocity.x<<" , "<<body.velocity.y<<" , "<<body.velocity.z<<"\n";
 
             // Store old position for collision response
             glm::vec3 oldPos = body.position;
-            std::cout<<"OldPos of: "<<body.id<<" , Pos was:"<<oldPos.x<<" , "<<oldPos.y<<" , "<<oldPos.z<<"\n";
-
             glm::vec3 oldVel = body.velocity;
 
             // Integrate position
             body.position += body.velocity * dt;
-            std::cout<<"Pos of: "<<body.id<<" , NewPos is:"<<body.position.x<<" , "<<body.position.y<<" , "<<body.position.z<<"\n";
-
-
-            // Integrate rotation
-            glm::quat spin = glm::quat(0,
-                                       body.angularVelocity.x * dt * 0.5f,
-                                       body.angularVelocity.y * dt * 0.5f,
-                                       body.angularVelocity.z * dt * 0.5f
-            );
-            body.orientation += spin * body.orientation;
-            body.orientation = glm::normalize(body.orientation);
 
             // Check collision with voxel world
             glm::vec3 normal;
@@ -88,8 +77,6 @@ namespace gl3 {
 
             if (checkVoxelCollision(body, normal, penetration)) {
                 float impactSpeed = glm::length(oldVel);
-
-                // Resolve collision
                 resolveCollision(body, normal, penetration, impactSpeed);
 
                 // Call callback
@@ -209,9 +196,9 @@ namespace gl3 {
             float penetration,
             float impactSpeed
     ) {
-
+        /*
         // Push body out of collision
-        body.position += normal * (penetration + 0.00001f * VOXEL_SIZE);
+        body.position += normal * (penetration + 0.0001f * VOXEL_SIZE);
 
         // Reflect velocity
         float velDotNormal = glm::dot(body.velocity, normal);
@@ -230,10 +217,19 @@ namespace gl3 {
 
         // Dampen angular velocity on impact
         body.angularVelocity *= 0.9f;
-
+         */
     }
 
     void VoxelPhysicsManager::removeBody(uint64_t id) {
+        // First, find the body and clear its userData to prevent dangling pointers
+        for (auto& body : bodies) {
+            if (body.id == id) {
+                body.userData = nullptr;
+                break;
+            }
+        }
+
+        // Then erase it
         bodies.erase(
                 std::remove_if(bodies.begin(), bodies.end(),
                                [id](const VoxelPhysicsBody& b) { return b.id == id; }),

@@ -278,16 +278,12 @@ namespace gl3 {
                                     const glm::vec3& hitPos,
                                     const glm::vec3& hitNormal,
                                     float impactSpeed);
-        // Add this to Game.h private section:
-        glm::vec3 calculateSDFNormal(const FormationParams& params, const glm::vec3& pos);
         void createPhysicsMeshData(SpellEffect& spell,
                                          const std::vector<glm::vec3>& vertices,
                                          const std::vector<glm::vec3>& normals,
                                          const std::vector<glm::vec3>& colors);
         void removeFormationVoxels(const SpellEffect& spell);
-        void onFormationImpact(const glm::vec3& impactPos, float damageRadius,
-                               float impulse, RigidBodyPayload* payload,
-                               SpellEffect* spell);
+
 
         ////Debugging:
         void debugComputeShaderState();
@@ -315,8 +311,7 @@ namespace gl3 {
         //Physics:
         void updatePhysics();
 
-        void applyImpactAtPosition(const glm::vec3 &worldPos, float radius, float impulse, RigidBodyPayload* payload);
-
+        void applyImpactAtPosition(const glm::vec3 &worldPos, float radius, float impulse, float mass);
 
         void updateDeltaTime();
 
