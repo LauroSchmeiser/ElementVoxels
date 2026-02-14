@@ -32,6 +32,9 @@ add_executable(${EXE_FILE} ${SOURCE_FILES}
         src/CharacterController.h
         src/physics/SpellPhysicsManager.cpp
         src/physics/SpellPhysicsManager.h
+        src/physics/VoxelPhysicsBody.h
+        src/physics/VoxelPhysicsManager.h
+        src/physics/VoxelPhysicsManager.cpp
 )
 
 # Require C++ 17 compiler

@@ -98,17 +98,22 @@ namespace gl3 {
 
         audio.init();
         audio.setGlobalVolume(0.1f);
+        voxelPhysics = std::make_unique<VoxelPhysicsManager>(chunkManager.get());
+                // Set collision callback for spell bodies
+                voxelPhysics->setCollisionCallback(
+                        [this](gl3::VoxelPhysicsBody* body,
+                               const glm::vec3& hitPos,
+                               const glm::vec3& hitNormal,
+                               float impactSpeed) {
+                            // Handle spell collision
+                            SpellEffect* spell = static_cast<SpellEffect*>(body->userData);
+                            if (spell) {
+                                onSpellCollision(spell, hitPos, hitNormal, impactSpeed);
+                            }
+                        }
+                );
 
-        spellPhysics = std::make_unique<SpellPhysicsManager>();
-        spellPhysics->init([this](const glm::vec3 &pos, float damageRadius,
-                float impulse, RigidBodyPayload* payload) {
-                if (!payload || !payload->userData) return;
-
-                // userData points to the SpellEffect
-                SpellEffect* spell = reinterpret_cast<SpellEffect*>(payload->userData);
-                onFormationImpact(pos, damageRadius, impulse, payload, spell);
-        });
-    }
+            }
 
 
     Game::~Game() {
@@ -1042,14 +1047,27 @@ namespace gl3 {
         processEmissiveChunks();
     }
 
-    void Game::updateSpells(float deltaTime) {
+    void Game::updateSpells(float dt) {
+        // First update all physics bodies
+        if (voxelPhysics) {
+            voxelPhysics->update(dt);
+        }
+
         // Update each active spell
         for (auto spellIt = activeSpells.begin(); spellIt != activeSpells.end(); ) {
+            if (spellIt->lifetime > 0) {
+                spellIt->creationTime += dt;  // ← Increment age
+            }
             // Skip if already marked for removal
             if (spellIt->markForRemoval) {
                 destroyPhysicsBodyForSpell(*spellIt);
                 spellIt = activeSpells.erase(spellIt);
                 continue;
+            }
+
+            // Update spell center from physics body if active
+            if (spellIt->physicsBody && spellIt->isPhysicsEnabled) {
+                spellIt->center = spellIt->physicsBody->position;
             }
 
             // Track which voxels have arrived this frame (ids)
@@ -1076,14 +1094,14 @@ namespace gl3 {
                     glm::vec3 toTarget = voxel.targetPos - voxel.currentPos;
                     float distance = glm::length(toTarget);
 
-                    if (distance < 1.0f*VOXEL_SIZE) {
+                    if (distance < 1.0f * VOXEL_SIZE) {
                         voxel.isAnimating = false;
                         voxel.hasArrived = true;
                         newlyArrivedIDs.push_back(id);
                     } else {
                         float speed = voxel.animationSpeed;
                         float slowdown = glm::clamp(distance / 2.0f, 0.75f, 1.0f);
-                        voxel.velocity = (toTarget/glm::vec3(VOXEL_SIZE*CHUNK_SIZE)) * speed * slowdown*4.0f;
+                        voxel.velocity = (toTarget / glm::vec3(VOXEL_SIZE * CHUNK_SIZE)) * speed * slowdown * 4.0f;
                         voxel.currentPos += voxel.velocity * deltaTime;
                     }
                 } else {
@@ -1126,17 +1144,8 @@ namespace gl3 {
 
             // CREATE PHYSICS BODY AFTER GEOMETRY IS READY
             if (spellIt->geometryCreated && spellIt->isPhysicsEnabled &&
-                spellIt->rigidBody == nullptr) {
+                spellIt->physicsBody == nullptr) {
                 createPhysicsBodyForSpell(*spellIt);
-            }
-
-            // Update physics body position to match rigid body simulation
-            if (spellIt->rigidBody) {
-                btTransform trans;
-                spellIt->rigidBody->getMotionState()->getWorldTransform(trans);
-                btVector3 pos = trans.getOrigin();
-                // Update spell center to match physics (for rendering/cleanup)
-                spellIt->center = glm::vec3(pos.x(), pos.y(), pos.z());
             }
 
             // FIXED: Check if all voxels have arrived and we have physics
@@ -1152,17 +1161,14 @@ namespace gl3 {
 
                 if (stillAnimating == 0) {
                     // All voxels have arrived - clean them up but KEEP THE SPELL for physics
-                    std::cout << "All voxels arrived for spell " << &(*spellIt)
-                              << ". Cleaning voxel data, keeping physics body.\n";
+                    std::cout << "All voxels arrived for spell. Cleaning voxel data, keeping physics body.\n";
 
-                    // Mark that we've cleaned the voxels
                     spellIt->voxelsCleaned = true;
 
                     // Remove all animated voxel IDs from the global list
                     for (uint64_t id : spellIt->animatedVoxelIDs) {
                         auto jt = animatedVoxelIndexMap.find(id);
                         if (jt != animatedVoxelIndexMap.end()) {
-                            // Don't need to keep these around anymore
                             animatedVoxels[jt->second].isAnimating = false;
                         }
                     }
@@ -1226,16 +1232,31 @@ namespace gl3 {
 
     void Game::cleanupExpiredSpells() {
         for (auto spellIt = activeSpells.begin(); spellIt != activeSpells.end(); ) {
-            // If spell has physics but has been around too long, or hit the ground, etc.
-            // You can implement custom expiration logic here
-
-            // For example, remove spells that are far from the player
-            if (spellIt->isPhysicsEnabled && spellIt->voxelsCleaned) {
-                float distanceToPlayer = glm::distance(spellIt->center, cameraPos);
-                if (distanceToPlayer > 350.0f*VOXEL_SIZE) {
+            // Check lifetime
+            if (spellIt->lifetime > 0) {
+                float age = spellIt->creationTime;
+                if (age > spellIt->lifetime) {
                     spellIt->markForRemoval = true;
                 }
             }
+
+            // CHANGED: Only remove physics spells if they're VERY far away
+            // (was 350.0f, increase to 1000.0f or remove this check entirely)
+            if (spellIt->isPhysicsEnabled && spellIt->voxelsCleaned) {
+                float distanceToPlayer = glm::distance(spellIt->center, cameraPos);
+                if (distanceToPlayer > 10000.0f * VOXEL_SIZE) {  // Increased distance
+                    spellIt->markForRemoval = true;
+                }
+            }
+
+            // REMOVED: Don't mark for removal when physics body settles
+            // This was causing premature deletion
+            /*
+            if (spellIt->physicsBody && !spellIt->physicsBody->active) {
+                spellIt->markForRemoval = true;
+            }
+            */
+
             if (spellIt->markForRemoval) {
                 destroyPhysicsBodyForSpell(*spellIt);
                 spellIt = activeSpells.erase(spellIt);
@@ -1243,6 +1264,40 @@ namespace gl3 {
                 ++spellIt;
             }
         }
+    }
+
+    void Game::onSpellCollision(SpellEffect* spell,
+                                const glm::vec3& hitPos,
+                                const glm::vec3& hitNormal,
+                                float impactSpeed) {
+        if (!spell) return;
+
+        // Handle different spell types on collision
+        /*
+        switch (spell->type) {
+            case SpellEffect::Type::CONSTRUCT:
+                // Construct spells might just bounce
+                if (impactSpeed < 1.0f && spell->voxelsCleaned) {
+                    // Low impact - mark for removal after a short time
+                    spell->lifetime = 2.0f;
+                }
+                break;
+
+            case SpellEffect::Type::GRAVITY_WELL:
+                // Gravity wells might stick to surfaces
+                if (spell->physicsBody) {
+                    spell->physicsBody->active = false; // Freeze
+                    spell->physicsBody->velocity = glm::vec3(0.0f);
+                }
+                break;
+
+            default:
+                break;
+        }
+*/
+        std::cout << "Spell collided at ("
+                  << hitPos.x << "," << hitPos.y << "," << hitPos.z
+                  << ") with impact speed " << impactSpeed << "\n";
     }
 
         float Game::randomFloat(float min, float max) {
@@ -1253,7 +1308,6 @@ namespace gl3 {
             return min + dis(gen) * (max - min);
         }
 
-    // MODIFIED: Update castSpellSphere to set initial velocity
     void Game::castSpellSphere(const glm::vec3& center, float radius,
                                uint64_t material, float strength) {
         FormationParams params = FormationParams::Sphere(center, radius);
@@ -1267,7 +1321,10 @@ namespace gl3 {
             glm::vec3 launchDir = glm::normalize(center - cameraPos);
             float launchSpeed = glm::clamp(strength * 2.5f*VOXEL_SIZE, 2.0f*VOXEL_SIZE, 25.0f*VOXEL_SIZE);
             lastSpell.isPhysicsEnabled=true;
+            lastSpell.creationTime = 0.0f;
+            lastSpell.lifetime = 100000.0f;
             lastSpell.initialVelocity = launchDir * launchSpeed;
+            //lastSpell.initialVelocity = glm::vec3(0);
 
 
             std::cout << "Sphere spell velocity set: " << glm::length(lastSpell.initialVelocity)
@@ -1323,7 +1380,7 @@ namespace gl3 {
     }
 
     void Game::createPhysicsBodyForSpell(SpellEffect& spell) {
-        if (!spellPhysics || spell.rigidBody != nullptr) return;
+        if (!voxelPhysics || spell.physicsBody != nullptr) return;
 
         float effectiveRadius = spell.formationParams.getBoundingRadius();
 
@@ -1381,13 +1438,39 @@ namespace gl3 {
             return;
         }
 
-        // Build unique vertex list for physics
-        auto uniqueVerts = SpellPhysicsManager::buildUniqueVertexList(triangleVerts);
+        std::cout << "Found " << triangleVerts.size() << " triangles for physics body\n";
 
-        if (uniqueVerts.size() < 4) {
-            std::cout << "createPhysicsBody: Not enough unique vertices ("
-                      << uniqueVerts.size() << ")\n";
-            return;
+        // Determine shape type based on formation
+        gl3::VoxelPhysicsBody::ShapeType shapeType;
+        glm::vec3 extents;
+
+        switch(spell.formationParams.type) {
+            case FormationType::SPHERE:
+                shapeType = gl3::VoxelPhysicsBody::ShapeType::SPHERE;
+                extents = glm::vec3(spell.formationParams.radius);
+                break;
+            case FormationType::PLATFORM:
+            case FormationType::WALL:
+            case FormationType::CUBE:
+                shapeType = gl3::VoxelPhysicsBody::ShapeType::BOX;
+                extents = glm::vec3(
+                        spell.formationParams.sizeX * 0.5f,
+                        spell.formationParams.sizeY * 0.5f,
+                        spell.formationParams.sizeZ * 0.5f
+                );
+                break;
+            case FormationType::CYLINDER:
+                shapeType = gl3::VoxelPhysicsBody::ShapeType::BOX; // Approximate cylinder with box
+                extents = glm::vec3(
+                        spell.formationParams.radius,
+                        spell.formationParams.sizeY * 0.5f,
+                        spell.formationParams.radius
+                );
+                break;
+            default:
+                shapeType = gl3::VoxelPhysicsBody::ShapeType::SPHERE;
+                extents = glm::vec3(spell.formationParams.radius);
+                break;
         }
 
         // Calculate mass based on collected voxels
@@ -1395,49 +1478,34 @@ namespace gl3 {
         float mass = static_cast<float>(spell.animatedVoxelIDs.size()) * voxelVolume * 0.5f;
         mass = glm::clamp(mass, 1.0f, 1000.0f);
 
-        // Create transform at formation center
-        btTransform startTrans;
-        startTrans.setIdentity();
-        startTrans.setOrigin(btVector3(spell.center.x, spell.center.y, spell.center.z));
-
-        uint64_t formationID = reinterpret_cast<uint64_t>(&spell);
-
-        // Create rigid body
-        btRigidBody* rb = spellPhysics->createRigidBodyFromVertices(
-                uniqueVerts,
+        // Create physics body using your VoxelPhysicsManager
+        spell.physicsBody = voxelPhysics->createBody(
+                spell.center,  // Initial position
                 mass,
-                startTrans,
-                formationID,
-                &spell,
-                5.0f
+                shapeType,
+                extents
         );
 
-        if (rb) {
-            spell.rigidBody = rb;
-            spell.isPhysicsEnabled = true;
+        if (spell.physicsBody) {
+            spell.physicsBody->userData = &spell;
+            spell.physicsBody->velocity = spell.initialVelocity;
+            spell.physicsBody->orientation = glm::quat(1, 0, 0, 0);
 
-            // Apply initial velocity
-            if (glm::length(spell.initialVelocity) > 0.01f) {
-                rb->setLinearVelocity(btVector3(
-                        spell.initialVelocity.x,
-                        spell.initialVelocity.y,
-                        spell.initialVelocity.z
-                ));
-            }
-
-            // NEW: Store mesh data for rendering
+            // Store the mesh data for rendering
             createPhysicsMeshData(spell, triangleVerts, triangleNormals, triangleColors);
 
-            // NEW: Remove voxels from chunks now that we have the mesh
-            removeFormationVoxels(spell);
+            // Link the mesh to the physics body for rendering
+            spell.physicsBody->renderMesh = &spell.physicsMesh;
+
+            spell.isPhysicsEnabled = true;
 
             std::cout << "Physics body created: mass=" << mass
-                      << ", verts=" << uniqueVerts.size()
                       << ", renderVerts=" << triangleVerts.size()
                       << ", velocity=" << glm::length(spell.initialVelocity) << "\n";
-        } else {
-            std::cout << "Failed to create physics body!\n";
         }
+
+        // Remove voxels from chunks now that we have the mesh
+        removeFormationVoxels(spell);
     }
 
     void Game::createPhysicsMeshData(SpellEffect& spell,
@@ -1515,6 +1583,7 @@ namespace gl3 {
         spell.physicsMesh.isValid = true;
     }
 
+
     void Game::removeFormationVoxels(const SpellEffect& spell) {
         float effectiveRadius = spell.formationParams.getBoundingRadius();
 
@@ -1567,12 +1636,13 @@ namespace gl3 {
     }
 
     void Game::destroyPhysicsBodyForSpell(SpellEffect& spell) {
-        if (spell.rigidBody && spellPhysics) {
-            spellPhysics->removeRigidBody(spell.rigidBody);
-            spell.rigidBody = nullptr;
-            spell.isPhysicsEnabled = false;
+        if (spell.physicsBody && voxelPhysics) {
+            voxelPhysics->removeBody(spell.physicsBody);
+            spell.physicsBody = nullptr;
         }
-        if (spell.physicsMesh.vao != 0) {
+
+        // Clean up mesh data
+        if (spell.physicsMesh.vao) {
             glDeleteVertexArrays(1, &spell.physicsMesh.vao);
             glDeleteBuffers(1, &spell.physicsMesh.vbo);
             spell.physicsMesh.vao = 0;
@@ -2058,9 +2128,6 @@ namespace gl3 {
             characterController.update(deltaTime, moveInput, jump, sprint, crouch, mouseDelta, cameraFront, cameraRight, airSlam );
 
             accumulator -= fixedTimeStep;
-            if (spellPhysics) {
-                spellPhysics->stepSimulation(deltaTime, 2, 1.0f/120.0f); // small substeps
-            }
         }
     }
 
@@ -2953,27 +3020,35 @@ namespace gl3 {
             voxelShader->setVec3("lightColor[" + std::to_string(i) + "]", glm::vec3(0.0f));
             voxelShader->setFloat("lightIntensity[" + std::to_string(i) + "]", 0.0f);
         }
+
+        static float time = 0;
+        time += deltaTime;
+
+
         // Render each physics-enabled formation
         for (const auto& spell : activeSpells) {
-            if (!spell.isPhysicsEnabled || !spell.rigidBody) continue;
-            if (!spell.physicsMesh.isValid) continue;
+            if (!spell.isPhysicsEnabled || !spell.physicsBody) continue;
+            if (!spell.physicsMesh.isValid) continue;  // ← CHECK THIS
 
-            // Get physics transform
-            btTransform trans;
-            spell.rigidBody->getMotionState()->getWorldTransform(trans);
-            btVector3 pos = trans.getOrigin();
-            btQuaternion rot = trans.getRotation();
+            // Pulse alpha or color to see if object is being rendered
+            glm::vec3 pulseColor = spell.formationColor * (0.5f + 0.5f * sin(time * 5.0f));
+            voxelShader->setVec3("debugColor", pulseColor); // Add this uniform to your shader
 
-            // Build model matrix from physics transform
-            glm::mat4 model = glm::translate(glm::mat4(VOXEL_SIZE),
-                                             glm::vec3(pos.x(), pos.y(), pos.z()));
+            if (!spell.physicsMesh.isValid) {
+                std::cout << "Physics mesh invalid for spell!\n";
+                continue;
+            }
+            // Use stored position and orientation directly
+            glm::vec3 pos = spell.physicsBody->position;
+            glm::quat rot = spell.physicsBody->orientation;
 
-            glm::quat rotation(rot.w(), rot.x(), rot.y(), rot.z());
-            model *= glm::mat4_cast(rotation);
+            // Build model matrix
+            glm::mat4 model = glm::translate(glm::mat4(1.0f), pos);
+            model *= glm::mat4_cast(rot);
+            //model = glm::scale(model, glm::vec3(VOXEL_SIZE));  // Apply VOXEL_SIZE scaling
 
-            // --- FIX: Set model matrix and compute mvp properly ---
             voxelShader->setMatrix("model", model);
-            voxelShader->setMatrix("mvp", pv * model);  // Multiply pv by model, not just pv
+            voxelShader->setMatrix("mvp", pv * model);
 
             // Draw mesh
             glBindVertexArray(spell.physicsMesh.vao);

@@ -5,6 +5,7 @@
 #include "glm/glm.hpp"
 #include <glad/glad.h>
 #include "../physics/SpellPhysicsManager.h"
+#include "../physics/VoxelPhysicsBody.h"
 
 namespace gl3 {
     constexpr int CHUNK_SIZE = 16;
@@ -294,6 +295,16 @@ namespace gl3 {
         }
     };
 
+    struct PhysicsMeshData {
+        GLuint vao = 0;
+        GLuint vbo = 0;
+        uint32_t vertexCount = 0;
+        std::vector<glm::vec3> vertices;
+        std::vector<glm::vec3> normals;
+        std::vector<glm::vec3> colors;
+        bool isValid = false;
+    };
+
     struct SpellEffect {
         enum class Type {
             GRAVITY_WELL,
@@ -320,19 +331,15 @@ namespace gl3 {
         bool voxelsCleaned = false;  // Add this - true when animated voxels are removed
         bool markForRemoval = false; // Add this - set when ready to delete
 
-        btRigidBody* rigidBody = nullptr;  // The physics body if created
+        VoxelPhysicsBody* physicsBody = nullptr; // The physics body if created
         bool isPhysicsEnabled = false;     // Whether this formation has physics
         glm::vec3 initialVelocity = glm::vec3(0.0f);  // Velocity to apply when body is created
 
-        struct PhysicsMeshData {
-            GLuint vao = 0;
-            GLuint vbo = 0;
-            uint32_t vertexCount = 0;
-            std::vector<glm::vec3> vertices;   // For re-creating VAO if needed
-            std::vector<glm::vec3> normals;
-            std::vector<glm::vec3> colors;
-            bool isValid = false;
-        } physicsMesh;
+        // For tracking physics state
+        bool physicsInitialized = false;
+        float creationTime = 0.0f;
+        float lifetime = 100000.0f; // -1 = infinite
+        PhysicsMeshData physicsMesh;
     };
 
 

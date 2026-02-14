@@ -20,6 +20,7 @@
 #include "Input/InputActionMap.h"
 #include "CharacterController.h"
 #include "physics/SpellPhysicsManager.h"
+#include "physics/VoxelPhysicsManager.h"
 
 namespace gl3 {
     class Game {
@@ -273,10 +274,16 @@ namespace gl3 {
 
         void createPhysicsBodyForSpell(SpellEffect& spell);
         void destroyPhysicsBodyForSpell(SpellEffect& spell);
+        void onSpellCollision(SpellEffect* spell,
+                                    const glm::vec3& hitPos,
+                                    const glm::vec3& hitNormal,
+                                    float impactSpeed);
+        // Add this to Game.h private section:
+        glm::vec3 calculateSDFNormal(const FormationParams& params, const glm::vec3& pos);
         void createPhysicsMeshData(SpellEffect& spell,
-                                   const std::vector<glm::vec3>& vertices,
-                                   const std::vector<glm::vec3>& normals,
-                                   const std::vector<glm::vec3>& colors);
+                                         const std::vector<glm::vec3>& vertices,
+                                         const std::vector<glm::vec3>& normals,
+                                         const std::vector<glm::vec3>& colors);
         void removeFormationVoxels(const SpellEffect& spell);
         void onFormationImpact(const glm::vec3& impactPos, float damageRadius,
                                float impulse, RigidBodyPayload* payload,
@@ -386,7 +393,8 @@ namespace gl3 {
         static constexpr int LIGHT_UPDATE_INTERVAL = 15; // Update lights every 15 frames
         robin_hood::unordered_set<uint32_t> usedLightIDs;
 
-        std::unique_ptr<SpellPhysicsManager> spellPhysics;
+        //std::unique_ptr<SpellPhysicsManager> spellPhysics;
+        std::unique_ptr<VoxelPhysicsManager> voxelPhysics;
 
 
         ////Camera-Variables:

@@ -16,7 +16,7 @@ uniform float emission;
 uniform vec3 emissionColor;
 
 const float PI = 3.14159265;
-const float MIN_ALBEDO = 0.5; // set >0 for debug visualizing lights on black planets
+const float MIN_ALBEDO = 0.03; // set >0 for debug visualizing lights on black planets
 
 void main() {
     // surface albedo
@@ -64,7 +64,7 @@ void main() {
     vec3 color = hdr / (hdr + vec3(1.0));
 
     FragColor = vec4(hdr, 1.0);
-    FragColor = vec4(diffuse,1.0);
+    //FragColor = vec4(diffuse,1.0);
     // debug: show normals as color
     //FragColor = vec4(normalize(normal) * 0.5 + 0.5, 1.0);
 }
