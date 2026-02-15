@@ -85,6 +85,7 @@ namespace gl3 {
         glfwSetWindowUserPointer(window, this);
         glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
 
+        backgroundShader = std::make_unique<Shader>("shaders/background.vert", "shaders/background.frag");
         voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel.frag");
         marchingCubesShader = std::make_unique<Shader>("shaders/marching_cubes.comp");
 
@@ -116,6 +117,7 @@ namespace gl3 {
             }
 
 
+
     Game::~Game() {
         glfwTerminate();
     }
@@ -125,6 +127,8 @@ namespace gl3 {
 
     void Game::run() {
         ////Initialization-Steps
+        setupFullscreenQuad();
+        createNoiseTexture();
         CpuTimer t0("ssbos");
         setupSSBOsAndTables();
         setupInput();
@@ -134,8 +138,9 @@ namespace gl3 {
         setupVEffects();
 
         while (!glfwWindowShouldClose(window)) {
-            glEnable(GL_DEPTH_TEST);
-            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            glClear(GL_COLOR_BUFFER_BIT);
+            renderBackground();
+            glClear(GL_DEPTH_BUFFER_BIT);
 
             ////Simulation Steps
             updateDeltaTime();
@@ -1276,38 +1281,193 @@ namespace gl3 {
             return;
         }
 
-        // Now safe to access spell
-        float mass = spell->physicsBody ? spell->physicsBody->mass : 1.0f;
-        applyImpactAtPosition(hitPos, spell->radius, impactSpeed, mass);
-
         std::cout << "Spell collided at ("
                   << hitPos.x << "," << hitPos.y << "," << hitPos.z
                   << ") with impact speed " << impactSpeed << "\n";
 
-        //destroyPhysicsBodyForSpell(*spell);
-        // Handle different spell types on collision
-        /*
-        switch (spell->type) {
-            case SpellEffect::Type::CONSTRUCT:
-                // Construct spells might just bounce
-                if (impactSpeed < 1.0f && spell->voxelsCleaned) {
-                    // Low impact - mark for removal after a short time
-                    spell->lifetime = 2.0f;
-                }
-                break;
+        // Scale crater based on impact speed
+        float impactFactor = glm::clamp(impactSpeed / 20.0f, 0.5f, 3.0f);
 
-            case SpellEffect::Type::GRAVITY_WELL:
-                // Gravity wells might stick to surfaces
-                if (spell->physicsBody) {
-                    spell->physicsBody->active = false; // Freeze
-                    spell->physicsBody->velocity = glm::vec3(0.0f);
-                }
-                break;
+        // Create crater at impact position
+        createCraterAtPosition(hitPos, impactFactor, spell->radius);
 
-            default:
-                break;
+        // Optional: Add some visual/audio feedback
+        // playImpactSound(hitPos, impactSpeed);
+        // spawnImpactParticles(hitPos, hitNormal, impactSpeed);
+
+        // Optional: Apply force to the spell (bounce)
+       /* if (spell->physicsBody) {
+            // Simple bounce reflection
+            glm::vec3 reflectedVel = spell->physicsBody->velocity - 2.0f * glm::dot(spell->physicsBody->velocity, hitNormal) * hitNormal;
+            spell->physicsBody->velocity = reflectedVel * 0.5f; // Dampen the bounce
+        }*/
+    }
+
+    void Game::createCraterAtPosition(const glm::vec3& worldPos, float impactFactor, float spellRadius) {
+        // Find which chunk this position is in
+        int cx = worldToChunk(worldPos.x);
+        int cy = worldToChunk(worldPos.y);
+        int cz = worldToChunk(worldPos.z);
+
+        ChunkCoord coord{cx, cy, cz};
+        Chunk* chunk = chunkManager->getChunk(coord);
+
+        if (!chunk) {
+            std::cout << "No chunk found at impact position\n";
+            return;
         }
-*/
+
+        // Convert world position to local chunk coordinates
+        glm::vec3 chunkMin = getChunkMin(coord);
+        glm::vec3 localPos = (worldPos - chunkMin) / VOXEL_SIZE;
+
+        // Get voxel coordinates (clamp to chunk bounds)
+        int vx = glm::clamp(static_cast<int>(std::round(localPos.x)), 0, CHUNK_SIZE);
+        int vy = glm::clamp(static_cast<int>(std::round(localPos.y)), 0, CHUNK_SIZE);
+        int vz = glm::clamp(static_cast<int>(std::round(localPos.z)), 0, CHUNK_SIZE);
+
+        glm::ivec3 voxelPos(vx, vy, vz);
+
+        // Scale crater based on impact factor and spell radius
+        float originalCraterRadius = 2.0f * VOXEL_SIZE;
+        float craterRadius = originalCraterRadius * impactFactor * (spellRadius / (5.0f * VOXEL_SIZE));
+        float maxCraterDepth = 2.5f * impactFactor;
+
+        // Clamp to reasonable values
+        craterRadius = glm::clamp(craterRadius, VOXEL_SIZE, 10.0f * VOXEL_SIZE);
+        maxCraterDepth = glm::clamp(maxCraterDepth, 1.0f, 5.0f);
+
+        int range = static_cast<int>(std::ceil(craterRadius / VOXEL_SIZE));
+
+        bool chunkModified = false;
+
+        for (int dx = -range; dx <= range; ++dx) {
+            for (int dy = -range; dy <= range; ++dy) {
+                for (int dz = -range; dz <= range; ++dz) {
+                    int nx = voxelPos.x + dx;
+                    int ny = voxelPos.y + dy;
+                    int nz = voxelPos.z + dz;
+
+                    // Check if we're still in this chunk
+                    if (nx < 0 || nx > CHUNK_SIZE || ny < 0 || ny > CHUNK_SIZE || nz < 0 || nz > CHUNK_SIZE) {
+                        // Handle neighboring chunks if needed
+                        handleCraterInNeighboringChunk(worldPos, dx, dy, dz, craterRadius, maxCraterDepth, impactFactor);
+                        continue;
+                    }
+
+                    glm::vec3 offset = glm::vec3((float)dx, (float)dy, (float)dz) * VOXEL_SIZE;
+                    float dist = glm::length(offset);
+
+                    if (dist <= craterRadius) {
+                        float t = dist / craterRadius;
+                        float originalDensity = chunk->voxels[nx][ny][nz].density;
+
+                        // Only modify solid or semi-solid voxels
+                        if (originalDensity > -1.0f) {
+                            // Create crater shape
+                            float craterShape = (1.0f - t * t); // Smooth falloff
+                            float densityReduction = maxCraterDepth * craterShape;
+
+                            float newDensity = originalDensity - densityReduction;
+
+                            // Ensure we don't go too negative
+                            if (originalDensity > 2.0f) {
+                                newDensity = std::max(newDensity, 0.1f);
+                            }
+
+                            chunk->voxels[nx][ny][nz].density = newDensity;
+
+                            // Update type based on new density
+                            if (newDensity < -0.5f) {
+                                chunk->voxels[nx][ny][nz].type = 0; // Air
+                            } else {
+                                chunk->voxels[nx][ny][nz].type = 1; // Solid
+                            }
+
+                            chunkModified = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (chunkModified) {
+            chunk->meshDirty = true;
+            chunk->lightingDirty = true;
+            markChunkModified(coord);
+
+            // Also mark neighboring chunks that might have been affected
+            for (int dx = -1; dx <= 1; ++dx) {
+                for (int dy = -1; dy <= 1; ++dy) {
+                    for (int dz = -1; dz <= 1; ++dz) {
+                        ChunkCoord neighbor{coord.x + dx, coord.y + dy, coord.z + dz};
+                        Chunk* neighborChunk = chunkManager->getChunk(neighbor);
+                        if (neighborChunk) {
+                            neighborChunk->meshDirty = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    void Game::handleCraterInNeighboringChunk(const glm::vec3& worldPos,
+                                              int dx, int dy, int dz,
+                                              float craterRadius,
+                                              float maxCraterDepth,
+                                              float impactFactor) {
+        // Calculate the world position of this voxel
+        glm::vec3 voxelWorldPos = worldPos + glm::vec3(dx, dy, dz) * VOXEL_SIZE;
+
+        // Find which chunk this belongs to
+        int cx = worldToChunk(voxelWorldPos.x);
+        int cy = worldToChunk(voxelWorldPos.y);
+        int cz = worldToChunk(voxelWorldPos.z);
+
+        ChunkCoord coord{cx, cy, cz};
+        Chunk* chunk = chunkManager->getChunk(coord);
+
+        if (!chunk) return;
+
+        // Convert to local chunk coordinates
+        glm::vec3 chunkMin = getChunkMin(coord);
+        glm::vec3 localPos = (voxelWorldPos - chunkMin) / VOXEL_SIZE;
+
+        int nx = glm::clamp(static_cast<int>(std::round(localPos.x)), 0, CHUNK_SIZE);
+        int ny = glm::clamp(static_cast<int>(std::round(localPos.y)), 0, CHUNK_SIZE);
+        int nz = glm::clamp(static_cast<int>(std::round(localPos.z)), 0, CHUNK_SIZE);
+
+        // Calculate distance from impact center
+        glm::vec3 offset = voxelWorldPos - worldPos;
+        float dist = glm::length(offset);
+
+        if (dist <= craterRadius) {
+            float t = dist / craterRadius;
+            float originalDensity = chunk->voxels[nx][ny][nz].density;
+
+            if (originalDensity > -1.0f) {
+                float craterShape = (1.0f - t * t);
+                float densityReduction = maxCraterDepth * craterShape;
+
+                float newDensity = originalDensity - densityReduction;
+
+                if (originalDensity > 2.0f) {
+                    newDensity = std::max(newDensity, 0.1f);
+                }
+
+                chunk->voxels[nx][ny][nz].density = newDensity;
+
+                if (newDensity < -0.5f) {
+                    chunk->voxels[nx][ny][nz].type = 0;
+                } else {
+                    chunk->voxels[nx][ny][nz].type = 1;
+                }
+
+                chunk->meshDirty = true;
+                chunk->lightingDirty = true;
+                markChunkModified(coord);
+            }
+        }
     }
 
         float Game::randomFloat(float min, float max) {
@@ -1321,23 +1481,26 @@ namespace gl3 {
     void Game::castSpellSphere(const glm::vec3& center, float radius,
                                uint64_t material, float strength) {
         FormationParams params = FormationParams::Sphere(center, radius);
-        castSpellWithFormation(center, radius * 5.5f, material, strength, params);
+        castSpellWithFormation(center, radius * 10.5f, material, strength, params);
 
         // Set initial velocity for the newly created spell
         if (!activeSpells.empty()) {
             SpellEffect& lastSpell = activeSpells.back();
 
             // Calculate launch direction (from camera toward target)
-            glm::vec3 launchDir = glm::normalize(center - cameraPos);
-            float launchSpeed = glm::clamp(strength * 100.5f*VOXEL_SIZE, 2.0f*VOXEL_SIZE, 1000.0f*VOXEL_SIZE);
-            lastSpell.isPhysicsEnabled=true;
+            glm::vec3 launchDir = glm::normalize(getCameraFront());
+            float launchSpeed = glm::clamp(strength * 250.5f * VOXEL_SIZE, 10.0f * VOXEL_SIZE, 10000.0f * VOXEL_SIZE);
+
+            lastSpell.isPhysicsEnabled = true;
             lastSpell.creationTime = 0.0f;
-            lastSpell.lifetime = 5.0f;
+            lastSpell.lifetime = 20.0f;
             lastSpell.initialVelocity = launchDir * launchSpeed;
 
+            // Store the launch direction for orientation
+            lastSpell.formationParams.normal = launchDir; // Store direction in normal field
 
             std::cout << "Sphere spell velocity set: " << glm::length(lastSpell.initialVelocity)
-                      << " units/sec\n";
+                      << " units/sec, direction: (" << launchDir.x << "," << launchDir.y << "," << launchDir.z << ")\n";
         }
     }
 
@@ -1637,9 +1800,9 @@ namespace gl3 {
         float mass = static_cast<float>(spell.animatedVoxelIDs.size()) * voxelVolume * 0.5f;
         mass = glm::clamp(mass, 1.0f, 1000.0f);
 
-        // Create physics body at the geometry's actual center, not the spell center
+        // Create physics body - use spell.center for initial position
         spell.physicsBody = voxelPhysics->createBody(
-                geomCenter,  // Use actual geometry center
+                spell.center,
                 mass,
                 shapeType,
                 extents
@@ -1648,7 +1811,22 @@ namespace gl3 {
         if (spell.physicsBody) {
             spell.physicsBody->userData = &spell;
             spell.physicsBody->velocity = spell.initialVelocity;
-            spell.physicsBody->orientation = glm::quat(1, 0, 0, 0);
+
+            // Set orientation to face the direction of travel (camera front)
+            if (glm::length(spell.initialVelocity) > 0.001f) {
+                glm::vec3 direction = glm::normalize(spell.initialVelocity); // This is camera front
+
+                // For glm::quatLookAt, the first parameter is the direction TO look at
+                // If your model's forward is +Z, then you want to rotate so that +Z points in direction
+                // quatLookAt gives a rotation that makes the object's forward point TOWARDS the given direction
+                spell.physicsBody->orientation = glm::quatLookAt(direction, glm::vec3(0.0f, 1.0f, 0.0f));
+
+                // Note: If your model uses a different forward axis, adjust accordingly:
+                // For +X forward: glm::quatLookAt(direction, glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(1.0f, 0.0f, 0.0f))
+                // For +Y forward: glm::quatLookAt(direction, glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(0.0f, 1.0f, 0.0f))
+            } else {
+                spell.physicsBody->orientation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f); // Identity
+            }
 
             // Store the mesh data for rendering
             createPhysicsMeshData(spell, triangleVerts, triangleNormals, triangleColors);
@@ -1661,13 +1839,13 @@ namespace gl3 {
             std::cout << "Physics body created: mass=" << mass
                       << ", renderVerts=" << triangleVerts.size()
                       << ", velocity=" << glm::length(spell.initialVelocity) << "\n";
+            std::cout << "Spell center: (" << spell.center.x << "," << spell.center.y << "," << spell.center.z << ")\n";
             std::cout << "Geometry bounds: center(" << geomCenter.x << "," << geomCenter.y << "," << geomCenter.z
                       << ") extents(" << extents.x << "," << extents.y << "," << extents.z << ")\n";
         }
-
         // Remove voxels from chunks now that we have the mesh
         removeFormationVoxels(spell);
-    }
+        }
 
     void Game::createPhysicsMeshData(SpellEffect& spell,
                                      const std::vector<glm::vec3>& vertices,
@@ -2239,7 +2417,7 @@ namespace gl3 {
 
     void Game::applyImpactAtPosition(const glm::vec3 &worldPos, float radius, float impulse, float mass) {
         // tune these
-        const float damageScale = glm::clamp(impulse * 0.15f*deltaTime, 0.5f, 30.0f); // larger impulse -> stronger carving
+        const float damageScale = glm::clamp(impulse * 0.05f*deltaTime, 0.5f, 30.0f); // larger impulse -> stronger carving
         const float maxRadius = glm::max(radius, damageScale);
         const float radiusSq = maxRadius * maxRadius;
 
@@ -2586,13 +2764,13 @@ namespace gl3 {
 
         if (actions["CastSphere"].wasJustPressed) {
             std::cout << "Sphere Spell Triggered\n";
-            RayCastResult hit = rayCastFromCamera(250.0f);
+            RayCastResult hit = rayCastFromCamera(5.0f);
             glm::vec3 spellCenter = hit.hit ? hit.hitPosition :
-                                    (cameraPos + getCameraFront() * 50.0f * VOXEL_SIZE);
+                                    (cameraPos + getCameraFront() * 15.0f * VOXEL_SIZE);
 
             // Cast spell with physics enabled
-            float spellRadius = 5.0f * VOXEL_SIZE;  // Adjust size
-            float spellStrength = 7.0f;              // Affects velocity
+            float spellRadius = 4.0f * VOXEL_SIZE;  // Adjust size
+            float spellStrength = 4.0f;              // Affects velocity
 
             castSpellSphere(spellCenter, spellRadius, 0, spellStrength);
         }
@@ -2706,6 +2884,37 @@ namespace gl3 {
 ////----Rendering Code--------------------------------------------------------------------------------------------------------------------------
 
 //------General Rendering-Code------------------------------------------------------------------------------------------------------------------
+    void Game::renderBackground() {
+        glDisable(GL_DEPTH_TEST);
+
+        backgroundShader->use();
+
+        backgroundShader->setFloat("time", glfwGetTime());
+        backgroundShader->setVec2("resolution", glm::vec2(windowWidth, windowHeight));
+
+        float aspect = (windowHeight == 0) ? (float)windowWidth / 1.0f : (float)windowWidth / (float)windowHeight;
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
+        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), glm::vec3(0.0f, 1.0f, 0.0f));
+
+        backgroundShader->setMatrix("invProjection", glm::inverse(projection));
+        backgroundShader->setMatrix("invView", glm::inverse(view));
+
+        // NEW: Store and pass previous frame's view matrix for temporal smoothing
+        static glm::mat4 prevView = view;
+        backgroundShader->setMatrix("prevInvView", glm::inverse(prevView));
+        prevView = view;  // Save for next frame
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, noiseTexture);
+        backgroundShader->setInt("noiseTexture", 0);
+
+        glBindVertexArray(fullscreenQuadVAO);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        glBindVertexArray(0);
+
+        glEnable(GL_DEPTH_TEST);
+        glClear(GL_DEPTH_BUFFER_BIT);
+    }
 
     void Game::renderChunks() {
         int built = 0;
@@ -3140,8 +3349,8 @@ namespace gl3 {
             }
             // Use stored position and orientation directly
             int currentChunkX = worldToChunk(spell.physicsBody->position.x);
-            int currentChunkY = worldToChunk(spell.physicsBody->position.x);
-            int currentChunkZ = worldToChunk(spell.physicsBody->position.x);
+            int currentChunkY = worldToChunk(spell.physicsBody->position.y);
+            int currentChunkZ = worldToChunk(spell.physicsBody->position.z);
 
             glm::vec3 pos = glm::vec3(currentChunkX,currentChunkY,currentChunkZ) ;
             glm::quat rot = spell.physicsBody->orientation;
@@ -3799,4 +4008,54 @@ namespace gl3 {
                     lastX = xpos;
             lastY = ypos;
         }
+
+    void Game::createNoiseTexture() {
+        const int size = 128;
+        std::vector<unsigned char> data(size * size * 3);
+
+        for (int y = 0; y < size; y++) {
+            for (int x = 0; x < size; x++) {
+                int index = (y * size + x) * 3;
+
+                // Simple random noise
+                data[index] = rand() % 128;
+                data[index + 1] = rand() % 128;
+                data[index + 2] = rand() % 128;
+            }
+        }
+
+        glGenTextures(1, &noiseTexture);
+        glBindTexture(GL_TEXTURE_2D, noiseTexture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, size, size, 0, GL_RGB, GL_UNSIGNED_BYTE, data.data());
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    }
+
+    void Game::setupFullscreenQuad() {
+        float quadVertices[] = {
+                -1.0f, -1.0f,
+                1.0f, -1.0f,
+                -1.0f,  1.0f,
+
+                -1.0f,  1.0f,
+                1.0f, -1.0f,
+                1.0f,  1.0f
+        };
+
+        glGenVertexArrays(1, &fullscreenQuadVAO);
+        glGenBuffers(1, &fullscreenQuadVBO);
+
+        glBindVertexArray(fullscreenQuadVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, fullscreenQuadVBO);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), quadVertices, GL_STATIC_DRAW);
+
+        // Only position attribute
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glBindVertexArray(0);
+    }
 }

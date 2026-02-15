@@ -1,5 +1,6 @@
 // VoxelPhysicsManager.cpp
 #include "VoxelPhysicsManager.h"
+#include "glm/gtc/quaternion.hpp"
 
 namespace gl3 {
 
@@ -94,70 +95,178 @@ namespace gl3 {
             glm::vec3& outNormal,
             float& outPenetration
     ) {
-        // Sample SDF at body position
-        float sdf = sampleSDF(body.position);
+        switch(body.shapeType) {
+            case VoxelPhysicsBody::ShapeType::SPHERE:
+                return checkSphereCollision(body, outNormal, outPenetration);
+            case VoxelPhysicsBody::ShapeType::BOX:
+                return checkBoxCollision(body, outNormal, outPenetration);
+            default:
+                return checkSphereCollision(body, outNormal, outPenetration);
+        }
+    }
 
-        // Signed distance from surface (accounting for body radius)
-        float signedDist = sdf - body.radius;
+    bool VoxelPhysicsManager::checkSphereCollision(
+            const VoxelPhysicsBody& body,
+            glm::vec3& outNormal,
+            float& outPenetration
+    ) {
+        // For sphere, we can use a more accurate method: sample in a spiral pattern
+        const int numRings = 5;
+        const int samplesPerRing = 8;
 
-        if (signedDist > 0.01f * VOXEL_SIZE) {
-            return false; // No collision
+        float maxPenetration = 0.0f;
+        glm::vec3 collisionNormal(0.0f);
+        int collisionCount = 0;
+
+        for (int ring = 0; ring < numRings; ++ring) {
+            float phi = glm::pi<float>() * float(ring) / (numRings - 1); // 0 to PI
+            float y = cos(phi);
+            float radiusAtY = sin(phi);
+
+            for (int s = 0; s < samplesPerRing; ++s) {
+                float theta = 2.0f * glm::pi<float>() * float(s) / samplesPerRing;
+
+                glm::vec3 dir(
+                        radiusAtY * cos(theta),
+                        y,
+                        radiusAtY * sin(theta)
+                );
+
+                glm::vec3 samplePos = body.position + dir * body.radius;
+                float sdf = sampleSDF(samplePos);
+
+                if (sdf < 0) {
+                    float penetration = -sdf;
+                    glm::vec3 normal = sampleNormal(samplePos);
+
+                    collisionNormal += normal;
+                    maxPenetration = std::max(maxPenetration, penetration);
+                    collisionCount++;
+                }
+            }
         }
 
-        // Calculate normal
-        outNormal = sampleNormal(body.position);
-        outPenetration = -signedDist; // Convert to penetration depth
+        if (collisionCount > 0) {
+            outNormal = glm::normalize(collisionNormal);
+            outPenetration = maxPenetration;
+            return true;
+        }
 
-        return true;
+        return false;
+    }
+
+    bool VoxelPhysicsManager::checkBoxCollision(
+            const VoxelPhysicsBody& body,
+            glm::vec3& outNormal,
+            float& outPenetration
+    ) {
+        // For box, we need to check all 8 corners and edges
+        glm::vec3 halfExtents = body.shapeExtents;
+
+        // Generate all 8 corners of the box in world space
+        glm::vec3 corners[8];
+        glm::mat3 rot = glm::mat3_cast(body.orientation);
+
+        for (int i = 0; i < 8; ++i) {
+            glm::vec3 localCorner(
+                    (i & 1) ? halfExtents.x : -halfExtents.x,
+                    (i & 2) ? halfExtents.y : -halfExtents.y,
+                    (i & 4) ? halfExtents.z : -halfExtents.z
+            );
+            corners[i] = body.position + rot * localCorner;
+        }
+
+        float maxPenetration = 0.0f;
+        glm::vec3 collisionNormal(0.0f);
+        int collisionCount = 0;
+
+        // Check each corner
+        for (int i = 0; i < 8; ++i) {
+            float sdf = sampleSDF(corners[i]);
+
+            if (sdf < 0) {
+                float penetration = -sdf;
+                glm::vec3 normal = sampleNormal(corners[i]);
+
+                collisionNormal += normal;
+                maxPenetration = std::max(maxPenetration, penetration);
+                collisionCount++;
+            }
+        }
+
+        // Also check edge midpoints for better accuracy
+        const int edges[12][2] = {
+                {0,1}, {1,3}, {3,2}, {2,0}, // bottom face
+                {4,5}, {5,7}, {7,6}, {6,4}, // top face
+                {0,4}, {1,5}, {3,7}, {2,6}  // vertical edges
+        };
+
+        for (int e = 0; e < 12; ++e) {
+            glm::vec3 edgeMid = (corners[edges[e][0]] + corners[edges[e][1]]) * 0.5f;
+            float sdf = sampleSDF(edgeMid);
+
+            if (sdf < 0) {
+                float penetration = -sdf;
+                glm::vec3 normal = sampleNormal(edgeMid);
+
+                collisionNormal += normal;
+                maxPenetration = std::max(maxPenetration, penetration);
+                collisionCount++;
+            }
+        }
+
+        if (collisionCount > 0) {
+            outNormal = glm::normalize(collisionNormal);
+            outPenetration = maxPenetration;
+            return true;
+        }
+
+        return false;
     }
 
     float VoxelPhysicsManager::sampleSDF(const glm::vec3& worldPos) {
-        if (!chunkManager) return -1000.0f;
-
+        if (!chunkManager) return -10000.0f;
         const float chunkWorldSize = CHUNK_SIZE * VOXEL_SIZE;
-        int cx = (int)std::floor(worldPos.x / chunkWorldSize);
-        int cy = (int)std::floor(worldPos.y / chunkWorldSize);
-        int cz = (int)std::floor(worldPos.z / chunkWorldSize);
-
-        ChunkCoord coord{cx, cy, cz};
-        Chunk* chunk = chunkManager->getChunk(coord);
-
-        if (!chunk) return -1000.0f;
-
-        glm::vec3 chunkMin(cx * chunkWorldSize, cy * chunkWorldSize, cz * chunkWorldSize);
+        int baseCX = worldToChunk(worldPos.x);
+        int baseCY = worldToChunk(worldPos.y);
+        int baseCZ = worldToChunk(worldPos.z);
+        glm::vec3 chunkMin = glm::vec3(baseCX * chunkWorldSize,baseCY * chunkWorldSize,baseCZ * chunkWorldSize);
         glm::vec3 local = (worldPos - chunkMin) / VOXEL_SIZE;
-
-        // Trilinear interpolation (same as your CharacterController)
-        int ix = (int)std::floor(local.x);
-        int iy = (int)std::floor(local.y);
-        int iz = (int)std::floor(local.z);
-
+        int ix = static_cast<int>(std::floor(local.x));
+        int iy = static_cast<int>(std::floor(local.y));
+        int iz = static_cast<int>(std::floor(local.z));
         float fx = local.x - ix;
         float fy = local.y - iy;
         float fz = local.z - iz;
 
-        // Clamp indices
-        ix = glm::clamp(ix, 0, CHUNK_SIZE - 1);
-        iy = glm::clamp(iy, 0, CHUNK_SIZE - 1);
-        iz = glm::clamp(iz, 0, CHUNK_SIZE - 1);
+        // gather 8 corner samples by querying the chunk manager (handles chunk boundaries)
+        auto sampleCorner = [&](int sx, int sy, int sz)->float {
+            // corner world position:
+            glm::vec3 cornerWorld = chunkMin + glm::vec3((float)(ix + sx), (float)(iy + sy), (float)(iz + sz)) * VOXEL_SIZE;
+            int cx = worldToChunk(cornerWorld.x);
+            int cy = worldToChunk(cornerWorld.y);
+            int cz = worldToChunk(cornerWorld.z);
+            ChunkCoord coord{cx, cy, cz};
+            Chunk* chunk = chunkManager->getChunk(coord);
+            if (!chunk) return -1000.0f;
+            // local index inside that chunk (0..CHUNK_SIZE)
+            glm::vec3 localCorner = (cornerWorld - getChunkMin(coord)) / VOXEL_SIZE;
+            int lx = glm::clamp((int)std::round(localCorner.x), 0, CHUNK_SIZE);
+            int ly = glm::clamp((int)std::round(localCorner.y), 0, CHUNK_SIZE);
+            int lz = glm::clamp((int)std::round(localCorner.z), 0, CHUNK_SIZE);
+            return chunk->voxels[lx][ly][lz].density;
+        };
 
-        int ix1 = glm::min(ix + 1, CHUNK_SIZE);
-        int iy1 = glm::min(iy + 1, CHUNK_SIZE);
-        int iz1 = glm::min(iz + 1, CHUNK_SIZE);
+        float s000 = sampleCorner(0,0,0);
+        float s100 = sampleCorner(1,0,0);
+        float s010 = sampleCorner(0,1,0);
+        float s110 = sampleCorner(1,1,0);
+        float s001 = sampleCorner(0,0,1);
+        float s101 = sampleCorner(1,0,1);
+        float s011 = sampleCorner(0,1,1);
+        float s111 = sampleCorner(1,1,1);
 
-        // Sample 8 corners
-        float s000 = chunk->voxels[ix][iy][iz].density;
-        float s100 = chunk->voxels[ix1][iy][iz].density;
-        float s010 = chunk->voxels[ix][iy1][iz].density;
-        float s110 = chunk->voxels[ix1][iy1][iz].density;
-        float s001 = chunk->voxels[ix][iy][iz1].density;
-        float s101 = chunk->voxels[ix1][iy][iz1].density;
-        float s011 = chunk->voxels[ix][iy1][iz1].density;
-        float s111 = chunk->voxels[ix1][iy1][iz1].density;
-
-        // Trilinear interpolation
-        auto lerp = [](float a, float b, float t) { return a + (b - a) * t; };
-
+        auto lerp = [](float a, float b, float t){ return a + (b - a) * t; };
         float c00 = lerp(s000, s100, fx);
         float c10 = lerp(s010, s110, fx);
         float c01 = lerp(s001, s101, fx);
@@ -165,29 +274,38 @@ namespace gl3 {
 
         float c0 = lerp(c00, c10, fy);
         float c1 = lerp(c01, c11, fy);
-
         return lerp(c0, c1, fz);
     }
 
+    int VoxelPhysicsManager::worldToChunk(float worldPos){
+        // Each chunk covers CHUNK_SIZE voxels, each voxel is VOXEL_SIZE world units.
+        // So chunk world width = CHUNK_SIZE * VOXEL_SIZE.
+        float chunkWorldSize = CHUNK_SIZE * gl3::VOXEL_SIZE;
+        return (int) std::floor(worldPos / chunkWorldSize);
+    }
+
+    glm::vec3 VoxelPhysicsManager::getChunkMin(const ChunkCoord& coord) const {
+        // chunk origin in world units
+        return glm::vec3(coord.x * CHUNK_SIZE * gl3::VOXEL_SIZE,
+                         coord.y * CHUNK_SIZE * gl3::VOXEL_SIZE,
+                         coord.z * CHUNK_SIZE * gl3::VOXEL_SIZE);
+    }
+
+    glm::vec3 VoxelPhysicsManager::getChunkMax(const ChunkCoord& coord) const {
+        return glm::vec3((coord.x + 1) * CHUNK_SIZE * gl3::VOXEL_SIZE,
+                         (coord.y + 1) * CHUNK_SIZE * gl3::VOXEL_SIZE,
+                         (coord.z + 1) * CHUNK_SIZE * gl3::VOXEL_SIZE);
+    }
     glm::vec3 VoxelPhysicsManager::sampleNormal(const glm::vec3& worldPos) {
         const float e = VOXEL_SIZE * 0.5f;
-
-        float dx = sampleSDF(worldPos + glm::vec3(e, 0, 0)) -
-                   sampleSDF(worldPos - glm::vec3(e, 0, 0));
-        float dy = sampleSDF(worldPos + glm::vec3(0, e, 0)) -
-                   sampleSDF(worldPos - glm::vec3(0, e, 0));
-        float dz = sampleSDF(worldPos + glm::vec3(0, 0, e)) -
-                   sampleSDF(worldPos - glm::vec3(0, 0, e));
-
-        glm::vec3 grad(dx, dy, dz);
-        float len = glm::length(grad);
-
-        if (len < 1e-6f) {
-            return glm::vec3(0, 1, 0);
-        }
-
-        // Gradient points inward (density increases), we want outward normal
-        return -glm::normalize(grad);
+        float dx = sampleSDF(worldPos + glm::vec3(e,0,0)) - sampleSDF(worldPos - glm::vec3(e,0,0));
+        float dy = sampleSDF(worldPos + glm::vec3(0,e,0)) - sampleSDF(worldPos - glm::vec3(0,e,0));
+        float dz = sampleSDF(worldPos + glm::vec3(0,0,e)) - sampleSDF(worldPos - glm::vec3(0,0,e));
+        glm::vec3 g(dx,dy,dz);
+        float len = glm::length(g);
+        if (len < 1e-6f) return glm::vec3(0.0f, 1.0f, 0.0f);
+        // density increases INTO solid => gradient points inward; we want outward normal
+        return -glm::normalize(g);
     }
 
     void VoxelPhysicsManager::resolveCollision(
@@ -196,7 +314,7 @@ namespace gl3 {
             float penetration,
             float impactSpeed
     ) {
-        /*
+/*
         // Push body out of collision
         body.position += normal * (penetration + 0.0001f * VOXEL_SIZE);
 
@@ -217,7 +335,7 @@ namespace gl3 {
 
         // Dampen angular velocity on impact
         body.angularVelocity *= 0.9f;
-         */
+        */
     }
 
     void VoxelPhysicsManager::removeBody(uint64_t id) {

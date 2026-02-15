@@ -254,6 +254,14 @@ namespace gl3 {
         void createExteriorSmoothCrater(Chunk* chunk, const glm::ivec3& voxelPos,
                                         const glm::vec3& worldPos);
 
+        void handleCraterInNeighboringChunk(const glm::vec3& worldPos,
+                                                  int dx, int dy, int dz,
+                                                  float craterRadius,
+                                                  float maxCraterDepth,
+                                                  float impactFactor);
+
+        void createCraterAtPosition(const glm::vec3& worldPos, float impactFactor, float spellRadius);
+
         float randomFloat(float min, float max);
 
         void castSpellSphere(const glm::vec3& center, float radius,
@@ -340,6 +348,7 @@ namespace gl3 {
 
         ////Rendering-Steps::
         //General Rendering:
+        void renderBackground();
         void renderChunks();
         void renderAnimatedVoxels();
         void renderPhysicsFormations();
@@ -398,6 +407,10 @@ namespace gl3 {
 
 
         ////Rendering-Variables:
+        //Background-Variables:
+        GLuint fullscreenQuadVAO=0;
+        GLuint fullscreenQuadVBO=0;
+        GLuint noiseTexture=0;
         //World-Variables:
         const int DIM = CHUNK_SIZE + 2; //Chunk Size with a bit off padding for marching cubes
         size_t voxelCount = DIM * DIM * DIM; //How many voxels can be in one Chunk
@@ -425,6 +438,7 @@ namespace gl3 {
 
 
         ////Shader:
+        std::unique_ptr<Shader> backgroundShader;
         std::unique_ptr<Shader> voxelShader;
         std::unique_ptr<Shader> marchingCubesShader;
         std::unique_ptr<Shader> voxelSplatShader;
@@ -433,9 +447,12 @@ namespace gl3 {
         ////helper functions:
         RayCastResult rayCastFromCamera(float maxDistance = 1000.0f);
         glm::vec3 calculateNormalAt(Chunk* chunk, const glm::ivec3& pos);
-        void updateCamera();
         float sampleDensityAtWorld(const glm::vec3 &worldPos) const;
         glm::vec3 sampleNormalAtWorld(const glm::vec3 &worldPos) const;
+        void updateCamera();
+        void createNoiseTexture();
+        void setupFullscreenQuad();
+
         glm::vec2 getMouseDelta();
         glm::dvec2 previousMousePos = glm::dvec2(0.0, 0.0);
         bool hasPreviousMousePos = false;

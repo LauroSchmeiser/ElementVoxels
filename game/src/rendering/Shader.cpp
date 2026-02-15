@@ -114,6 +114,11 @@ namespace gl3 {
         glUniform3fv(loc, 1, glm::value_ptr(vector));
     }
 
+    void Shader::setVec2(const std::string& uniformName, glm::vec2 vector) const {
+        auto loc = glGetUniformLocation(shaderProgram, uniformName.c_str());
+        glUniform2fv(loc, 1, glm::value_ptr(vector));
+    }
+
     void Shader::setIVec3(const std::string& uniformName, glm::ivec3 vector) const {
         auto loc = glGetUniformLocation(shaderProgram, uniformName.c_str());
         if (loc == -1) {

@@ -338,7 +338,7 @@ namespace gl3 {
         // For tracking physics state
         bool physicsInitialized = false;
         float creationTime = 0.0f;
-        float lifetime = 5.0f; // -1 = infinite
+        float lifetime = 50.0f; // -1 = infinite
         PhysicsMeshData physicsMesh;
     };
 

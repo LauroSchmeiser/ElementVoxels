@@ -54,7 +54,6 @@ namespace gl3 {
                 float& outPenetration
         );
 
-        float sampleSDF(const glm::vec3& worldPos);
         glm::vec3 sampleNormal(const glm::vec3& worldPos);
 
         // Collision response
@@ -64,6 +63,23 @@ namespace gl3 {
                 float penetration,
                 float impactSpeed
         );
+        bool checkBoxCollision(
+                const VoxelPhysicsBody& body,
+                glm::vec3& outNormal,
+                float& outPenetration
+        );
+        bool checkSphereCollision(
+                const VoxelPhysicsBody& body,
+                glm::vec3& outNormal,
+                float& outPenetration
+        );
+
+        int worldToChunk(float worldPos);
+
+        glm::vec3 getChunkMin(const ChunkCoord& coord) const;
+
+        glm::vec3 getChunkMax(const ChunkCoord& coord) const;
+        float sampleSDF(const glm::vec3& worldPos);
     };
 
 }
