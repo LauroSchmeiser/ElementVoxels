@@ -68,7 +68,7 @@ void main() {
 
     // CHANGED: Smooth interpolation between frames (adjust 0.15 for more/less smoothing)
     // Lower value = smoother but more lag, higher = more responsive but less smooth
-    vec3 worldDir = mix(prevDir, currentDir, 0.001);  // 0.15 = gentle smoothing
+    vec3 worldDir = mix(prevDir, currentDir, 0.15);  // 0.15 = gentle smoothing
 
     // Keep original scaling
     vec3 dir = worldDir * 0.5;

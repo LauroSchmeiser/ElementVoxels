@@ -1281,26 +1281,73 @@ namespace gl3 {
             return;
         }
 
-        std::cout << "Spell collided at ("
+        // Now safe to access spell
+        float mass = spell->physicsBody ? spell->physicsBody->mass : 1.0f;
+
+
+/*
+        // Determine which chunks this formation affects
+        int minCX = worldToChunk(spell->center.x - spell->radius);
+        int maxCX = worldToChunk(spell->center.x + spell->radius);
+        int minCY = worldToChunk(spell->center.y - spell->radius);
+        int maxCY = worldToChunk(spell->center.y + spell->radius);
+        int minCZ = worldToChunk(spell->center.z - spell->radius);
+        int maxCZ = worldToChunk(spell->center.z + spell->radius);
+
+        for (int cx = minCX; cx <= maxCX; ++cx) {
+            for (int cy = minCY; cy <= maxCY; ++cy) {
+                for (int cz = minCZ; cz <= maxCZ; ++cz) {
+                    ChunkCoord coord{cx, cy, cz};
+
+                    // Get chunk - should exist after pre-loading
+                    Chunk *chunk = chunkManager->getChunk(coord);
+                    if (!chunk) {
+                        // Emergency fallback
+                        chunkManager->addChunk(coord, VoxelCategory::DYNAMIC);
+                        chunk = chunkManager->getChunk(coord);
+                        if (!chunk) continue;
+
+                        if (chunk->coord != coord) { // New chunk
+                            chunk->coord = coord;
+                            chunk->clear();
+                        }
+                    }
+                    createExteriorSmoothCrater(chunkManager->getChunk(coord), glm::vec3(cy, cy, cy),
+                                               glm::vec3(cy, cy, cy));
+                }
+            }
+        }
+        */
+       // spell->markForRemoval=true;
+        //applyImpactAtPosition(hitPos, spell->radius, impactSpeed, mass);
+
+        /*std::cout << "Spell collided at ("
                   << hitPos.x << "," << hitPos.y << "," << hitPos.z
-                  << ") with impact speed " << impactSpeed << "\n";
+                  << ") with impact speed " << impactSpeed << "\n";*/
 
-        // Scale crater based on impact speed
-        float impactFactor = glm::clamp(impactSpeed / 20.0f, 0.5f, 3.0f);
+        // Handle different spell types on collision
+        /*
+        switch (spell->type) {
+            case SpellEffect::Type::CONSTRUCT:
+                // Construct spells might just bounce
+                if (impactSpeed < 1.0f && spell->voxelsCleaned) {
+                    // Low impact - mark for removal after a short time
+                    spell->lifetime = 2.0f;
+                }
+                break;
 
-        // Create crater at impact position
-        createCraterAtPosition(hitPos, impactFactor, spell->radius);
+            case SpellEffect::Type::GRAVITY_WELL:
+                // Gravity wells might stick to surfaces
+                if (spell->physicsBody) {
+                    spell->physicsBody->active = false; // Freeze
+                    spell->physicsBody->velocity = glm::vec3(0.0f);
+                }
+                break;
 
-        // Optional: Add some visual/audio feedback
-        // playImpactSound(hitPos, impactSpeed);
-        // spawnImpactParticles(hitPos, hitNormal, impactSpeed);
-
-        // Optional: Apply force to the spell (bounce)
-       /* if (spell->physicsBody) {
-            // Simple bounce reflection
-            glm::vec3 reflectedVel = spell->physicsBody->velocity - 2.0f * glm::dot(spell->physicsBody->velocity, hitNormal) * hitNormal;
-            spell->physicsBody->velocity = reflectedVel * 0.5f; // Dampen the bounce
-        }*/
+            default:
+                break;
+        }
+*/
     }
 
     void Game::createCraterAtPosition(const glm::vec3& worldPos, float impactFactor, float spellRadius) {
@@ -1489,7 +1536,7 @@ namespace gl3 {
 
             // Calculate launch direction (from camera toward target)
             glm::vec3 launchDir = glm::normalize(getCameraFront());
-            float launchSpeed = glm::clamp(strength * 250.5f * VOXEL_SIZE, 10.0f * VOXEL_SIZE, 10000.0f * VOXEL_SIZE);
+            float launchSpeed = glm::clamp(strength * 2.5f * VOXEL_SIZE, 1.0f * VOXEL_SIZE, 100.0f * VOXEL_SIZE);
 
             lastSpell.isPhysicsEnabled = true;
             lastSpell.creationTime = 0.0f;
@@ -1802,7 +1849,7 @@ namespace gl3 {
 
         // Create physics body - use spell.center for initial position
         spell.physicsBody = voxelPhysics->createBody(
-                spell.center,
+                glm::vec3(worldToChunk(spell.center.x),worldToChunk(spell.center.y),worldToChunk(spell.center.z)),
                 mass,
                 shapeType,
                 extents
@@ -2417,7 +2464,7 @@ namespace gl3 {
 
     void Game::applyImpactAtPosition(const glm::vec3 &worldPos, float radius, float impulse, float mass) {
         // tune these
-        const float damageScale = glm::clamp(impulse * 0.05f*deltaTime, 0.5f, 30.0f); // larger impulse -> stronger carving
+        const float damageScale = glm::clamp(impulse * 0.005f*deltaTime, 0.5f, 30.0f); // larger impulse -> stronger carving
         const float maxRadius = glm::max(radius, damageScale);
         const float radiusSq = maxRadius * maxRadius;
 
@@ -3352,7 +3399,7 @@ namespace gl3 {
             int currentChunkY = worldToChunk(spell.physicsBody->position.y);
             int currentChunkZ = worldToChunk(spell.physicsBody->position.z);
 
-            glm::vec3 pos = glm::vec3(currentChunkX,currentChunkY,currentChunkZ) ;
+            glm::vec3 pos = glm::vec3(spell.physicsBody->position.x,spell.physicsBody->position.y,spell.physicsBody->position.z) ;
             glm::quat rot = spell.physicsBody->orientation;
 
             // Build model matrix
