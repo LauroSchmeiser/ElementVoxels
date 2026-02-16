@@ -85,7 +85,7 @@ namespace gl3 {
         glfwSetWindowUserPointer(window, this);
         glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
 
-        backgroundShader = std::make_unique<Shader>("shaders/background.vert", "shaders/background.frag");
+        skyboxShader = std::make_unique<Shader>("shaders/skybox.vert", "shaders/skybox.frag");
         voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel.frag");
         marchingCubesShader = std::make_unique<Shader>("shaders/marching_cubes.comp");
 
@@ -127,8 +127,7 @@ namespace gl3 {
 
     void Game::run() {
         ////Initialization-Steps
-        setupFullscreenQuad();
-        createNoiseTexture();
+        setupSkybox();
         CpuTimer t0("ssbos");
         setupSSBOsAndTables();
         setupInput();
@@ -138,9 +137,8 @@ namespace gl3 {
         setupVEffects();
 
         while (!glfwWindowShouldClose(window)) {
-            glClear(GL_COLOR_BUFFER_BIT);
-            renderBackground();
-            glClear(GL_DEPTH_BUFFER_BIT);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); // Clear both at once
+            renderSkybox();
 
             ////Simulation Steps
             updateDeltaTime();
@@ -162,6 +160,8 @@ namespace gl3 {
             ////Post-Prod Steps?
 
             ////Rendering Steps
+            renderSkybox();
+
             if(DebugMode1)
             {
                 CpuTimer t2("renderChunks");
@@ -185,6 +185,7 @@ namespace gl3 {
             {
                 renderPhysicsFormations();
             }
+
             ////UI
             DisplayFPSCount();
 
@@ -2931,36 +2932,42 @@ namespace gl3 {
 ////----Rendering Code--------------------------------------------------------------------------------------------------------------------------
 
 //------General Rendering-Code------------------------------------------------------------------------------------------------------------------
-    void Game::renderBackground() {
-        glDisable(GL_DEPTH_TEST);
+    void Game::renderSkybox() {
+        // Save state
+        GLint oldDepthFunc;
+        glGetIntegerv(GL_DEPTH_FUNC, &oldDepthFunc);
+        GLboolean depthMask;
+        glGetBooleanv(GL_DEPTH_WRITEMASK, &depthMask);
 
-        backgroundShader->use();
+        // Set skybox-specific state
+        glDepthFunc(GL_LEQUAL);
+        glDepthMask(GL_FALSE); // Don't write to depth buffer (skybox is always at far plane)
 
-        backgroundShader->setFloat("time", glfwGetTime());
-        backgroundShader->setVec2("resolution", glm::vec2(windowWidth, windowHeight));
+        skyboxShader->use();
 
-        float aspect = (windowHeight == 0) ? (float)windowWidth / 1.0f : (float)windowWidth / (float)windowHeight;
+        // Set uniforms
+        skyboxShader->setFloat("time", glfwGetTime());
+
+        float aspect = (float)windowWidth / (float)windowHeight;
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), glm::vec3(0.0f, 1.0f, 0.0f));
 
-        backgroundShader->setMatrix("invProjection", glm::inverse(projection));
-        backgroundShader->setMatrix("invView", glm::inverse(view));
+        skyboxShader->setMatrix("projection", projection);
+        skyboxShader->setMatrix("view", view);
 
-        // NEW: Store and pass previous frame's view matrix for temporal smoothing
-        static glm::mat4 prevView = view;
-        backgroundShader->setMatrix("prevInvView", glm::inverse(prevView));
-        prevView = view;  // Save for next frame
-
+        // Bind noise texture
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, noiseTexture);
-        backgroundShader->setInt("noiseTexture", 0);
+        glBindTexture(GL_TEXTURE_2D, cubemapTexture);
+        skyboxShader->setInt("noiseTexture", 0);
 
-        glBindVertexArray(fullscreenQuadVAO);
-        glDrawArrays(GL_TRIANGLES, 0, 6);
+        // Draw skybox
+        glBindVertexArray(skyboxVAO);
+        glDrawArrays(GL_TRIANGLES, 0, 36);
         glBindVertexArray(0);
 
-        glEnable(GL_DEPTH_TEST);
-        glClear(GL_DEPTH_BUFFER_BIT);
+        // Restore state
+        glDepthFunc(oldDepthFunc);
+        glDepthMask(depthMask);
     }
 
     void Game::renderChunks() {
@@ -4056,6 +4063,72 @@ namespace gl3 {
             lastY = ypos;
         }
 
+    void Game::setupSkybox() {
+        // Create shader
+        skyboxShader = std::make_unique<Shader>("shaders/skybox.vert", "shaders/skybox.frag");
+
+        // Create the same noise texture you already have
+        createNoiseTexture();
+
+        // Setup cube vertices
+        float skyboxVertices[] = {
+                // positions
+                -1.0f, 1.0f, -1.0f,
+                -1.0f, -1.0f, -1.0f,
+                1.0f, -1.0f, -1.0f,
+                1.0f, -1.0f, -1.0f,
+                1.0f, 1.0f, -1.0f,
+                -1.0f, 1.0f, -1.0f,
+
+                -1.0f, -1.0f, 1.0f,
+                -1.0f, -1.0f, -1.0f,
+                -1.0f, 1.0f, -1.0f,
+                -1.0f, 1.0f, -1.0f,
+                -1.0f, 1.0f, 1.0f,
+                -1.0f, -1.0f, 1.0f,
+
+                1.0f, -1.0f, -1.0f,
+                1.0f, -1.0f, 1.0f,
+                1.0f, 1.0f, 1.0f,
+                1.0f, 1.0f, 1.0f,
+                1.0f, 1.0f, -1.0f,
+                1.0f, -1.0f, -1.0f,
+
+                -1.0f, -1.0f, 1.0f,
+                -1.0f, 1.0f, 1.0f,
+                1.0f, 1.0f, 1.0f,
+                1.0f, 1.0f, 1.0f,
+                1.0f, -1.0f, 1.0f,
+                -1.0f, -1.0f, 1.0f,
+
+                -1.0f, 1.0f, -1.0f,
+                1.0f, 1.0f, -1.0f,
+                1.0f, 1.0f, 1.0f,
+                1.0f, 1.0f, 1.0f,
+                -1.0f, 1.0f, 1.0f,
+                -1.0f, 1.0f, -1.0f,
+
+                -1.0f, -1.0f, -1.0f,
+                -1.0f, -1.0f, 1.0f,
+                1.0f, -1.0f, -1.0f,
+                1.0f, -1.0f, -1.0f,
+                -1.0f, -1.0f, 1.0f,
+                1.0f, -1.0f, 1.0f
+        };
+
+        glGenVertexArrays(1, &skyboxVAO);
+        glGenBuffers(1, &skyboxVBO);
+
+        // --- THIS PART WAS MISSING ---
+        glBindVertexArray(skyboxVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, skyboxVBO);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(skyboxVertices), skyboxVertices, GL_STATIC_DRAW);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+        glBindVertexArray(0);
+        // --- END OF MISSING CODE ---
+    }
+
     void Game::createNoiseTexture() {
         const int size = 128;
         std::vector<unsigned char> data(size * size * 3);
@@ -4071,38 +4144,12 @@ namespace gl3 {
             }
         }
 
-        glGenTextures(1, &noiseTexture);
-        glBindTexture(GL_TEXTURE_2D, noiseTexture);
+        glGenTextures(1, &cubemapTexture);
+        glBindTexture(GL_TEXTURE_2D, cubemapTexture);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, size, size, 0, GL_RGB, GL_UNSIGNED_BYTE, data.data());
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    }
-
-    void Game::setupFullscreenQuad() {
-        float quadVertices[] = {
-                -1.0f, -1.0f,
-                1.0f, -1.0f,
-                -1.0f,  1.0f,
-
-                -1.0f,  1.0f,
-                1.0f, -1.0f,
-                1.0f,  1.0f
-        };
-
-        glGenVertexArrays(1, &fullscreenQuadVAO);
-        glGenBuffers(1, &fullscreenQuadVBO);
-
-        glBindVertexArray(fullscreenQuadVAO);
-        glBindBuffer(GL_ARRAY_BUFFER, fullscreenQuadVBO);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), quadVertices, GL_STATIC_DRAW);
-
-        // Only position attribute
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
-
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-        glBindVertexArray(0);
     }
 }

@@ -348,7 +348,7 @@ namespace gl3 {
 
         ////Rendering-Steps::
         //General Rendering:
-        void renderBackground();
+        void renderSkybox();
         void renderChunks();
         void renderAnimatedVoxels();
         void renderPhysicsFormations();
@@ -408,10 +408,11 @@ namespace gl3 {
 
         ////Rendering-Variables:
         //Background-Variables:
-        GLuint fullscreenQuadVAO=0;
-        GLuint fullscreenQuadVBO=0;
-        GLuint noiseTexture=0;
-        //World-Variables:
+        GLuint skyboxVAO=0;
+        GLuint skyboxVBO=0;
+        GLuint cubemapTexture = 0; // This replaces your noiseTexture for the background
+
+        // World-Variables:
         const int DIM = CHUNK_SIZE + 2; //Chunk Size with a bit off padding for marching cubes
         size_t voxelCount = DIM * DIM * DIM; //How many voxels can be in one Chunk
         static constexpr int ChunkCount = 70; //Total size of the Game World
@@ -438,7 +439,7 @@ namespace gl3 {
 
 
         ////Shader:
-        std::unique_ptr<Shader> backgroundShader;
+        std::unique_ptr<Shader> skyboxShader;
         std::unique_ptr<Shader> voxelShader;
         std::unique_ptr<Shader> marchingCubesShader;
         std::unique_ptr<Shader> voxelSplatShader;
@@ -451,7 +452,7 @@ namespace gl3 {
         glm::vec3 sampleNormalAtWorld(const glm::vec3 &worldPos) const;
         void updateCamera();
         void createNoiseTexture();
-        void setupFullscreenQuad();
+        void setupSkybox();
 
         glm::vec2 getMouseDelta();
         glm::dvec2 previousMousePos = glm::dvec2(0.0, 0.0);
