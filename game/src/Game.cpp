@@ -138,7 +138,6 @@ namespace gl3 {
 
         while (!glfwWindowShouldClose(window)) {
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); // Clear both at once
-            renderSkybox();
 
             ////Simulation Steps
             updateDeltaTime();
@@ -160,7 +159,10 @@ namespace gl3 {
             ////Post-Prod Steps?
 
             ////Rendering Steps
-            renderSkybox();
+            if(!DebugMode1)
+            {
+                renderSkybox();
+            }
 
             if(DebugMode1)
             {
