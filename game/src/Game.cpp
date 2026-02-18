@@ -1533,24 +1533,23 @@ namespace gl3 {
         FormationParams params = FormationParams::Sphere(center, radius);
         castSpellWithFormation(center, radius * 10.5f, material, strength, params);
 
-        // Set initial velocity for the newly created spell
         if (!activeSpells.empty()) {
             SpellEffect& lastSpell = activeSpells.back();
 
-            // Calculate launch direction (from camera toward target)
+            // Get camera direction
             glm::vec3 launchDir = glm::normalize(getCameraFront());
-            float launchSpeed = glm::clamp(strength * 2.5f * VOXEL_SIZE, 1.0f * VOXEL_SIZE, 100.0f * VOXEL_SIZE);
+
+            // Scale launch speed properly
+            float launchSpeed = strength * 5.0f * VOXEL_SIZE;  // Adjusted for visibility
 
             lastSpell.isPhysicsEnabled = true;
             lastSpell.creationTime = 0.0f;
             lastSpell.lifetime = 20.0f;
+            lastSpell.center=center;
             lastSpell.initialVelocity = launchDir * launchSpeed;
 
-            // Store the launch direction for orientation
-            lastSpell.formationParams.normal = launchDir; // Store direction in normal field
-
-            std::cout << "Sphere spell velocity set: " << glm::length(lastSpell.initialVelocity)
-                      << " units/sec, direction: (" << launchDir.x << "," << launchDir.y << "," << launchDir.z << ")\n";
+            std::cout << "Sphere spell: speed=" << launchSpeed
+                      << " direction=(" << launchDir.x << "," << launchDir.y << "," << launchDir.z << ")\n";
         }
     }
 
@@ -1852,7 +1851,7 @@ namespace gl3 {
 
         // Create physics body - use spell.center for initial position
         spell.physicsBody = voxelPhysics->createBody(
-                glm::vec3(worldToChunk(spell.center.x),worldToChunk(spell.center.y),worldToChunk(spell.center.z)),
+                spell.center,
                 mass,
                 shapeType,
                 extents
@@ -2210,7 +2209,9 @@ namespace gl3 {
                                 GLFW_KEY_W, GLFW_KEY_UP, GLFW_KEY_S, GLFW_KEY_DOWN,
                                 GLFW_KEY_A, GLFW_KEY_LEFT, GLFW_KEY_D, GLFW_KEY_RIGHT,
                                 GLFW_KEY_SPACE, GLFW_KEY_LEFT_SHIFT, GLFW_KEY_LEFT_CONTROL,
-                                GLFW_KEY_TAB, GLFW_KEY_ESCAPE,GLFW_KEY_E,GLFW_KEY_R,GLFW_KEY_F
+                                GLFW_KEY_TAB, GLFW_KEY_ESCAPE,GLFW_KEY_E,GLFW_KEY_R,GLFW_KEY_F,
+                                GLFW_KEY_1, GLFW_KEY_2, GLFW_KEY_3, GLFW_KEY_4, GLFW_KEY_5, GLFW_KEY_6,
+                                GLFW_KEY_T
                         });
 
         // Character movement
@@ -2224,6 +2225,15 @@ namespace gl3 {
 
         // Debug/UI actions
         actions.addAction("ToggleDebug", {GLFW_KEY_TAB});
+        actions.addAction("DebugMode1", {GLFW_KEY_1});
+        actions.addAction("DebugMode2", {GLFW_KEY_2});
+        actions.addAction("DebugMode3", {GLFW_KEY_3});
+        actions.addAction("DebugMode4", {GLFW_KEY_4});
+        actions.addAction("DebugMode5", {GLFW_KEY_5});
+        actions.addAction("DebugMode6", {GLFW_KEY_6});
+        actions.addAction("Wireframe", {GLFW_KEY_T});
+
+
         actions.addAction("Escape", {GLFW_KEY_ESCAPE});
         actions.addAction("CastSphere", {GLFW_KEY_E});
         actions.addAction("CastWall", {GLFW_KEY_R});
@@ -2808,15 +2818,38 @@ namespace gl3 {
                     voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel_debug.frag");
                     activeDebugMode = 0;
                 } else {
+                    DebugMode2=false;
                     voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel.frag");
                 }
             }
+
+        if (actions["DebugMode1"].wasJustPressed&&DebugMode1) {
+            activeDebugMode = 1;
+        }
+        if (actions["DebugMode2"].wasJustPressed&&DebugMode1) {
+            activeDebugMode = 2;
+        }
+        if (actions["DebugMode3"].wasJustPressed&&DebugMode1) {
+            activeDebugMode = 3;
+        }
+        if (actions["DebugMode4"].wasJustPressed&&DebugMode1) {
+            activeDebugMode = 4;
+        }
+        if (actions["DebugMode5"].wasJustPressed&&DebugMode1) {
+            activeDebugMode = 5;
+        }
+        if (actions["DebugMode6"].wasJustPressed&&DebugMode1) {
+            activeDebugMode = 6;
+        }
+        if (actions["Wireframe"].wasJustPressed&&DebugMode1) {
+            DebugMode2=!DebugMode2;
+        }
 
         if (actions["CastSphere"].wasJustPressed) {
             std::cout << "Sphere Spell Triggered\n";
             RayCastResult hit = rayCastFromCamera(5.0f);
             glm::vec3 spellCenter = hit.hit ? hit.hitPosition :
-                                    (cameraPos + getCameraFront() * 15.0f * VOXEL_SIZE);
+                                    (cameraPos + getCameraFront() * 35.0f);
 
             // Cast spell with physics enabled
             float spellRadius = 4.0f * VOXEL_SIZE;  // Adjust size
@@ -3031,7 +3064,7 @@ namespace gl3 {
                     if (!hasSolidVoxels(*chunk)) continue;
 
                     // Regenerate mesh if dirty
-                    if (chunk->meshDirty&&built < MAX_CHUNKS_PER_FRAME || !chunk->gpuCache.isValid&&built < MAX_CHUNKS_PER_FRAME) {
+                    if (built < MAX_CHUNKS_PER_FRAME&&chunk->meshDirty|| built < MAX_CHUNKS_PER_FRAME&&!chunk->gpuCache.isValid) {
                         built++;
                         if(built<=1&&DebugMode1)
                         {
@@ -3050,7 +3083,7 @@ namespace gl3 {
                     }
 
                     // Rebuild lighting if dirty
-                    if (chunk->lightingDirty&&lighted<MAX_CHUNKS_PER_FRAME) {
+                    if (lighted<MAX_CHUNKS_PER_FRAME&&chunk->lightingDirty) {
                         lighted++;
                         if(lighted==1&&DebugMode1)
                         {
