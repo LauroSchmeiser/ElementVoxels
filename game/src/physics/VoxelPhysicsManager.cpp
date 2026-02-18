@@ -453,7 +453,7 @@ namespace gl3 {
             float penetration;
 
             if (checkVoxelCollision(body, normal, penetration)) {
-                float impactSpeed = glm::length(oldVel);
+                float impactSpeed = glm::length(oldVel)*VOXEL_SIZE;
 
                 // Resolve collision
                 resolveCollision(body, normal, penetration, impactSpeed);

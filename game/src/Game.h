@@ -421,7 +421,7 @@ namespace gl3 {
         //Marching-cubes Variables
         size_t maxVerts =
                 CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5 * 3; //Max amount of vertices marching cubes can create
-        const int MAX_CHUNKS_PER_FRAME = 10;
+        const int MAX_CHUNKS_PER_FRAME = 9;
         //std::vector<Chunk> dirtyChunks;
         //SSBOs for marching cubes:
         GLuint ssboVoxels = 0, ssboEdgeTable = 0, ssboTriTable = 0,

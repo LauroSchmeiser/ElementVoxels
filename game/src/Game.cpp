@@ -1062,6 +1062,9 @@ namespace gl3 {
             if (spellIt->lifetime > 0) {
                 spellIt->creationTime += dt;  // ← Increment age
             }
+            if (spellIt->physicsBody!= nullptr&& glm::length(spellIt->physicsBody->velocity) < 0.5) {
+                spellIt->markForRemoval = true;
+            }
             // Skip if already marked for removal
             if (spellIt->markForRemoval) {
                 destroyPhysicsBodyForSpell(*spellIt);
@@ -1279,17 +1282,17 @@ namespace gl3 {
             }
         }
 
-        if (!spellValid) {
+       /* if (!spellValid) {
             std::cout << "Collision callback for invalid spell, ignoring\n";
             return;
-        }
+        }*/
 
         // Now safe to access spell
         float mass = spell->physicsBody ? spell->physicsBody->mass : 1.0f;
 
+        createCraterAtPosition(hitPos,impactSpeed,spell->physicsBody->radius);
 
-/*
-        // Determine which chunks this formation affects
+       /* // Determine which chunks this formation affects
         int minCX = worldToChunk(spell->center.x - spell->radius);
         int maxCX = worldToChunk(spell->center.x + spell->radius);
         int minCY = worldToChunk(spell->center.y - spell->radius);
@@ -1321,7 +1324,7 @@ namespace gl3 {
             }
         }
         */
-       // spell->markForRemoval=true;
+        //spell->markForRemoval=true;
         //applyImpactAtPosition(hitPos, spell->radius, impactSpeed, mass);
 
         /*std::cout << "Spell collided at ("
@@ -1537,7 +1540,7 @@ namespace gl3 {
             SpellEffect& lastSpell = activeSpells.back();
 
             glm::vec3 launchDir = glm::normalize(getCameraFront());
-            float launchSpeed = strength * 5.0f * VOXEL_SIZE;
+            float launchSpeed = strength * 12.0f * VOXEL_SIZE;
 
             lastSpell.isPhysicsEnabled = true;
             lastSpell.creationTime = 0.0f;
@@ -2012,6 +2015,13 @@ namespace gl3 {
 
     void Game::destroyPhysicsBodyForSpell(SpellEffect& spell) {
         if (spell.physicsBody && voxelPhysics) {
+            createSpellFormation(spell.center,
+                                 spell.formationParams,
+                                 spell.strength,
+                                 spell.targetMaterial,
+                                 spell.formationColor,
+                                 spell.physicsBody->mass,
+                                 spell.dominantType);
             voxelPhysics->removeBody(spell.physicsBody);
             spell.physicsBody = nullptr;
         }
