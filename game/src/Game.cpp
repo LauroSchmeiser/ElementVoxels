@@ -1536,20 +1536,14 @@ namespace gl3 {
         if (!activeSpells.empty()) {
             SpellEffect& lastSpell = activeSpells.back();
 
-            // Get camera direction
             glm::vec3 launchDir = glm::normalize(getCameraFront());
-
-            // Scale launch speed properly
-            float launchSpeed = strength * 5.0f * VOXEL_SIZE;  // Adjusted for visibility
+            float launchSpeed = strength * 5.0f * VOXEL_SIZE;
 
             lastSpell.isPhysicsEnabled = true;
             lastSpell.creationTime = 0.0f;
             lastSpell.lifetime = 20.0f;
-            lastSpell.center=center;
+            lastSpell.center = center;  // Should already be set, but verify
             lastSpell.initialVelocity = launchDir * launchSpeed;
-
-            std::cout << "Sphere spell: speed=" << launchSpeed
-                      << " direction=(" << launchDir.x << "," << launchDir.y << "," << launchDir.z << ")\n";
         }
     }
 
@@ -1773,12 +1767,18 @@ namespace gl3 {
                                 }
 
                                 if (shouldKeep) {
+                                    // Inside createPhysicsBodyForSpell, when collecting triangles:
+
                                     for (int j = 0; j < 3; ++j) {
                                         glm::vec4 p = ov[vi + j].pos;
                                         glm::vec4 n = ov[vi + j].normal;
                                         glm::vec4 c = ov[vi + j].color;
 
-                                        triangleVerts.emplace_back(p.x, p.y, p.z);
+                                        // CONVERT TO LOCAL SPACE relative to spell.center
+                                        glm::vec3 worldVert(p.x, p.y, p.z);
+                                        glm::vec3 localVert = worldVert - spell.center;  // ← SUBTRACT CENTER!
+
+                                        triangleVerts.emplace_back(localVert);  // ← Now in local space
                                         triangleNormals.emplace_back(n.x, n.y, n.z);
                                         triangleColors.emplace_back(c.x, c.y, c.z);
                                     }
@@ -1798,26 +1798,23 @@ namespace gl3 {
             return;
         }
 
-        std::cout << "Found " << triangleVerts.size() << " triangles for physics body (after filtering)\n";
+        std::cout << "Found " << triangleVerts.size() << " triangles for physics body\n";
 
-        // Optional: Ensure manifold mesh by checking for holes
-        // This is a simple check - you might want more sophisticated hole detection
-        if (triangleVerts.size() < 12) { // Less than 4 triangles
-            std::cout << "Warning: Very small mesh, might be incomplete\n";
-        }
-
-        // Calculate the actual bounds of the collected geometry
+        // Calculate the bounds of collected geometry (for extents calculation only)
         glm::vec3 minBound = triangleVerts[0];
         glm::vec3 maxBound = triangleVerts[0];
         for (const auto& v : triangleVerts) {
             minBound = glm::min(minBound, v);
             maxBound = glm::max(maxBound, v);
         }
-        glm::vec3 geomCenter = (minBound + maxBound) * 0.5f;
-        glm::vec3 geomExtents = (maxBound - minBound) * 0.5f;
 
-        // Expand extents slightly to ensure collision hull contains mesh
-        geomExtents += glm::vec3(VOXEL_SIZE * 0.1f);
+        // Calculate extents from bounds
+        glm::vec3 geomExtents = (maxBound - minBound) * 0.5f;
+        geomExtents += glm::vec3(VOXEL_SIZE * 0.1f); // Small margin
+
+        // ⚠️ KEY FIX: Use spell.center for physics body position, NOT geomCenter
+        // The triangles are already in world space at spell.center location
+        glm::vec3 physicsBodyPosition = spell.center;
 
         // Determine shape type based on formation
         gl3::VoxelPhysicsBody::ShapeType shapeType;
@@ -1826,13 +1823,14 @@ namespace gl3 {
         switch(spell.formationParams.type) {
             case FormationType::SPHERE:
                 shapeType = gl3::VoxelPhysicsBody::ShapeType::SPHERE;
-                extents = glm::vec3(glm::length(geomExtents)); // Use actual geometry bounds
+                // Use formation radius, not calculated extents
+                extents = glm::vec3(spell.formationParams.radius);
                 break;
             case FormationType::PLATFORM:
             case FormationType::WALL:
             case FormationType::CUBE:
                 shapeType = gl3::VoxelPhysicsBody::ShapeType::BOX;
-                extents = geomExtents; // Use actual geometry bounds
+                extents = geomExtents;
                 break;
             case FormationType::CYLINDER:
                 shapeType = gl3::VoxelPhysicsBody::ShapeType::BOX;
@@ -1840,18 +1838,18 @@ namespace gl3 {
                 break;
             default:
                 shapeType = gl3::VoxelPhysicsBody::ShapeType::SPHERE;
-                extents = glm::vec3(glm::length(geomExtents));
+                extents = glm::vec3(spell.formationParams.radius);
                 break;
         }
 
-        // Calculate mass based on collected voxels (use animatedVoxelIDs size)
+        // Calculate mass based on collected voxels
         float voxelVolume = VOXEL_SIZE * VOXEL_SIZE * VOXEL_SIZE;
         float mass = static_cast<float>(spell.animatedVoxelIDs.size()) * voxelVolume * 0.5f;
         mass = glm::clamp(mass, 1.0f, 1000.0f);
 
-        // Create physics body - use spell.center for initial position
+        // ⚠️ Create physics body at spell.center (where animation ended)
         spell.physicsBody = voxelPhysics->createBody(
-                spell.center,
+                physicsBodyPosition,  // Use spell.center, not geomCenter!
                 mass,
                 shapeType,
                 extents
@@ -1861,40 +1859,29 @@ namespace gl3 {
             spell.physicsBody->userData = &spell;
             spell.physicsBody->velocity = spell.initialVelocity;
 
-            // Set orientation to face the direction of travel (camera front)
+            // Set orientation to face direction of travel
             if (glm::length(spell.initialVelocity) > 0.001f) {
-                glm::vec3 direction = glm::normalize(spell.initialVelocity); // This is camera front
-
-                // For glm::quatLookAt, the first parameter is the direction TO look at
-                // If your model's forward is +Z, then you want to rotate so that +Z points in direction
-                // quatLookAt gives a rotation that makes the object's forward point TOWARDS the given direction
+                glm::vec3 direction = glm::normalize(spell.initialVelocity);
                 spell.physicsBody->orientation = glm::quatLookAt(direction, glm::vec3(0.0f, 1.0f, 0.0f));
-
-                // Note: If your model uses a different forward axis, adjust accordingly:
-                // For +X forward: glm::quatLookAt(direction, glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(1.0f, 0.0f, 0.0f))
-                // For +Y forward: glm::quatLookAt(direction, glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(0.0f, 1.0f, 0.0f))
             } else {
-                spell.physicsBody->orientation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f); // Identity
+                spell.physicsBody->orientation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
             }
 
             // Store the mesh data for rendering
             createPhysicsMeshData(spell, triangleVerts, triangleNormals, triangleColors);
-
-            // Link the mesh to the physics body for rendering
             spell.physicsBody->renderMesh = &spell.physicsMesh;
-
             spell.isPhysicsEnabled = true;
 
-            std::cout << "Physics body created: mass=" << mass
-                      << ", renderVerts=" << triangleVerts.size()
-                      << ", velocity=" << glm::length(spell.initialVelocity) << "\n";
-            std::cout << "Spell center: (" << spell.center.x << "," << spell.center.y << "," << spell.center.z << ")\n";
-            std::cout << "Geometry bounds: center(" << geomCenter.x << "," << geomCenter.y << "," << geomCenter.z
-                      << ") extents(" << extents.x << "," << extents.y << "," << extents.z << ")\n";
+            std::cout << "Physics body created at spell.center: ("
+                      << spell.center.x << "," << spell.center.y << "," << spell.center.z << ")\n";
+            std::cout << "Extents: (" << extents.x << "," << extents.y << "," << extents.z << ")\n";
+            std::cout << "Initial velocity: (" << spell.initialVelocity.x << ","
+                      << spell.initialVelocity.y << "," << spell.initialVelocity.z << ")\n";
         }
+
         // Remove voxels from chunks now that we have the mesh
         removeFormationVoxels(spell);
-        }
+    }
 
     void Game::createPhysicsMeshData(SpellEffect& spell,
                                      const std::vector<glm::vec3>& vertices,
@@ -2801,27 +2788,27 @@ namespace gl3 {
 ////----Input Code------------------------------------------------------------------------------------------------------------------------------
 
     void Game::update() {
-            input.update(window);
-            actions.update(input);
+        input.update(window);
+        actions.update(input);
 
-            // Now use clean, readable input checks
-            if (actions["Escape"].wasJustPressed) {
-                glfwSetWindowShouldClose(window, true);
+        // Now use clean, readable input checks
+        if (actions["Escape"].wasJustPressed) {
+            glfwSetWindowShouldClose(window, true);
+        }
+
+        if (actions["ToggleDebug"].wasJustPressed) {
+            DebugMode1 = !DebugMode1;
+            std::cout << "Debug mode: " << (DebugMode1 ? "ON" : "OFF") << "\n";
+
+            // Optional: Update shaders like before
+            if (DebugMode1) {
+                voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel_debug.frag");
+                activeDebugMode = 0;
+            } else {
+                DebugMode2=false;
+                voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel.frag");
             }
-
-            if (actions["ToggleDebug"].wasJustPressed) {
-                DebugMode1 = !DebugMode1;
-                std::cout << "Debug mode: " << (DebugMode1 ? "ON" : "OFF") << "\n";
-
-                // Optional: Update shaders like before
-                if (DebugMode1) {
-                    voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel_debug.frag");
-                    activeDebugMode = 0;
-                } else {
-                    DebugMode2=false;
-                    voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel.frag");
-                }
-            }
+        }
 
         if (actions["DebugMode1"].wasJustPressed&&DebugMode1) {
             activeDebugMode = 1;
@@ -2893,10 +2880,10 @@ namespace gl3 {
         }
 
 
-            // Character movement - perfect for your controller
+        // Character movement - perfect for your controller
 
-            // Update camera to follow character
-            updateCamera();
+        // Update camera to follow character
+        updateCamera();
 
         // Update dynamic chunks
         // chunkManager->forEachDynamicChunk([this](Chunk* chunk) {
@@ -3072,7 +3059,7 @@ namespace gl3 {
                             generateChunkMesh(chunk);
                         }
                         else{
-                        generateChunkMesh(chunk);
+                            generateChunkMesh(chunk);
                         }
                         if(built<=1) {
                             std::cout << "approximate Mesh Progress: "
@@ -3095,8 +3082,8 @@ namespace gl3 {
                         }
                         if(lighted<=1) {
                             std::cout << "approximate Lighting Progress: "
-                                    <<((float) (frameCounter - 29) * MAX_CHUNKS_PER_FRAME / FilledChunks) * 100.0f
-                                    << "% \n";
+                                      <<((float) (frameCounter - 29) * MAX_CHUNKS_PER_FRAME / FilledChunks) * 100.0f
+                                      << "% \n";
                         }
                         chunk->lightingDirty = false;
                     }
@@ -3105,7 +3092,7 @@ namespace gl3 {
             }
         }
         if(DebugMode1) {std::cout << "Mesh generation: culled " << culledChunks << " of " << totalChecked
-                  << " chunks (" << (100.0f * culledChunks / totalChecked) << "% culled)\n";}
+                                  << " chunks (" << (100.0f * culledChunks / totalChecked) << "% culled)\n";}
         culledChunks = 0;
         totalChecked = 0;
         // STEP 3: Now RENDER all visible chunks
@@ -3127,7 +3114,7 @@ namespace gl3 {
 
         std::vector<Chunk> emissiveChunks;
         chunkManager->forEachEmissiveChunk([this, &emissiveChunks](Chunk *chunk) {
-                emissiveChunks.push_back(*chunk);
+            emissiveChunks.push_back(*chunk);
         });
 
         //if(DebugMode1) {CpuTimer t6("ChunkLighting");}
@@ -3395,6 +3382,7 @@ namespace gl3 {
         glDisable(GL_BLEND);
     }
 
+
     void Game::renderPhysicsFormations() {
         if (activeSpells.empty()) return;
 
@@ -3445,7 +3433,7 @@ namespace gl3 {
             glm::quat rot = spell.physicsBody->orientation;
 
             // Build model matrix
-            glm::mat4 model = glm::translate(glm::mat4(1.0f), pos);
+            glm::mat4 model = glm::translate(glm::mat4(1.0f), spell.physicsBody->position);
             //model *= glm::mat4_cast(rot);
             //model = glm::scale(model, glm::vec3(VOXEL_SIZE));  // Apply VOXEL_SIZE scaling
 

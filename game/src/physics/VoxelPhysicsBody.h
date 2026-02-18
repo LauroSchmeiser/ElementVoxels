@@ -1,3 +1,4 @@
+
 #pragma once
 #include <glm/glm.hpp>
 #include "glm/detail/type_quat.hpp"
@@ -16,7 +17,7 @@ struct VoxelPhysicsBody {
     float mass;
     float radius; // Bounding sphere for broad-phase
     float restitution = 0.3f;
-    float friction = 0.5f;
+    float friction = 0.7f;
 
     // Collision shape (simplified)
     enum class ShapeType { SPHERE, CAPSULE, BOX } shapeType;
