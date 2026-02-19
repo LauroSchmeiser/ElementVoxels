@@ -140,7 +140,7 @@ namespace gl3 {
                 }
         );
 
-
+        initSphereMeshCache();
     }
 
 
@@ -313,20 +313,21 @@ namespace gl3 {
 ////----Spell-System-Code-----------------------------------------------------------------------------------------------------------------------
 
 
+    // In castSpellWithFormation(), REORDER the code:
+
     void Game::castSpellWithFormation(const glm::vec3& center, float radius,
                                       uint64_t targetMaterial, float strength,
                                       const FormationParams& baseFormationParams) {
-        // Create spell effect
         SpellEffect spell;
         spell.type = SpellEffect::Type::CONSTRUCT;
         spell.center = center;
         spell.radius = radius;
         spell.strength = strength;
         spell.targetMaterial = targetMaterial;
-        spell.dominantType = 0;  // Will be set by findNearbyVoxelsForVisual
-        spell.formationParams = baseFormationParams; // Store the initial params
+        spell.dominantType = 0;
+        spell.formationParams = baseFormationParams;
 
-        // Step 1: Find voxels
+        // Step 1: Find voxels (don't set targets yet!)
         std::vector<AnimatedVoxel> visualVoxels;
         findNearbyVoxelsForVisual(center, radius, targetMaterial,
                                   visualVoxels, strength, spell.dominantType);
@@ -338,28 +339,25 @@ namespace gl3 {
 
         // Step 2: Calculate formation properties
         glm::vec3 avgColor(0.0f);
-
-        // --- NEW: Compute optimal formation size based on collected voxels ---
         const size_t collected = visualVoxels.size();
-        // Convert voxel count -> world-volume (each voxel is a cube of VOXEL_SIZE^3)
         const float voxelVolumeWorld = gl3::VOXEL_SIZE * gl3::VOXEL_SIZE * gl3::VOXEL_SIZE;
         float desiredVolumeWorld = static_cast<float>(collected) * voxelVolumeWorld;
 
-        // Adjust formation parameters based on collected volume (in world^3)
+        // Step 3: Adjust formation parameters FIRST
         FormationParams adjustedFormation = baseFormationParams;
         adjustFormationForVolume(adjustedFormation, desiredVolumeWorld);
-        adjustedFormation.center = center;
-        spell.formationParams = adjustedFormation; // Store adjusted params
-        // ----------------------------------------------------------------
 
-        // Assign targets and set up AnimatedVoxel entries
+        adjustedFormation.center = center;  // ✓ Already present
+        spell.formationParams = adjustedFormation;
+        spell.center = adjustedFormation.center;  // ✓ Already present
+
+// Now calculate targets using ADJUSTED formation
         for (size_t i = 0; i < visualVoxels.size(); ++i) {
             AnimatedVoxel &v = visualVoxels[i];
             avgColor += v.color;
 
-            // Calculate target position on formation surface
-            v.targetPos = calculateFormationTarget(i, visualVoxels.size(),
-                                                   adjustedFormation);
+            // ✓ This should use adjustedFormation.center (which equals 'center')
+            v.targetPos = calculateFormationTarget(i, visualVoxels.size(), adjustedFormation);
 
             v.animationSpeed = strength * 7.5f;
             v.isAnimating = true;
@@ -370,7 +368,7 @@ namespace gl3 {
         spell.formationColor = avgColor;
         spell.formationRadius = adjustedFormation.getBoundingRadius();
 
-        // Step 3: Add visual voxels to global list and record their stable IDs in the spell
+        // Rest of the code remains the same...
         for (auto &v : visualVoxels) {
             v.id = nextAnimatedVoxelID++;
             animatedVoxels.push_back(v);
@@ -378,12 +376,11 @@ namespace gl3 {
             spell.animatedVoxelIDs.push_back(v.id);
         }
 
-        // Step 4: Add spell to active list
         activeSpells.push_back(spell);
 
         std::cout << "Spell cast! " << visualVoxels.size()
-                  << " voxels moving to formation (type="
-                  << static_cast<int>(adjustedFormation.type) << ")\n";
+                  << " voxels moving to formation (adjusted radius="
+                  << adjustedFormation.radius << ")\n";
     }
 
     // Helper function to adjust formation size based on collected volume
@@ -646,19 +643,20 @@ namespace gl3 {
                                          uint8_t& outDominantType) {
         const float radiusSq = radius * radius;
 
-        // Scale with voxel size - INCREASE the multiplier for more voxels
+        // Scale with voxel size
         float voxelVolume = VOXEL_SIZE * VOXEL_SIZE * VOXEL_SIZE;
-        int maxVoxels = static_cast<int>((strength * 150.0f) / voxelVolume); // Increased from 150
-        maxVoxels = glm::clamp(maxVoxels, 30, 800); // Increased min/max
+        int maxVoxels = static_cast<int>((strength * 70.0f) / voxelVolume);
+        maxVoxels = glm::clamp(maxVoxels, 50, 200);
 
-        std::cout << "[Spell] Targeting " << maxVoxels << " voxels (VOXEL_SIZE=" << VOXEL_SIZE << ", radius=" << radius << ")\n";
+        std::cout << "[Spell] Targeting " << maxVoxels << " voxels for formation\n";
 
         int typeCounts[8] = {0};
         auto chunks = chunkManager->getChunksInRadius(center, radius);
 
         struct VoxelCandidate {
             glm::vec3 worldPos;
-            glm::vec3 color;
+            glm::vec3 color;  // Keep original color
+            glm::vec3 normal;  // Store normal for later use
             ChunkCoord chunkCoord;
             glm::ivec3 localPos;
             float distanceSq;
@@ -669,7 +667,7 @@ namespace gl3 {
         std::vector<VoxelCandidate> candidates;
         candidates.reserve(maxVoxels * 2);
 
-        // Collect ALL candidates first (no early exit) - we need to sort them
+        // Collect candidates
         for (const auto& [coord, chunk] : chunks) {
             if (!chunk || !hasSolidVoxels(*chunk)) continue;
 
@@ -698,9 +696,18 @@ namespace gl3 {
                             float distSq = glm::dot(diff, diff);
 
                             if (distSq <= radiusSq) {
+                                // Calculate normal once here and store it
+                                glm::vec3 normal = calculateNormalAt(chunk, {x, y, z});
+
                                 candidates.push_back({
-                                                             worldPos, voxel.color, coord, {x, y, z},
-                                                             distSq, chunk, voxel.type
+                                                             worldPos,
+                                                             voxel.color,  // Store original color, not lit
+                                                             normal,       // Store normal
+                                                             coord,
+                                                             {x, y, z},
+                                                             distSq,
+                                                             chunk,
+                                                             voxel.type
                                                      });
 
                                 if (voxel.type < 8) typeCounts[voxel.type]++;
@@ -728,7 +735,6 @@ namespace gl3 {
         }
 
         // Determine dominant type from the selected closest voxels
-        // Recalculate type counts for just the selected voxels
         memset(typeCounts, 0, sizeof(typeCounts));
         for (const auto& candidate : candidates) {
             if (candidate.type < 8) typeCounts[candidate.type]++;
@@ -744,15 +750,9 @@ namespace gl3 {
         }
         outDominantType = dominantType;
 
-        // Lighting setup
-        const glm::vec3 sunDir = glm::normalize(glm::vec3(-0.6f, -0.7f, -0.3f));
-        const glm::vec3 sunColor = glm::vec3(1.0f, 0.98f, 0.92f);
-        const float ambientStrength = 0.8f;
-        const float sunIntensity = 0.9f;
-
         results.reserve(candidates.size());
 
-        // Process each candidate and create craters
+        // Process each candidate - SIMPLIFIED: just store original data, let shader do lighting
         for (const auto& candidate : candidates) {
             AnimatedVoxel animVoxel;
 
@@ -762,37 +762,13 @@ namespace gl3 {
             animVoxel.animationSpeed = strength * 1.5f;
             animVoxel.hasArrived = false;
 
-            // Calculate lighting
-            glm::vec3 baseColor = candidate.color;
-            glm::vec3 litColor = baseColor * ambientStrength;
-
-            glm::vec3 normal = calculateNormalAt(candidate.chunk, candidate.localPos);
-            float ndotl = glm::max(glm::dot(normal, sunDir), 0.0f);
-            litColor += baseColor * (sunColor * sunIntensity * ndotl);
-
-            // Optional: Add point lights
-            const int MAX_POINT_LIGHTS = 4;
-            int usedLights = 0;
-            for (const auto &L : mergedEmissiveLightPool) {
-                if (usedLights >= MAX_POINT_LIGHTS) break;
-                glm::vec3 toLight = L.pos - candidate.worldPos;
-                float distSq = glm::dot(toLight, toLight);
-                if (distSq < 1e-6f) distSq = 1e-6f;
-                float att = L.intensity / (distSq + 1.0f);
-                glm::vec3 Ldir = glm::normalize(toLight);
-                float nDotL = glm::max(glm::dot(normal, Ldir), 0.0f);
-                if (nDotL > 0.0f) {
-                    litColor += baseColor * (L.color * att * nDotL * 0.025f);
-                    ++usedLights;
-                }
-            }
-
-            animVoxel.color = glm::clamp(litColor, glm::vec3(0.0f), glm::vec3(1.0f));
-            animVoxel.normal = normal;
+            // SIMPLIFIED: Store original color and normal, let fragment shader handle lighting
+            animVoxel.color = candidate.color;  // Original albedo color
+            animVoxel.normal = candidate.normal;
 
             results.push_back(animVoxel);
 
-            // Create crater for this voxel - call the correct crater function
+            // Create crater for this voxel
             createExteriorSmoothCrater(candidate.chunk, candidate.localPos, candidate.worldPos);
 
             // Mark chunk as modified
@@ -1035,6 +1011,7 @@ namespace gl3 {
             // Update spell center from physics body if active
             if (spellIt->physicsBody && spellIt->isPhysicsEnabled) {
                 spellIt->center = spellIt->physicsBody->position;
+                spellIt->formationParams.center = spellIt->physicsBody->position;
             }
 
             // Track which voxels have arrived this frame (ids)
@@ -1169,12 +1146,15 @@ namespace gl3 {
 
     void Game::createPartialFormation(const SpellEffect& spell, float completionRatio) {
         WorldPlanet partialFormation;
-        partialFormation.worldPos = spell.center;
+        partialFormation.worldPos = spell.center;  // ✓ Correct
         partialFormation.color = spell.formationColor;
         partialFormation.type = spell.dominantType;
 
         // Scale the formation parameters based on completion
         FormationParams partialParams = spell.formationParams;
+
+        // ⚠️ CRITICAL FIX: Update center BEFORE scaling
+        partialParams.center = spell.center;  // ← ADD THIS LINE!
 
         switch(partialParams.type) {
             case FormationType::SPHERE:
@@ -1566,6 +1546,79 @@ namespace gl3 {
     void Game::createPhysicsBodyForSpell(SpellEffect& spell) {
         if (!voxelPhysics || spell.physicsBody != nullptr) return;
 
+        // For spheres, use precomputed mesh
+        if (spell.formationParams.type == FormationType::SPHERE) {
+            float radius = spell.formationParams.radius;
+            int key = static_cast<int>(std::round(radius / VOXEL_SIZE));
+
+            // Find closest cached mesh
+            auto it = sphereMeshCache.find(key);
+            if (it == sphereMeshCache.end()) {
+                // Find nearest
+                int nearestKey = sphereMeshCache.begin()->first;
+                for (const auto& [k, _] : sphereMeshCache) {
+                    if (std::abs(k - key) < std::abs(nearestKey - key)) {
+                        nearestKey = k;
+                    }
+                }
+                it = sphereMeshCache.find(nearestKey);
+            }
+
+            const SphereMesh& baseMesh = it->second;
+
+            // Scale mesh to actual radius and colorize
+            std::vector<glm::vec3> scaledVerts;
+            std::vector<glm::vec3> normals;
+            std::vector<glm::vec3> colors;
+
+            float scale = radius / baseMesh.radius;
+            scaledVerts.reserve(baseMesh.indices.size());
+            normals.reserve(baseMesh.indices.size());
+            colors.reserve(baseMesh.indices.size());
+
+            for (uint32_t idx : baseMesh.indices) {
+                scaledVerts.push_back(baseMesh.vertices[idx] * scale);
+                normals.push_back(baseMesh.normals[idx]);
+                colors.push_back(spell.formationColor);
+            }
+
+            // Create physics body
+            float voxelVolume = VOXEL_SIZE * VOXEL_SIZE * VOXEL_SIZE;
+            float mass = static_cast<float>(spell.animatedVoxelIDs.size()) * voxelVolume * 0.5f;
+            mass = glm::clamp(mass, 1.0f, 1000.0f);
+
+            spell.physicsBody = voxelPhysics->createBody(
+                    spell.center,
+                    mass,
+                    VoxelPhysicsBody::ShapeType::SPHERE,
+                    glm::vec3(radius)
+            );
+
+            if (spell.physicsBody) {
+                spell.physicsBody->userData = &spell;
+                spell.physicsBody->velocity = spell.initialVelocity;
+
+                if (glm::length(spell.initialVelocity) > 0.001f) {
+                    spell.physicsBody->orientation = glm::quatLookAt(
+                            glm::normalize(spell.initialVelocity),
+                            glm::vec3(0.0f, 1.0f, 0.0f)
+                    );
+                } else {
+                    spell.physicsBody->orientation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+                }
+
+                createPhysicsMeshData(spell, scaledVerts, normals, colors);
+                spell.physicsBody->renderMesh = &spell.physicsMesh;
+                spell.isPhysicsEnabled = true;
+
+                std::cout << "Used precomputed sphere mesh (" << scaledVerts.size() / 3 << " tris)\n";
+            }
+
+            removeFormationVoxels(spell);
+            return;
+        }
+        if (!voxelPhysics || spell.physicsBody != nullptr) return;
+
         float effectiveRadius = spell.formationParams.getBoundingRadius();
 
         // Create a spatial hash of target positions for quick lookup
@@ -1781,6 +1834,7 @@ namespace gl3 {
         glm::vec3 geomExtents = (maxBound - minBound) * 0.5f;
         geomExtents += glm::vec3(VOXEL_SIZE * 0.1f); // Small margin
 
+        // ⚠️ KEY FIX: Use spell.center for physics body position, NOT geomCenter
         // The triangles are already in world space at spell.center location
         glm::vec3 physicsBodyPosition = spell.center;
 
@@ -1789,11 +1843,6 @@ namespace gl3 {
         glm::vec3 extents;
 
         switch(spell.formationParams.type) {
-            case FormationType::SPHERE:
-                shapeType = gl3::VoxelPhysicsBody::ShapeType::SPHERE;
-                // Use formation radius, not calculated extents
-                extents = glm::vec3(spell.formationParams.radius);
-                break;
             case FormationType::PLATFORM:
             case FormationType::WALL:
             case FormationType::CUBE:
@@ -1805,8 +1854,8 @@ namespace gl3 {
                 extents = geomExtents;
                 break;
             default:
-                shapeType = gl3::VoxelPhysicsBody::ShapeType::SPHERE;
-                extents = glm::vec3(spell.formationParams.radius);
+                shapeType = gl3::VoxelPhysicsBody::ShapeType::BOX;
+                extents = geomExtents;
                 break;
         }
 
@@ -1815,6 +1864,7 @@ namespace gl3 {
         float mass = static_cast<float>(spell.animatedVoxelIDs.size()) * voxelVolume * 0.5f;
         mass = glm::clamp(mass, 1.0f, 1000.0f);
 
+        // ⚠️ Create physics body at spell.center (where animation ended)
         spell.physicsBody = voxelPhysics->createBody(
                 physicsBodyPosition,  // Use spell.center, not geomCenter!
                 mass,
@@ -1849,6 +1899,104 @@ namespace gl3 {
         // Remove voxels from chunks now that we have the mesh
         removeFormationVoxels(spell);
     }
+
+    // Call this in Game constructor
+    void Game::initSphereMeshCache() {
+        // Generate sphere meshes at common radii (in voxels)
+        const std::vector<float> commonRadii = {
+                2.0f * VOXEL_SIZE,
+                4.0f * VOXEL_SIZE,
+                6.0f * VOXEL_SIZE,
+                8.0f * VOXEL_SIZE,
+                10.0f * VOXEL_SIZE
+        };
+
+        for (float radius : commonRadii) {
+            int key = static_cast<int>(radius / VOXEL_SIZE);
+            sphereMeshCache[key] = generateIcosphere(radius, 2); // 2 subdivisions
+        }
+
+        std::cout << "Initialized " << sphereMeshCache.size() << " sphere meshes\n";
+    }
+
+// Generate icosphere (smooth sphere)
+    Game::SphereMesh Game::generateIcosphere(float radius, int subdivisions) {
+        SphereMesh mesh;
+        mesh.radius = radius;
+
+        // Golden ratio
+        const float t = (1.0f + std::sqrt(5.0f)) / 2.0f;
+
+        // 12 vertices of icosahedron
+        std::vector<glm::vec3> positions = {
+                {-1,  t,  0}, { 1,  t,  0}, {-1, -t,  0}, { 1, -t,  0},
+                { 0, -1,  t}, { 0,  1,  t}, { 0, -1, -t}, { 0,  1, -t},
+                { t,  0, -1}, { t,  0,  1}, {-t,  0, -1}, {-t,  0,  1}
+        };
+
+        // Normalize and scale
+        for (auto& p : positions) {
+            p = glm::normalize(p) * radius;
+        }
+
+        // 20 faces of icosahedron
+        std::vector<uint32_t> indices = {
+                0, 11, 5,   0, 5, 1,    0, 1, 7,    0, 7, 10,   0, 10, 11,
+                1, 5, 9,    5, 11, 4,   11, 10, 2,  10, 7, 6,   7, 1, 8,
+                3, 9, 4,    3, 4, 2,    3, 2, 6,    3, 6, 8,    3, 8, 9,
+                4, 9, 5,    2, 4, 11,   6, 2, 10,   8, 6, 7,    9, 8, 1
+        };
+
+        // Subdivide (optional for smoother sphere)
+        for (int sub = 0; sub < subdivisions; ++sub) {
+            std::vector<uint32_t> newIndices;
+            std::map<std::pair<uint32_t, uint32_t>, uint32_t> midpointCache;
+
+            auto getMidpoint = [&](uint32_t i0, uint32_t i1) -> uint32_t {
+                auto key = std::make_pair(std::min(i0, i1), std::max(i0, i1));
+                auto it = midpointCache.find(key);
+                if (it != midpointCache.end()) {
+                    return it->second;
+                }
+
+                glm::vec3 mid = glm::normalize((positions[i0] + positions[i1]) * 0.5f) * radius;
+                uint32_t newIdx = positions.size();
+                positions.push_back(mid);
+                midpointCache[key] = newIdx;
+                return newIdx;
+            };
+
+            for (size_t i = 0; i < indices.size(); i += 3) {
+                uint32_t v0 = indices[i];
+                uint32_t v1 = indices[i + 1];
+                uint32_t v2 = indices[i + 2];
+
+                uint32_t m01 = getMidpoint(v0, v1);
+                uint32_t m12 = getMidpoint(v1, v2);
+                uint32_t m20 = getMidpoint(v2, v0);
+
+                newIndices.insert(newIndices.end(), {
+                        v0, m01, m20,
+                        v1, m12, m01,
+                        v2, m20, m12,
+                        m01, m12, m20
+                });
+            }
+
+            indices = newIndices;
+        }
+
+        // Build final mesh
+        mesh.vertices = positions;
+        mesh.normals.reserve(positions.size());
+        for (const auto& p : positions) {
+            mesh.normals.push_back(glm::normalize(p));
+        }
+        mesh.indices = indices;
+
+        return mesh;
+    }
+
 
     void Game::createPhysicsMeshData(SpellEffect& spell,
                                      const std::vector<glm::vec3>& vertices,

@@ -6,9 +6,9 @@ in vec3 normal;
 out vec4 FragColor;
 
 uniform int numLights;
-uniform vec3 lightPos[4];
-uniform vec3 lightColor[4];
-uniform float lightIntensity[4]; // intensity already includes inverse-square (or use as scale)
+uniform vec3 lightPos[2];
+uniform vec3 lightColor[2];
+uniform float lightIntensity[2]; // intensity already includes inverse-square (or use as scale)
 uniform vec3 ambientColor; // small ambient term
 uniform vec3 viewPos;
 

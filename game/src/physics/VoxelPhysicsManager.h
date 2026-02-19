@@ -10,7 +10,7 @@ namespace gl3 {
     // Callback when body hits voxel world
     class VoxelPhysicsManager {
     public:
-        using aVoxelCollisionCallback = std::function<void(
+        using VoxelCollisionCallback = std::function<void(
                 VoxelPhysicsBody* body,
                 const glm::vec3& hitPos,
                 const glm::vec3& hitNormal,

@@ -11,6 +11,7 @@
 #include <array>
 #include <unordered_set>
 #include <unordered_map>
+#include <deque>
 #include "rendering/VoxelStructures.h"
 #include "rendering/SunBillboard.h"
 #include "rendering/VoxelStructures.h"
@@ -192,7 +193,7 @@ namespace gl3 {
 
 
         //// Spell System
-        std::vector<SpellEffect> activeSpells;
+        std::deque<SpellEffect> activeSpells;
         std::vector<AnimatedVoxel> animatedVoxels;
 
         // Stable-id mapping for animated voxels
@@ -302,6 +303,19 @@ namespace gl3 {
                                          const std::vector<glm::vec3>& colors);
         void removeFormationVoxels(const SpellEffect& spell);
 
+        // Precomputed sphere meshes at different LODs
+        struct SphereMesh {
+            std::vector<glm::vec3> vertices;
+            std::vector<glm::vec3> normals;
+            std::vector<uint32_t> indices;
+            float radius;
+        };
+
+        std::unordered_map<int, SphereMesh> sphereMeshCache; // radius -> mesh
+
+        void initSphereMeshCache();
+        SphereMesh generateIcosphere(float radius, int subdivisions);
+
 
         ////Debugging:
         void debugComputeShaderState();
@@ -395,7 +409,7 @@ namespace gl3 {
         int maxParticles = 100;
 
         //Lighting-Variables:
-        const int MAX_LIGHTS = 4; // has to match marching cubes shader
+        const int MAX_LIGHTS = 2; // has to match marching cubes shader
         const float LIGHT_RADIUS = 220.0f * CHUNK_SIZE*VOXEL_SIZE*2;
         uint64_t frameCounter = 29; // Frame counter for light update staggering
         const float LIGHT_RADIUS_SQ = LIGHT_RADIUS * LIGHT_RADIUS;

@@ -87,7 +87,7 @@ namespace gl3 {
         glm::vec3 color;
         glm::vec3 originalVoxelPos;
         glm::vec3 normal;
-        float animationSpeed = 5.0f;
+        float animationSpeed = 3.0f;
         bool isAnimating = false;
         bool hasArrived = false; // track if arrived at target
     };
