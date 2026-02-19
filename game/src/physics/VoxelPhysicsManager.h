@@ -7,14 +7,25 @@
 
 namespace gl3 {
 
+    // Callback when body hits voxel world
     class VoxelPhysicsManager {
     public:
-        using CollisionCallback = std::function<void(
+        using aVoxelCollisionCallback = std::function<void(
                 VoxelPhysicsBody* body,
                 const glm::vec3& hitPos,
                 const glm::vec3& hitNormal,
                 float impactSpeed
         )>;
+
+        //Callback when two bodies collide
+        using BodyBodyCollisionCallback = std::function<void(
+                VoxelPhysicsBody* bodyA,
+                VoxelPhysicsBody* bodyB,
+                const glm::vec3& hitPos,
+                const glm::vec3& hitNormal,
+                float impactSpeed
+        )>;
+
 
         VoxelPhysicsManager(MultiGridChunkManager* chunkMgr)
                 : chunkManager(chunkMgr) {
@@ -29,14 +40,19 @@ namespace gl3 {
         );
 
         void update(float dt, std::vector<uint64_t>& removedBodies);
-        void setCollisionCallback(CollisionCallback cb) { collisionCallback = cb; }
+        void setVoxelCollisionCallback(VoxelCollisionCallback cb) { voxelCollisionCallback = cb; }
+        void setBodyBodyCollisionCallback(BodyBodyCollisionCallback cb) { bodyBodyCollisionCallback = cb; }
         void removeBody(uint64_t id);
         void removeBody(VoxelPhysicsBody* body);
+        const std::vector<VoxelPhysicsBody>& getBodies() const { return bodies; }
+
 
     private:
         MultiGridChunkManager* chunkManager;
         std::vector<VoxelPhysicsBody> bodies;
-        CollisionCallback collisionCallback;
+        VoxelCollisionCallback voxelCollisionCallback;
+        BodyBodyCollisionCallback bodyBodyCollisionCallback;
+
         glm::vec3 gravity;
 
         bool checkCapsuleCollision(
@@ -63,6 +79,18 @@ namespace gl3 {
         float sampleDensity(const glm::vec3& worldPos);
         bool checkVoxelCollision(
                 VoxelPhysicsBody& body,
+                glm::vec3& outNormal,
+                float& outPenetration
+        );
+        void resolveBodyBodyCollision(
+                VoxelPhysicsBody& bodyA,
+                VoxelPhysicsBody& bodyB,
+                const glm::vec3& normal,
+                float penetration
+        );
+        bool checkBodyBodyCollision(
+                VoxelPhysicsBody& bodyA,
+                VoxelPhysicsBody& bodyB,
                 glm::vec3& outNormal,
                 float& outPenetration
         );

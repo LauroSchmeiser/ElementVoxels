@@ -459,12 +459,37 @@ namespace gl3 {
                 resolveCollision(body, normal, penetration, impactSpeed);
 
                 // Callback
-                if (collisionCallback && impactSpeed > 1.0f * VOXEL_SIZE) {
-                    collisionCallback(&body, body.position, normal, impactSpeed);
+                if (voxelCollisionCallback && impactSpeed > 1.0f * VOXEL_SIZE) {
+                    voxelCollisionCallback(&body, body.position, normal, impactSpeed);
                 }
             }
 
             ++it;
+        }
+        // ===== STEP 2: Check body-body collisions (O(n²) but n is small) =====
+        for (size_t i = 0; i < bodies.size(); ++i) {
+            for (size_t j = i + 1; j < bodies.size(); ++j) {
+                VoxelPhysicsBody& bodyA = bodies[i];
+                VoxelPhysicsBody& bodyB = bodies[j];
+
+                if (!bodyA.active || !bodyB.active) continue;
+
+                // Quick distance check before expensive collision test
+                float maxDist = bodyA.radius + bodyB.radius;
+                glm::vec3 delta = bodyB.position - bodyA.position;
+                float distSq = glm::dot(delta, delta);
+
+                if (distSq > maxDist * maxDist) {
+                    continue; // Too far apart, skip
+                }
+
+                glm::vec3 normal;
+                float penetration;
+
+                if (checkBodyBodyCollision(bodyA, bodyB, normal, penetration)) {
+                    resolveBodyBodyCollision(bodyA, bodyB, normal, penetration);
+                }
+            }
         }
     }
     glm::vec3 VoxelPhysicsManager::sampleNormal(const glm::vec3& worldPos) {
@@ -570,4 +595,106 @@ namespace gl3 {
         return true;
     }
 
+    bool VoxelPhysicsManager::checkBodyBodyCollision(
+            VoxelPhysicsBody& bodyA,
+            VoxelPhysicsBody& bodyB,
+            glm::vec3& outNormal,
+            float& outPenetration
+    ) {
+        // Get bounding sphere radii (already calculated in bodies)
+        float radiusA = bodyA.radius;
+        float radiusB = bodyB.radius;
+
+        // Vector from A to B
+        glm::vec3 AtoB = bodyB.position - bodyA.position;
+        float distance = glm::length(AtoB);
+
+        // Sum of radii
+        float minDist = radiusA + radiusB;
+
+        // Check if spheres intersect
+        if (distance >= minDist) {
+            return false; // No collision
+        }
+
+        // Collision detected
+        outPenetration = minDist - distance;
+
+        // Normal points from A to B
+        if (distance > 0.0001f) {
+            outNormal = AtoB / distance; // Normalized
+        } else {
+            // Bodies are at exactly the same position - push apart in arbitrary direction
+            outNormal = glm::vec3(0, 1, 0);
+        }
+
+        return true;
+    }
+
+    void VoxelPhysicsManager::resolveBodyBodyCollision(
+            VoxelPhysicsBody& bodyA,
+            VoxelPhysicsBody& bodyB,
+            const glm::vec3& normal,
+            float penetration
+    ) {
+        // Calculate relative mass
+        float totalMass = bodyA.mass + bodyB.mass;
+        float massRatioA = bodyB.mass / totalMass; // How much A moves
+        float massRatioB = bodyA.mass / totalMass; // How much B moves
+
+        // Separate bodies (push them apart based on mass)
+        bodyA.position -= normal * penetration * massRatioA;
+        bodyB.position += normal * penetration * massRatioB;
+
+        // Calculate relative velocity
+        glm::vec3 relativeVel = bodyB.velocity - bodyA.velocity;
+        float velAlongNormal = glm::dot(relativeVel, normal);
+
+        // Don't resolve if bodies are separating
+        if (velAlongNormal > 0) {
+            return;
+        }
+
+        // Calculate restitution (average of both bodies)
+        float restitution = (bodyA.restitution + bodyB.restitution) * 0.5f;
+
+        // Calculate impulse scalar
+        float j = -(1.0f + restitution) * velAlongNormal;
+        j /= (1.0f / bodyA.mass + 1.0f / bodyB.mass);
+
+        // Apply impulse
+        glm::vec3 impulse = j * normal;
+        bodyA.velocity -= impulse / bodyA.mass;
+        bodyB.velocity += impulse / bodyB.mass;
+
+        // Apply friction (tangent to collision normal)
+        glm::vec3 tangent = relativeVel - normal * velAlongNormal;
+        if (glm::length(tangent) > 0.001f) {
+            tangent = glm::normalize(tangent);
+
+            float friction = (bodyA.friction + bodyB.friction) * 0.5f;
+            float jt = -glm::dot(relativeVel, tangent);
+            jt /= (1.0f / bodyA.mass + 1.0f / bodyB.mass);
+
+            // Clamp friction to Coulomb's law
+            jt = glm::clamp(jt, -j * friction, j * friction);
+
+            glm::vec3 frictionImpulse = jt * tangent;
+            bodyA.velocity -= frictionImpulse / bodyA.mass;
+            bodyB.velocity += frictionImpulse / bodyB.mass;
+        }
+
+        // Add some angular velocity from collision
+        glm::vec3 contactPoint = (bodyA.position + bodyB.position) * 0.5f;
+        glm::vec3 rA = contactPoint - bodyA.position;
+        glm::vec3 rB = contactPoint - bodyB.position;
+
+        bodyA.angularVelocity += glm::cross(rA, impulse) / (bodyA.mass * bodyA.radius);
+        bodyB.angularVelocity -= glm::cross(rB, impulse) / (bodyB.mass * bodyB.radius);
+
+        if (bodyBodyCollisionCallback) {
+            float impactSpeed = glm::length(relativeVel);
+            bodyBodyCollisionCallback(&bodyA, &bodyB, contactPoint, normal, impactSpeed);
+        }
+    }
 }

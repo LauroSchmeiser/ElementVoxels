@@ -2,6 +2,8 @@
 
 #include <glm/glm.hpp>
 #include "rendering//MultiGridChunkManager.h"
+#include "physics/VoxelPhysicsManager.h"
+
 
 namespace gl3 {
 
@@ -59,6 +61,7 @@ namespace gl3 {
         float defaultHeight;
 
         MultiGridChunkManager* chunkManager;
+        VoxelPhysicsManager* physicsManager;
 
         CharacterState state;
         CharacterSettings settings;
@@ -86,9 +89,22 @@ namespace gl3 {
         void updateAirSlam(float deltaTime);
 
     public:
-        CharacterController(MultiGridChunkManager* chunkMgr,
+        CharacterController(MultiGridChunkManager* chunkMgr, VoxelPhysicsManager *physicsMgr,
                             float height = 2.0f,
                             float radius = 0.5f);
+
+
+        //Callback when player collides with a physics body**
+        using PlayerBodyCollisionCallback = std::function<void(
+                VoxelPhysicsBody* body,
+                const glm::vec3& hitPos,
+                const glm::vec3& hitNormal,
+                float playerSpeed
+        )>;
+
+        void setPlayerBodyCollisionCallback(PlayerBodyCollisionCallback cb) {
+            playerBodyCollisionCallback = cb;
+        }
 
         // Update with all inputs including air reset
         void update(float deltaTime,
@@ -116,6 +132,12 @@ namespace gl3 {
         float getEyeHeight() const { return currentHeight * 0.85f; }
 
         // Debug
-        void debugDraw() const;
+        bool checkPhysicsBodyCollision(const glm::vec3& testPosition,
+                                       glm::vec3& outNormal,
+                                       float& outPenetration,VoxelPhysicsBody** outBody) const;
+
+    private:
+        PlayerBodyCollisionCallback playerBodyCollisionCallback;
+
     };
 }

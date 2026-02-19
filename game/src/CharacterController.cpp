@@ -2,9 +2,9 @@
 #include "Game.h"
 
 namespace gl3 {
-    CharacterController::CharacterController(MultiGridChunkManager *chunkMgr, float height, float radius)
+    CharacterController::CharacterController(MultiGridChunkManager *chunkMgr, VoxelPhysicsManager *physicsMgr ,float height, float radius)
             : height(height), radius(radius), currentHeight(height), defaultHeight(height),
-              chunkManager(chunkMgr) {
+              chunkManager(chunkMgr), physicsManager(physicsMgr)  {
     }
 
     static float getDensityAtWorld(MultiGridChunkManager* chunkManager, const glm::vec3& worldPos) {
@@ -218,29 +218,46 @@ namespace gl3 {
         for (int i = 0; i < maxIterations; i++) {
             glm::vec3 normal;
             float penetration;
+            bool collided = false;
 
+            // Check voxel world collision
             if (checkCollision(state.position, normal, penetration)) {
-                // Push character out of collision
                 state.position += normal * (penetration + 0.0001f);
 
-                // Remove velocity in collision direction
                 float velDotNormal = glm::dot(state.velocity, normal);
                 if (velDotNormal < 0) {
                     state.velocity -= normal * velDotNormal;
                 }
 
-                // Check if we're on ground (more accurate check)
-                if (normal.y > 0.5f) { // Mostly upward normal
-                    // Double-check with ground test to avoid false positives
-                    if (checkIfGrounded()) {
-                        state.isGrounded = true;
-                        state.coyoteTime = settings.coyoteTimeDuration;
-                        state.airSlamAvailable = true; // Reset air slam when grounded
-                    }
+                if (normal.y > 0.5f && checkIfGrounded()) {
+                    state.isGrounded = true;
+                    state.coyoteTime = settings.coyoteTimeDuration;
+                    state.airSlamAvailable = true;
                 }
-            } else {
-                break;
+
+                collided = true;
             }
+
+            // Check physics body collision
+            VoxelPhysicsBody* collidingBody = nullptr;
+            if (checkPhysicsBodyCollision(state.position, normal, penetration, &collidingBody)) {
+                state.position += normal * (penetration + 0.0001f);
+
+                float velDotNormal = glm::dot(state.velocity, normal);
+                if (velDotNormal < 0) {
+                    state.velocity -= normal * velDotNormal;
+                }
+
+                if (playerBodyCollisionCallback && collidingBody) {
+                    float playerSpeed = glm::length(state.velocity);
+                    glm::vec3 contactPoint = state.position - normal * radius;
+                    playerBodyCollisionCallback(collidingBody, contactPoint, normal, playerSpeed);
+                }
+
+                collided = true;
+            }
+
+            if (!collided) break;
         }
     }
 
@@ -461,5 +478,58 @@ namespace gl3 {
                 state.airSlamAvailable = true; // Reset air slam
             }
         }
+    }
+
+    bool CharacterController::checkPhysicsBodyCollision(
+            const glm::vec3& testPosition,
+            glm::vec3& outNormal,
+            float& outPenetration,
+            VoxelPhysicsBody** outBody // **NEW: output parameter**
+    ) const {
+        if (!physicsManager) return false;
+
+        float playerRadius = radius + currentHeight * 0.5f;
+
+        bool hitAny = false;
+        float maxPenetration = 0.0f;
+        glm::vec3 combinedNormal(0.0f);
+        VoxelPhysicsBody* collidingBody = nullptr;
+
+        const auto& bodies = physicsManager->getBodies();
+
+        for (auto& body : bodies) {
+            if (!body.active) continue;
+
+            glm::vec3 bodyToPlayer = testPosition - body.position;
+            float distance = glm::length(bodyToPlayer);
+            float minDist = body.radius + playerRadius;
+
+            if (distance < minDist) {
+                hitAny = true;
+
+                float penetration = minDist - distance;
+                glm::vec3 normal;
+
+                if (distance > 0.0001f) {
+                    normal = bodyToPlayer / distance;
+                } else {
+                    normal = glm::vec3(0, 1, 0);
+                }
+
+                if (penetration > maxPenetration) {
+                    maxPenetration = penetration;
+                    combinedNormal = normal;
+                    collidingBody = const_cast<VoxelPhysicsBody*>(&body);
+                }
+            }
+        }
+
+        if (hitAny) {
+            outNormal = glm::normalize(combinedNormal);
+            outPenetration = maxPenetration;
+            if (outBody) *outBody = collidingBody;
+        }
+
+        return hitAny;
     }
 }

@@ -286,6 +286,16 @@ namespace gl3 {
                                     const glm::vec3& hitPos,
                                     const glm::vec3& hitNormal,
                                     float impactSpeed);
+        void onBodyBodyCollision(gl3::VoxelPhysicsBody* bodyA,
+                                 gl3::VoxelPhysicsBody* bodyB,
+                                 const glm::vec3& hitPos,
+                                 const glm::vec3& hitNormal,
+                                 float impactSpeed);
+        void onPlayerBodyCollision(gl3::VoxelPhysicsBody* body,
+                                   const glm::vec3& hitPos,
+                                   const glm::vec3& hitNormal,
+                                   float playerSpeed);
+
         void createPhysicsMeshData(SpellEffect& spell,
                                          const std::vector<glm::vec3>& vertices,
                                          const std::vector<glm::vec3>& normals,
@@ -430,10 +440,10 @@ namespace gl3 {
         //vEffects
         SunBillboard sunBillboards;
         std::vector<SunInstance> emissiveBillboards;
-
+        int emissiveUpdateCounter=0;
 
         ////Input
-        CharacterController characterController;
+        std::unique_ptr<CharacterController> characterController;
         InputManager input;
         InputActionMap actions;
 
