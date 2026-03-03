@@ -376,6 +376,7 @@ namespace gl3 {
         void renderChunks();
         void renderAnimatedVoxels();
         void renderPhysicsFormations();
+        void renderSpellPreview();
         void renderFluidPlanets();
 
         //marching cubes Shader:
@@ -389,7 +390,8 @@ namespace gl3 {
 
         //vertex/frag Shader:
         void drawTriangles(Shader &voxelShader, Chunk *chunk);
-
+        void ensurePreviewCube();
+        void ensurePreviewSphereMesh();
 
         ////Basic-variables:
         GLFWwindow *window = nullptr;
@@ -436,20 +438,28 @@ namespace gl3 {
         GLuint skyboxVBO=0;
         GLuint cubemapTexture = 0; // This replaces your noiseTexture for the background
 
-            // World-Variables:
-            const int DIM = CHUNK_SIZE+2; //Chunk Size with a bit off padding for marching cubes
-            size_t voxelCount = DIM * DIM * DIM; //How many voxels can be in one Chunk
-            static constexpr int ChunkCount = 70; //Total size of the Game World
-            static constexpr int RenderingRange = 15; //Range around Camera that is rendered
+        // Preview proxy geometry (simple cube fallback)
+        GLuint previewCubeVAO = 0;
+        GLuint previewCubeVBO = 0;
 
-            //Marching-cubes Variables
-            size_t maxVerts =
-                    CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5 * 3; //Max amount of vertices marching cubes can create
-            const int MAX_CHUNKS_PER_FRAME = 9;
-            //std::vector<Chunk> dirtyChunks;
-            //SSBOs for marching cubes:
-            GLuint ssboVoxels = 0, ssboEdgeTable = 0, ssboTriTable = 0,
-                    ssboCounter = 0, ssboTriangles = 0, particleSSBO = 0, fieldBitsSSBO = 0;
+        GLuint previewSphereVAO = 0;
+        GLuint previewSphereVBO = 0;
+        GLuint previewSphereEBO = 0;
+        GLsizei previewSphereIndexCount = 0;
+
+        // World-Variables:
+        const int DIM = CHUNK_SIZE+2; //Chunk Size with a bit off padding for marching cubes
+        size_t voxelCount = DIM * DIM * DIM; //How many voxels can be in one Chunk
+        static constexpr int ChunkCount = 70; //Total size of the Game World
+        static constexpr int RenderingRange = 15; //Range around Camera that is rendered
+
+        //Marching-cubes Variables
+        size_t maxVerts = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5 * 3; //Max amount of vertices marching cubes can create
+        const int MAX_CHUNKS_PER_FRAME = 9;
+        //std::vector<Chunk> dirtyChunks;
+        //SSBOs for marching cubes:
+        GLuint ssboVoxels = 0, ssboEdgeTable = 0, ssboTriTable = 0,
+        ssboCounter = 0, ssboTriangles = 0, particleSSBO = 0, fieldBitsSSBO = 0;
 
         //vEffects
         SunBillboard sunBillboards;
@@ -467,6 +477,8 @@ namespace gl3 {
         std::unique_ptr<Shader> voxelShader;
         std::unique_ptr<Shader> marchingCubesShader;
         std::unique_ptr<Shader> voxelSplatShader;
+        std::unique_ptr<Shader> spellPreviewShader;
+
 
 
         ////helper functions:

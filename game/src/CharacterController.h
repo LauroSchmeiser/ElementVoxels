@@ -28,7 +28,7 @@ namespace gl3 {
         float crouchHeightMultiplier = 0.5f;
 
         // NEW: Air slam settings
-        float airSlamGravityMultiplier = 3.0f;    // How much faster you fall during slam
+        float airSlamGravityMultiplier = 1.75f;    // How much faster you fall during slam
         float fallingGravityMultiplier = 1.5f;    // Normal falling gravity multiplier
         float airSlamInitialVelocity = 10.0f;     // Initial downward velocity when starting slam
         float airSlamDuration = 2.0f;             // How long slam effect lasts

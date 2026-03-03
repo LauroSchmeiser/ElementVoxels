@@ -27,6 +27,94 @@ namespace gl3 {
         }
     };
 
+    // Put near top of Game.cpp (static in translation unit)
+    static GLuint gPreviewCubeVAO = 0;
+    static GLuint gPreviewCubeVBO = 0;
+
+    void Game::ensurePreviewCube() {
+        if (previewCubeVAO != 0) return;
+
+        // positions+dummy normals, 36 verts
+        const float cubeVerts[] = {
+                // pos                normal
+                -0.5f,-0.5f,-0.5f,   0,0,1,  0.5f,-0.5f,-0.5f,   0,0,1,  0.5f, 0.5f,-0.5f,   0,0,1,
+                0.5f, 0.5f,-0.5f,   0,0,1, -0.5f, 0.5f,-0.5f,   0,0,1, -0.5f,-0.5f,-0.5f,   0,0,1,
+
+                -0.5f,-0.5f, 0.5f,   0,0,1,  0.5f,-0.5f, 0.5f,   0,0,1,  0.5f, 0.5f, 0.5f,   0,0,1,
+                0.5f, 0.5f, 0.5f,   0,0,1, -0.5f, 0.5f, 0.5f,   0,0,1, -0.5f,-0.5f, 0.5f,   0,0,1,
+
+                -0.5f, 0.5f, 0.5f,   0,0,1, -0.5f, 0.5f,-0.5f,   0,0,1, -0.5f,-0.5f,-0.5f,   0,0,1,
+                -0.5f,-0.5f,-0.5f,   0,0,1, -0.5f,-0.5f, 0.5f,   0,0,1, -0.5f, 0.5f, 0.5f,   0,0,1,
+
+                0.5f, 0.5f, 0.5f,   0,0,1,  0.5f, 0.5f,-0.5f,   0,0,1,  0.5f,-0.5f,-0.5f,   0,0,1,
+                0.5f,-0.5f,-0.5f,   0,0,1,  0.5f,-0.5f, 0.5f,   0,0,1,  0.5f, 0.5f, 0.5f,   0,0,1,
+
+                -0.5f,-0.5f,-0.5f,   0,0,1,  0.5f,-0.5f,-0.5f,   0,0,1,  0.5f,-0.5f, 0.5f,   0,0,1,
+                0.5f,-0.5f, 0.5f,   0,0,1, -0.5f,-0.5f, 0.5f,   0,0,1, -0.5f,-0.5f,-0.5f,   0,0,1,
+
+                -0.5f, 0.5f,-0.5f,   0,0,1,  0.5f, 0.5f,-0.5f,   0,0,1,  0.5f, 0.5f, 0.5f,   0,0,1,
+                0.5f, 0.5f, 0.5f,   0,0,1, -0.5f, 0.5f, 0.5f,   0,0,1, -0.5f, 0.5f,-0.5f,   0,0,1
+        };
+
+        glGenVertexArrays(1, &previewCubeVAO);
+        glGenBuffers(1, &previewCubeVBO);
+
+        glBindVertexArray(previewCubeVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, previewCubeVBO);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(cubeVerts), cubeVerts, GL_STATIC_DRAW);
+
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
+
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
+
+        glBindVertexArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+    void Game::ensurePreviewSphereMesh() {
+        if (previewSphereVAO != 0) return;
+
+        // Pick any sphere mesh from cache (we just need topology; we scale in model)
+        if (sphereMeshCache.empty()) {
+            std::cerr << "ensurePreviewSphereMesh: sphereMeshCache is empty\n";
+            return;
+        }
+
+        const SphereMesh& m = sphereMeshCache.begin()->second;
+
+        // Interleave pos+normal for your shader layout (loc0 pos, loc1 normal)
+        struct PVN { glm::vec3 p; glm::vec3 n; };
+        std::vector<PVN> vtx;
+        vtx.reserve(m.vertices.size());
+        for (size_t i = 0; i < m.vertices.size(); ++i) {
+            vtx.push_back({ m.vertices[i] / m.radius, m.normals[i] });
+            // NOTE: divide by m.radius to make it a unit sphere in object space
+            // so model scaling by radius works cleanly.
+        }
+
+        glGenVertexArrays(1, &previewSphereVAO);
+        glGenBuffers(1, &previewSphereVBO);
+        glGenBuffers(1, &previewSphereEBO);
+
+        glBindVertexArray(previewSphereVAO);
+
+        glBindBuffer(GL_ARRAY_BUFFER, previewSphereVBO);
+        glBufferData(GL_ARRAY_BUFFER, vtx.size() * sizeof(PVN), vtx.data(), GL_STATIC_DRAW);
+
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, previewSphereEBO);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, m.indices.size() * sizeof(uint32_t), m.indices.data(), GL_STATIC_DRAW);
+
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(PVN), (void*)offsetof(PVN, p));
+
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(PVN), (void*)offsetof(PVN, n));
+
+        glBindVertexArray(0);
+
+        previewSphereIndexCount = (GLsizei)m.indices.size();
+    }
 
     void Game::framebuffer_size_callback(GLFWwindow *window, int width, int height) {
         if (height == 0) height = 1; // prevent divide-by-zero
@@ -77,7 +165,7 @@ namespace gl3 {
         skyboxShader = std::make_unique<Shader>("shaders/skybox.vert", "shaders/skybox.frag");
         voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel.frag");
         marchingCubesShader = std::make_unique<Shader>("shaders/marching_cubes.comp");
-
+        spellPreviewShader = std::make_unique<Shader>("shaders/spell_prev.vert", "shaders/spell_prev.frag");
 
         try {
             voxelSplatShader = std::make_unique<Shader>("shaders/metaball_splat.comp");
@@ -204,6 +292,7 @@ namespace gl3 {
             {
                 renderPhysicsFormations();
             }
+            renderSpellPreview();
 
             ////UI
             DisplayFPSCount();
@@ -399,7 +488,7 @@ namespace gl3 {
             }
             case FormationType::WALL: {
                 // Keep thickness (sizeZ) constant (world units), adjust width/height (world units)
-                float area = volume / (params.sizeZ * packingEfficiency);
+                float area = volume / (params.sizeZ * packingEfficiency)*20;
                 float side = std::sqrt(glm::max(0.0f, area));
                 params.sizeX = glm::max(side, minWorldDim);
                 params.sizeY = glm::max(params.sizeX * 0.75f, minWorldDim);
@@ -1492,7 +1581,7 @@ namespace gl3 {
         FormationParams params = FormationParams::Wall(center, normal,
                                                        width, height, thickness);
         // FIXED: Scale properly
-        float searchRadius = glm::max(width, height) * VOXEL_SIZE* 1.5f;
+        float searchRadius = glm::max(width, height) * VOXEL_SIZE* 15.5f;
         castSpellWithFormation(center, searchRadius, material, strength, params);
     }
 
@@ -2995,17 +3084,17 @@ namespace gl3 {
         }
         if (actions["AirReset"].wasJustPressed) {
             std::cout << "Platform Spell Triggered" << "\n";
-            glm::vec3 spellCenter =(cameraPos + glm::vec3(0,-1,0) * 30.0f*VOXEL_SIZE);
+            glm::vec3 spellCenter =(cameraPos + glm::vec3(0,-1,0) * 25.0f*VOXEL_SIZE);
 
             // Wall dimensions (tune these values)
-            float wallWidth = 0.05f*VOXEL_SIZE;    // Horizontal width
-            float wallHeight = 0.05f*VOXEL_SIZE;   // Vertical height
-            float wallThickness = 3.0f*VOXEL_SIZE; // How thick the wall is
+            float wallWidth = 1.25f*VOXEL_SIZE;    // Horizontal width
+            float wallHeight = 1.25f*VOXEL_SIZE;   // Vertical height
+            float wallThickness = 2.5f*VOXEL_SIZE; // How thick the wall is
 
             // Cast the wall spell
             castSpellWall(spellCenter, glm::vec3(0,-1,0),
                           wallWidth, wallHeight, wallThickness,
-                          0, 7.0f*VOXEL_SIZE);
+                          0, 10.0f*VOXEL_SIZE);
         }
 
 
@@ -3232,7 +3321,7 @@ namespace gl3 {
         voxelShader->setMatrix("model", glm::mat4(1.0f));
         voxelShader->setMatrix("mvp", pv);
         voxelShader->setVec3("viewPos", cameraPos);
-        voxelShader->setVec3("ambientColor", glm::vec3(0.02f));
+        voxelShader->setVec3("ambientColor", glm::vec3(0.002f));
 
 // or show signed N·L for the strongest light (index 0)
         if (DebugMode1) {
@@ -3528,7 +3617,7 @@ namespace gl3 {
         glm::mat4 pv = projection * view;
 
         voxelShader->setVec3("viewPos", cameraPos);
-        voxelShader->setVec3("ambientColor", glm::vec3(0.02f));
+        voxelShader->setVec3("ambientColor", glm::vec3(0.002f));
 
         // Use merged emissive light pool for lighting
         int numLights = std::min((int)mergedEmissiveLightPool.size(), MAX_LIGHTS);
@@ -3680,6 +3769,132 @@ namespace gl3 {
         if (!DebugMode1) {
             sunBillboards.render(billboardInstances, view, projection, float(glfwGetTime()));
         }
+    }
+
+    void Game::renderSpellPreview() {
+        if (!spellPreviewShader) return;
+
+        // If you only want preview in non-debug or only in debug, gate it here.
+        // For now: always on.
+        ensurePreviewCube();
+        ensurePreviewSphereMesh();
+
+        // ---- Determine what spell is "armed" (based on your current keybinds) ----
+        // You have:
+        //   E: sphere spell
+        //   R: wall spell
+        //   F: air reset (currently also wall-like in your code)
+        //
+        // For preview, choose one "active preview mode".
+        // Minimal: show sphere if E is held, wall if R held, else none.
+        // If you want "last selected", add a variable and update it in update().
+        int previewMode = -1; // -1 none, 0 sphere, 1 wall
+
+        if (true) previewMode = 0;
+        else if (actions["CastWall"].isPressed) previewMode = 1;
+        else if (actions["AirReset"].isPressed) previewMode = 1;
+        else return;
+
+        // ---- Compute placement point (center) from camera raycast ----
+        // Use a longer ray for wall preview
+        float maxDist = (previewMode == 0) ? 80.0f : 250.0f;
+        RayCastResult hit = rayCastFromCamera(maxDist);
+
+        glm::vec3 center = hit.hit ? hit.hitPosition : (cameraPos + getCameraFront() * 35.0f);
+
+        // Optional: snap to voxel grid so placement feels stable
+       /* auto snap = [&](float v) {
+            return std::round(v / VOXEL_SIZE) * VOXEL_SIZE;
+        };
+        center = glm::vec3(snap(center.x), snap(center.y), snap(center.z));*/
+
+        // ---- Build pv (same as other render passes) ----
+        float aspect = (windowHeight == 0) ? (float)windowWidth : (float)windowWidth / (float)windowHeight;
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
+        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), glm::vec3(0.0f, 1.0f, 0.0f));
+        glm::mat4 pv = projection * view;
+
+        // ---- Spell params (match your cast code) ----
+        float formationRadius = 2.0f * VOXEL_SIZE;     // your castSpellSphere uses 4*VOXEL_SIZE
+        float pullRadius      = formationRadius * 15.5f; // your searchRadius behavior
+
+        // Wall params (match your CastWall in update())
+        glm::vec3 wallNormal(0,0,1); // you pass this currently
+        glm::vec3 wallUp(0,1,0);
+        glm::vec3 wallSize(1.0f*VOXEL_SIZE, 0.5f*VOXEL_SIZE, 2.0f*VOXEL_SIZE);
+
+        // AirReset spell currently also calls castSpellWall with normal (0,-1,0) and tiny dims
+        if (actions["AirReset"].isPressed) {
+            wallNormal = glm::vec3(0,-1,0);
+            wallUp     = glm::vec3(0,0,1); // choose a stable up when normal ~Y
+            wallSize   = glm::vec3(0.05f*VOXEL_SIZE, 0.05f*VOXEL_SIZE, 3.0f*VOXEL_SIZE);
+            pullRadius = 10.0f * 4.5f * VOXEL_SIZE; // your castSpellPlatform searchRadius-ish, but you used wall; pick something visible
+        }
+
+        // ---- Draw state for hologram overlay ----
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+        // Usually looks better not writing depth for translucent overlays
+        glDepthMask(GL_FALSE);
+
+        spellPreviewShader->use();
+
+        spellPreviewShader->setMatrix("pv", pv);
+        spellPreviewShader->setVec3("uCenter", center);
+        spellPreviewShader->setFloat("uVoxelSize", VOXEL_SIZE);
+
+        spellPreviewShader->setFloat("uPullRadius", pullRadius);
+
+        spellPreviewShader->setVec3("uFormationColor", glm::vec3(0.2f, 0.8f, 1.0f));
+        spellPreviewShader->setVec3("uPullColor", glm::vec3(0.2f, 0.6f, 1.0f));
+        spellPreviewShader->setFloat("uFormationAlpha", 0.35f);
+        spellPreviewShader->setFloat("uPullAlpha", 0.10f);
+
+        // ---- Draw formation preview ----
+        if (previewMode == 0) {
+            // Sphere: use sphere mesh
+            spellPreviewShader->setInt("uPreviewMode", 0);
+            spellPreviewShader->setFloat("uFormationRadius", formationRadius);
+
+            // model = translate(center) * scale(radius)
+            glm::mat4 model(1.0f);
+            model = glm::translate(model, center);
+            model = glm::scale(model, glm::vec3(formationRadius));
+            spellPreviewShader->setMatrix("model", model);
+
+            // wall uniforms still must be set (safe defaults)
+            spellPreviewShader->setVec3("uWallNormal", glm::vec3(0,0,1));
+            spellPreviewShader->setVec3("uWallUp", glm::vec3(0,1,0));
+            spellPreviewShader->setVec3("uWallSize", glm::vec3(1));
+
+            glBindVertexArray(previewSphereVAO);
+            glDrawElements(GL_TRIANGLES, previewSphereIndexCount, GL_UNSIGNED_INT, 0);
+            glBindVertexArray(0);
+        } else {
+            // Wall: draw cube proxy scaled to wallSize
+            spellPreviewShader->setInt("uPreviewMode", 1);
+            spellPreviewShader->setFloat("uFormationRadius", formationRadius); // unused for wall
+
+            spellPreviewShader->setVec3("uWallNormal", wallNormal);
+            spellPreviewShader->setVec3("uWallUp", wallUp);
+            spellPreviewShader->setVec3("uWallSize", wallSize);
+
+            // For now: model is just translate(center) (orientation is handled in fragment SDF)
+            // But the mesh still must cover the region. Use a cube scaled to wall size.
+            glm::mat4 model(1.0f);
+            model = glm::translate(model, center);
+            model = glm::scale(model, wallSize);
+            spellPreviewShader->setMatrix("model", model);
+
+            glBindVertexArray(previewCubeVAO);
+            glDrawArrays(GL_TRIANGLES, 0, 36);
+            glBindVertexArray(0);
+        }
+
+        // restore state
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
     }
 
 //------Marching Cubes-Code---------------------------------------------------------------------------------------------------------------------
@@ -4305,5 +4520,6 @@ namespace gl3 {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
     }
+
 
 }

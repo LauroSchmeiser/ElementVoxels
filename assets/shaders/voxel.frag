@@ -9,7 +9,7 @@ uniform int numLights;
 uniform vec3 lightPos[4];
 uniform vec3 lightColor[4];
 uniform float lightIntensity[4]; // intensity already includes inverse-square (or use as scale)
-uniform vec3 ambientColor; // small ambient term
+uniform vec3 ambientColor;
 uniform vec3 viewPos;
 
 uniform float emission;
@@ -20,11 +20,11 @@ const float MIN_ALBEDO = 0.01; // set >0 for debug visualizing lights on black p
 
 void main() {
     // surface albedo
-    vec3 albedo = max(vertexColor, vec3(MIN_ALBEDO)); // use MIN_ALBEDO=0 for physical correctness
+    vec3 albedo = max(vertexColor, vec3(MIN_ALBEDO));
 
     vec3 N = normalize(normal);
 
-    // accumulate light contributions
+
     vec3 lightAccum = vec3(0.0);
 
 
@@ -48,13 +48,13 @@ void main() {
 
     // convert accumulated light to reflected diffuse (energy-conserving Lambert)
     // diffuse reflectance = albedo / PI * incoming_radiance
-    vec3 diffuse = lightAccum*albedo;
+    vec3 diffuse = lightAccum*(albedo/PI);
 
 
-    // ambient (very small)
+    // ambient
     vec3 ambient = ambientColor*albedo;
 
-    // emission (self-emissive)
+    // emission
     vec3 emiss = emission * emissionColor;
 
     // final HDR color
@@ -64,7 +64,4 @@ void main() {
     vec3 color = hdr / (hdr + vec3(1.0));
 
     FragColor = vec4(color, 1.0);
-    //FragColor = vec4(diffuse,1.0);
-    // debug: show normals as color
-    //FragColor = vec4(normalize(normal) * 0.5 + 0.5, 1.0);
 }
