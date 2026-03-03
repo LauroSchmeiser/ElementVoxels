@@ -3715,7 +3715,7 @@ namespace gl3 {
         setComputeUniforms(chunkOrigin,  *marchingCubesShader);
 
         // Determine cells per axis and buffer sizes using DIM
-        const int cellsPerAxis = DIM; // marching cubes operates on (voxelGridDim - 1) cells
+        const int cellsPerAxis = DIM-1; // marching cubes operates on (voxelGridDim - 1) cells
         const size_t maxVertices =
                 size_t(cellsPerAxis) * cellsPerAxis * cellsPerAxis * 5 * 3; // conservative upper bound
         const size_t triangleBufferSize = maxVertices * sizeof(OutVertexStd430);
@@ -3904,7 +3904,7 @@ namespace gl3 {
     void Game::setComputeUniforms(const glm::vec3 &chunkOrigin,
                                   Shader &computeShader) {
         computeShader.use();
-        computeShader.setVec3("gridOrigin", chunkOrigin);
+        computeShader.setVec3("gridOrigin", chunkOrigin- glm::vec3(gl3::VOXEL_SIZE));
         computeShader.setFloat("voxelSize", gl3::VOXEL_SIZE);
         computeShader.setIVec3("voxelGridDim", glm::ivec3(DIM, DIM, DIM));
     }

@@ -409,7 +409,7 @@ namespace gl3 {
         int maxParticles = 100;
 
         //Lighting-Variables:
-        const int MAX_LIGHTS = 2; // has to match marching cubes shader
+        const int MAX_LIGHTS = 4; // has to match marching cubes shader
         const float LIGHT_RADIUS = 220.0f * CHUNK_SIZE*VOXEL_SIZE*2;
         uint64_t frameCounter = 29; // Frame counter for light update staggering
         const float LIGHT_RADIUS_SQ = LIGHT_RADIUS * LIGHT_RADIUS;

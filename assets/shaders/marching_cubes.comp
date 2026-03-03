@@ -93,15 +93,13 @@ vec3 vertexInterpolate(vec3 p1, vec3 p2, float d1, float d2) {
     float t = abs(denom) < 1e-6 ? 0.5 : (d1 / denom);
     return mix(p1, p2, clamp(t, 0.0, 1.0));
 }
-
-// Trilinear sample of density at fractional voxel coords (in voxel index space)
+// Trilinear sample of density at fractional voxel coords (voxel index space).
 float sampleDensityTrilinear(vec3 idxF) {
-    // clamp to [0 .. dim-1] but keep room for +1 access
+    // safe range so we can access i0+1 without hitting dim-1 issues
     vec3 p = clamp(idxF, vec3(0.0), vec3(voxelGridDim) - vec3(1.001));
 
     ivec3 i0 = ivec3(floor(p));
     ivec3 i1 = min(i0 + ivec3(1), voxelGridDim - ivec3(1));
-
     vec3 f = fract(p);
 
     float d000 = sampleDensity(i0);
@@ -124,21 +122,27 @@ float sampleDensityTrilinear(vec3 idxF) {
     return mix(d0, d1, f.z);
 }
 
-// Better normal: compute gradient using trilinear density sampling
+// Seam-safe normal: clamp the *center* sample position into [1 .. dim-2],
+// so idxF +/- h never collapses due to border clamping.
 vec3 computeNormal(vec3 worldPos) {
     vec3 idxF = (worldPos - gridOrigin) / voxelSize;
 
-    // step of 1 voxel in index space (you can try 0.5 too)
-    const float h = 0.25;
+    // IMPORTANT: stay away from the padded volume boundary by 1 voxel
+    // (because you only padded by 1).
+    idxF = clamp(idxF, vec3(1.0), vec3(voxelGridDim) - vec3(2.0));
+
+    // central difference step in index space
+    const float h = 0.5;
 
     float dx = sampleDensityTrilinear(idxF + vec3(h,0,0)) - sampleDensityTrilinear(idxF - vec3(h,0,0));
     float dy = sampleDensityTrilinear(idxF + vec3(0,h,0)) - sampleDensityTrilinear(idxF - vec3(0,h,0));
     float dz = sampleDensityTrilinear(idxF + vec3(0,0,h)) - sampleDensityTrilinear(idxF - vec3(0,0,h));
 
-
     vec3 g = vec3(dx, dy, dz);
     float len = length(g);
-    return (len > 1e-8) ? -g / len : vec3(0,1,0);
+
+    // density increases into solid => gradient points inward => outward normal is -grad
+    return (len > 1e-8) ? (-g / len) : vec3(0,1,0);
 }
 
 // helper to read triTable row: triTable is flattened as [case*16 + j]
