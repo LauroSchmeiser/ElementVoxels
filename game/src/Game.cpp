@@ -8,23 +8,13 @@
 #include "rendering/marchingTables.h"
 #include "rendering/SunBillboard.h"
 #include "physics/SpellPhysicsManager.h"
-
+//#include "extern/tracy/public/tracy/Tracy.hpp"
+#include <cstdint>
+#include "rendering/GpuStructsStd430.h"
 
 namespace gl3 {
 
 ////-----Basics---------------------------------------------------------------------------------------------------------------------------------
-
-    // CPU-side voxel format that matches the compute shader's Voxel { float density; vec4 color; }
-    struct CpuVoxel {
-        float density;
-        // explicit padding so next member is at 16-byte offset
-        float _pad0;
-        float _pad1;
-        float _pad2;
-        glm::vec4 color;
-    };
-    static_assert(sizeof(CpuVoxel) == 32, "CpuVoxel size must be 32 bytes to match std430 layout");
-
     struct CpuTimer {
         const char* name;
         std::chrono::high_resolution_clock::time_point start;
@@ -2276,7 +2266,7 @@ namespace gl3 {
         // 0: voxels SSBO
         glGenBuffers(1, &ssboVoxels);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboVoxels);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, voxelCount * sizeof(CpuVoxel), nullptr, GL_DYNAMIC_DRAW);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, voxelCount * sizeof(CpuVoxelStd430), nullptr, GL_DYNAMIC_DRAW);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssboVoxels); // bind to 0
 
         // 1: edge table SSBO
@@ -2484,15 +2474,16 @@ namespace gl3 {
                                     // SDF UNION: Take the MAXIMUM density (most solid)
                                     // For Marching Cubes, positive = inside, negative = outside
                                     if (planetDensity > existingDensity) {
-                                        // This planet is "more solid" at this point
                                         chunk->voxels[lx][ly][lz].density = planetDensity;
 
-                                        // Set type and color if we're inside or near the surface
-                                        if (planetDensity >= -1.0f) { // Near the isosurface (density ~0)
-                                            chunk->voxels[lx][ly][lz].type = planet.type;
-                                            chunk->voxels[lx][ly][lz].color = planet.color;
+                                        // If this voxel participates in the field at all, give it a color.
+                                        // (You can still keep type/material logic near the surface if you want.)
+                                        chunk->voxels[lx][ly][lz].color = planet.color;
 
-                                            if (planetDensity >= 0) { // Actually inside the solid
+                                        if (planetDensity >= -1.0f) {
+                                            chunk->voxels[lx][ly][lz].type = planet.type;
+                                            chunk->voxels[lx][ly][lz].material = planet.material; // if you use it
+                                            if (planetDensity >= 0) {
                                                 solidVoxels++;
                                                 chunkTouched = true;
                                             }
@@ -3721,13 +3712,13 @@ namespace gl3 {
 
         // Reset counter and set compute shader uniforms (gridOrigin aligns with chunkOrigin)
         resetAtomicCounter();
-        setComputeUniforms(chunkOrigin, glm::vec3(1.0f), *marchingCubesShader);
+        setComputeUniforms(chunkOrigin,  *marchingCubesShader);
 
         // Determine cells per axis and buffer sizes using DIM
-        const int cellsPerAxis = DIM - 1; // marching cubes operates on (voxelGridDim - 1) cells
+        const int cellsPerAxis = DIM; // marching cubes operates on (voxelGridDim - 1) cells
         const size_t maxVertices =
                 size_t(cellsPerAxis) * cellsPerAxis * cellsPerAxis * 5 * 3; // conservative upper bound
-        const size_t triangleBufferSize = maxVertices * sizeof(OutVertex);
+        const size_t triangleBufferSize = maxVertices * sizeof(OutVertexStd430);
 
         // Create per-chunk triangle SSBO
         glGenBuffers(1, &chunk->gpuCache.triangleSSBO);
@@ -3785,10 +3776,10 @@ namespace gl3 {
         // Use the triangle SSBO as the ARRAY_BUFFER for vertex fetch
         glBindBuffer(GL_ARRAY_BUFFER, chunk->gpuCache.triangleSSBO);
 
-        constexpr GLsizei stride = sizeof(OutVertex);
-        const void *posOffset = (void *) offsetof(OutVertex, pos);
-        const void *normalOffset = (void *) offsetof(OutVertex, normal);
-        const void *colorOffset = (void *) offsetof(OutVertex, color);
+        constexpr GLsizei stride = sizeof(OutVertexStd430);
+        const void* posOffset    = (void*)offsetof(OutVertexStd430, pos);
+        const void* normalOffset = (void*)offsetof(OutVertexStd430, normal);
+        const void* colorOffset  = (void*)offsetof(OutVertexStd430, color);
 
         // aPos (vec3 in shader) <- OutVertex.pos (vec4 in buffer, we read first 3 components)
         glEnableVertexAttribArray(0);
@@ -3815,7 +3806,7 @@ namespace gl3 {
     void Game::uploadVoxelChunk(const Chunk &chunk, const glm::vec3 *overrideColor) {
         const int localDIM = DIM; // Should be CHUNK_SIZE + 2 for padding
         const size_t total = size_t(localDIM) * localDIM * localDIM;
-        std::vector<CpuVoxel> voxels;
+        std::vector<CpuVoxelStd430> voxels;
         voxels.resize(total);
 
         // We need to include a 1-voxel border from neighbors
@@ -3829,7 +3820,7 @@ namespace gl3 {
                     int idxZ = z + 1;
                     int idx = idxX + idxY * localDIM + idxZ * localDIM * localDIM;
 
-                    const Voxel* srcVoxel = nullptr;
+                    const Voxel *srcVoxel = nullptr;
 
                     // Check if we need to sample from neighbor
                     if (x == -1 || x == CHUNK_SIZE ||
@@ -3867,10 +3858,10 @@ namespace gl3 {
                             localZ = 0;
                         }
 
-                        Chunk* neighbor = chunkManager->getChunk(neighborCoord);
-                        if (neighbor && localX >= 0 && localX <= CHUNK_SIZE &&
-                            localY >= 0 && localY <= CHUNK_SIZE &&
-                            localZ >= 0 && localZ <= CHUNK_SIZE) {
+                        Chunk *neighbor = chunkManager->getChunk(neighborCoord);
+                        if (neighbor && localX >= -1 && localX <= CHUNK_SIZE &&
+                            localY > -1 && localY <= CHUNK_SIZE &&
+                            localZ > -1 && localZ <= CHUNK_SIZE) {
                             srcVoxel = &neighbor->voxels[localX][localY][localZ];
                         }
                     }
@@ -3886,18 +3877,20 @@ namespace gl3 {
 
                     // Copy data
                     voxels[idx].density = srcVoxel->density;
-                    if (overrideColor) {
-                        voxels[idx].color = glm::vec4(*overrideColor, 1.0f);
-                    } else {
-                        voxels[idx].color = glm::vec4(srcVoxel->color, 1.0f);
-                    }
+                    voxels[idx].pad0 = voxels[idx].pad1 = voxels[idx].pad2 = 0.0f;
+                    glm::vec3 col = overrideColor ? *overrideColor : srcVoxel->color;
+
+                    voxels[idx].color[0] = col.r;
+                    voxels[idx].color[1] = col.g;
+                    voxels[idx].color[2] = col.b;
+                    voxels[idx].color[3] = 1.0f;
                 }
             }
         }
 
         // Upload to SSBO
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboVoxels);
-        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, voxels.size() * sizeof(CpuVoxel), voxels.data());
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, voxels.size() * sizeof(CpuVoxelStd430), voxels.data());
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     }
 
@@ -3909,16 +3902,10 @@ namespace gl3 {
 
     // Set compute shader uniforms consistently (use member DIM and chunkOrigin -> gridOrigin)
     void Game::setComputeUniforms(const glm::vec3 &chunkOrigin,
-                                  const glm::vec3 & /*objectScale*/,
                                   Shader &computeShader) {
         computeShader.use();
-
-        // tell compute shader the voxel size in world units
-        const float voxelSize = gl3::VOXEL_SIZE;
-
-        // voxelGridDim equals DIM (number of sample points along each axis)
-        computeShader.setVec3("gridOrigin", chunkOrigin); // index (0,0,0) maps to chunkOrigin
-        computeShader.setFloat("voxelSize", voxelSize);
+        computeShader.setVec3("gridOrigin", chunkOrigin);
+        computeShader.setFloat("voxelSize", gl3::VOXEL_SIZE);
         computeShader.setIVec3("voxelGridDim", glm::ivec3(DIM, DIM, DIM));
     }
 

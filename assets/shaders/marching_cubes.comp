@@ -56,6 +56,7 @@ uniform ivec3 voxelGridDim; // now = (25,25,25)
 uniform vec3 gridOrigin;    // world position of voxel[0,0,0]
 uniform float voxelSize;    // spacing between voxels
 
+
 // Helpers to read voxel by 3D coords (clamp safe)
 int voxelIndex(ivec3 p) {
     return p.x + p.y * voxelGridDim.x + p.z * voxelGridDim.x * voxelGridDim.y;
@@ -93,26 +94,51 @@ vec3 vertexInterpolate(vec3 p1, vec3 p2, float d1, float d2) {
     return mix(p1, p2, clamp(t, 0.0, 1.0));
 }
 
+// Trilinear sample of density at fractional voxel coords (in voxel index space)
+float sampleDensityTrilinear(vec3 idxF) {
+    // clamp to [0 .. dim-1] but keep room for +1 access
+    vec3 p = clamp(idxF, vec3(0.0), vec3(voxelGridDim) - vec3(1.001));
 
-// approximate normal by central differences on density samples
+    ivec3 i0 = ivec3(floor(p));
+    ivec3 i1 = min(i0 + ivec3(1), voxelGridDim - ivec3(1));
+
+    vec3 f = fract(p);
+
+    float d000 = sampleDensity(i0);
+    float d100 = sampleDensity(ivec3(i1.x, i0.y, i0.z));
+    float d010 = sampleDensity(ivec3(i0.x, i1.y, i0.z));
+    float d110 = sampleDensity(ivec3(i1.x, i1.y, i0.z));
+    float d001 = sampleDensity(ivec3(i0.x, i0.y, i1.z));
+    float d101 = sampleDensity(ivec3(i1.x, i0.y, i1.z));
+    float d011 = sampleDensity(ivec3(i0.x, i1.y, i1.z));
+    float d111 = sampleDensity(i1);
+
+    float d00 = mix(d000, d100, f.x);
+    float d10 = mix(d010, d110, f.x);
+    float d01 = mix(d001, d101, f.x);
+    float d11 = mix(d011, d111, f.x);
+
+    float d0 = mix(d00, d10, f.y);
+    float d1 = mix(d01, d11, f.y);
+
+    return mix(d0, d1, f.z);
+}
+
+// Better normal: compute gradient using trilinear density sampling
 vec3 computeNormal(vec3 worldPos) {
-    // convert world pos to voxel space (floating index)
-    vec3 inv = vec3(1.0 / voxelSize);
-    vec3 idxF = (worldPos - gridOrigin) * inv;
+    vec3 idxF = (worldPos - gridOrigin) / voxelSize;
 
-    ivec3 p = ivec3(floor(idxF));
-    // sample neighbor densities (clamped)
-    float dX1 = sampleDensity(clamp(p + ivec3(1,0,0), ivec3(0), voxelGridDim - 1));
-    float dX0 = sampleDensity(clamp(p + ivec3(-1,0,0), ivec3(0), voxelGridDim - 1));
-    float dY1 = sampleDensity(clamp(p + ivec3(0,1,0), ivec3(0), voxelGridDim - 1));
-    float dY0 = sampleDensity(clamp(p + ivec3(0,-1,0), ivec3(0), voxelGridDim - 1));
-    float dZ1 = sampleDensity(clamp(p + ivec3(0,0,1), ivec3(0), voxelGridDim - 1));
-    float dZ0 = sampleDensity(clamp(p + ivec3(0,0,-1), ivec3(0), voxelGridDim - 1));
+    // step of 1 voxel in index space (you can try 0.5 too)
+    const float h = 0.25;
 
-    vec3 g = vec3(dX1 - dX0, dY1 - dY0, dZ1 - dZ0);
+    float dx = sampleDensityTrilinear(idxF + vec3(h,0,0)) - sampleDensityTrilinear(idxF - vec3(h,0,0));
+    float dy = sampleDensityTrilinear(idxF + vec3(0,h,0)) - sampleDensityTrilinear(idxF - vec3(0,h,0));
+    float dz = sampleDensityTrilinear(idxF + vec3(0,0,h)) - sampleDensityTrilinear(idxF - vec3(0,0,h));
+
+
+    vec3 g = vec3(dx, dy, dz);
     float len = length(g);
-    // return outward normal; you may flip sign if you prefer
-    return (len > 0.0001) ? -normalize(g) : vec3(0.0, 1.0, 0.0);
+    return (len > 1e-8) ? -g / len : vec3(0,1,0);
 }
 
 // helper to read triTable row: triTable is flattened as [case*16 + j]
@@ -126,6 +152,7 @@ vec3 voxelWorldPos(ivec3 v) {
 }
 
 void main() {
+
     ivec3 cell = ivec3(gl_GlobalInvocationID);
     ivec3 cellsDim = voxelGridDim - ivec3(1);
 
@@ -243,4 +270,5 @@ void main() {
         verts[idx + 2].normal = vec4(n2, 0.0);
         verts[idx + 2].color = vec4(col2, 1.0);
     }
+
 }

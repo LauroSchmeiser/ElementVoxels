@@ -12,6 +12,7 @@ file(GLOB_RECURSE SOURCE_FILES CONFIGURE_DEPENDS
         src/rendering/*.h
         src/entities/*.cpp
         src/entities/*.h
+        extern/tracy/public/TracyClient.cpp
 )
 
 # Create executable
@@ -35,6 +36,7 @@ add_executable(${EXE_FILE} ${SOURCE_FILES}
         src/physics/VoxelPhysicsBody.h
         src/physics/VoxelPhysicsManager.h
         src/physics/VoxelPhysicsManager.cpp
+        src/rendering/GpuStructsStd430.h
 )
 
 # Require C++ 17 compiler

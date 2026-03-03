@@ -4,6 +4,7 @@
 #include "../rendering/MultiGridChunkManager.h"
 #include <vector>
 #include <functional>
+#include <deque>
 
 namespace gl3 {
 
@@ -44,12 +45,12 @@ namespace gl3 {
         void setBodyBodyCollisionCallback(BodyBodyCollisionCallback cb) { bodyBodyCollisionCallback = cb; }
         void removeBody(uint64_t id);
         void removeBody(VoxelPhysicsBody* body);
-        const std::vector<VoxelPhysicsBody>& getBodies() const { return bodies; }
+        const std::deque<VoxelPhysicsBody>& getBodies() const { return bodies; }
 
 
     private:
         MultiGridChunkManager* chunkManager;
-        std::vector<VoxelPhysicsBody> bodies;
+        std::deque<VoxelPhysicsBody> bodies;
         VoxelCollisionCallback voxelCollisionCallback;
         BodyBodyCollisionCallback bodyBodyCollisionCallback;
 

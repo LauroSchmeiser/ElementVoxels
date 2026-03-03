@@ -156,12 +156,12 @@ namespace gl3 {
             std::vector<std::pair<ChunkCoord, Chunk*>> result;
 
             // Calculate chunk bounds
-            int minCX = (int)std::floor((center.x - radius) / CHUNK_SIZE);
-            int maxCX = (int)std::floor((center.x + radius) / CHUNK_SIZE);
-            int minCY = (int)std::floor((center.y - radius) / CHUNK_SIZE);
-            int maxCY = (int)std::floor((center.y + radius) / CHUNK_SIZE);
-            int minCZ = (int)std::floor((center.z - radius) / CHUNK_SIZE);
-            int maxCZ = (int)std::floor((center.z + radius) / CHUNK_SIZE);
+            int minCX = (int)std::floor((center.x - radius) / CHUNK_SIZE*VOXEL_SIZE);
+            int maxCX = (int)std::floor((center.x + radius) / CHUNK_SIZE*VOXEL_SIZE);
+            int minCY = (int)std::floor((center.y - radius) / CHUNK_SIZE*VOXEL_SIZE);
+            int maxCY = (int)std::floor((center.y + radius) / CHUNK_SIZE*VOXEL_SIZE);
+            int minCZ = (int)std::floor((center.z - radius) / CHUNK_SIZE*VOXEL_SIZE);
+            int maxCZ = (int)std::floor((center.z + radius) / CHUNK_SIZE*VOXEL_SIZE);
 
             for (int cx = minCX; cx <= maxCX; ++cx) {
                 for (int cy = minCY; cy <= maxCY; ++cy) {
