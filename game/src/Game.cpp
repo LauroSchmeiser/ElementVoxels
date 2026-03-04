@@ -3329,10 +3329,6 @@ namespace gl3 {
                 voxelShader->setFloat("emission", 0.0f);
             }
 
-            std::vector<Chunk> emissiveChunks;
-            chunkManager->forEachEmissiveChunk([this, &emissiveChunks](Chunk *chunk) {
-                emissiveChunks.push_back(*chunk);
-            });
 
             for (int cx = camCX - renderRadius; cx <= camCX + renderRadius; ++cx) {
                 for (int cy = camCY - renderRadius; cy <= camCY + renderRadius; ++cy) {
@@ -3375,16 +3371,7 @@ namespace gl3 {
                         /*if((chunk->gpuCache.nearbyLights.size()>0)) {
                             std::cout << "lights exist for this chunk: "<< chunk->gpuCache.nearbyLights.size() << "\n";
                         }*/
-                        bool skip = false;
-                        for (int k = 0; k < emissiveChunks.size(); k++) {
-                            if (emissiveChunks.at(k).coord == chunk->coord) {
-                                skip = true;
-                                continue;
-                            }
-                        }
-                        if (skip) {
-                            continue;
-                        }
+
                         int numLights = std::min((int) chunk->gpuCache.nearbyLights.size(), MAX_LIGHTS);
                         voxelShader->setInt("numLights", numLights);
                         for (int i = 0; i < numLights; ++i) {
@@ -4027,6 +4014,7 @@ namespace gl3 {
             const void *posOffset = (void *) offsetof(OutVertexStd430, pos);
             const void *normalOffset = (void *) offsetof(OutVertexStd430, normal);
             const void *colorOffset = (void *) offsetof(OutVertexStd430, color);
+            const void *flagsOffset = (void *) offsetof(OutVertexStd430, flags);
 
             // aPos (vec3 in shader) <- OutVertex.pos (vec4 in buffer, we read first 3 components)
             glEnableVertexAttribArray(0);
@@ -4039,6 +4027,9 @@ namespace gl3 {
             // aColor (vec3) <- OutVertex.color
             glEnableVertexAttribArray(2);
             glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, stride, colorOffset);
+
+            glEnableVertexAttribArray(3);
+            glVertexAttribIPointer(3, 1, GL_UNSIGNED_INT, stride, flagsOffset);
 
             // Unbind VAO/ARRAY_BUFFER
             glBindVertexArray(0);
@@ -4132,6 +4123,7 @@ namespace gl3 {
                     voxels[idx].color[1] = col.g;
                     voxels[idx].color[2] = col.b;
                     voxels[idx].color[3] = 1.0f;
+                    voxels[idx].type = srcVoxel->type;
                 }
             }
         }

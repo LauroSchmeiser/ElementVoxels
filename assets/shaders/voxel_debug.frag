@@ -2,6 +2,8 @@
 in vec3 fragPos;
 in vec3 vertexColor;
 in vec3 normal;
+flat in uint vFlags;
+
 
 out vec4 FragColor;
 
@@ -22,6 +24,8 @@ vec3 signedDotToColor(float s) {
 }
 
 void main() {
+    if ((vFlags & 1u) != 0u) discard;
+
     // normalized (safeguarded) normal
     vec3 N = normal;
     float nlen = length(N);

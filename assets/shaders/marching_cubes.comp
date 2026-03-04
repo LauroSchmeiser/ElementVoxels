@@ -7,8 +7,16 @@ layout (local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
 // we store voxels in Z-major or any consistent order: index = x + y*W + z*W*H
 struct Voxel {
     float density;
-    vec4 color; // use vec4 for safe std430 alignment; rgb in xyz
+    float pad0;
+    float pad1;
+    float pad2;
+    vec4 color;
+    uint type;
+    uint pad4;
+    uint pad5;
+    uint pad6;
 };
+
 layout(std430, binding = 0) readonly buffer Voxels {
     Voxel voxels[]; // size = CHUNK_SIZE^3
 };
@@ -33,6 +41,7 @@ struct OutVertex {
     vec4 pos;    // xyz: position, w: unused
     vec4 normal; // xyz: normal
     vec4 color;  // rgb: color, a: unused
+    uvec4 flags;
 };
 layout(std430, binding = 4) buffer Triangles {
     OutVertex verts[]; // sized to max vertices = numCells * 5 * 3
@@ -262,17 +271,25 @@ void main() {
 
         uint idx = atomicAdd(vertexCounter, 3u);
 
+        uint cellFlags = 0u;
+        for (int i = 0; i < 8; ++i) {
+            uint t = voxels[voxelIndex(clampVoxel(corners[i]))].type;
+            if (t == 2u) { cellFlags |= 1u; break; }
+        }
+
         verts[idx + 0].pos = vec4(v0, 1.0);
         verts[idx + 0].normal = vec4(n0, 0.0);
         verts[idx + 0].color = vec4(col0, 1.0);
+        verts[idx + 0].flags = uvec4(cellFlags, 0u, 0u, 0u);
 
         verts[idx + 1].pos = vec4(v1, 1.0);
         verts[idx + 1].normal = vec4(n1, 0.0);
         verts[idx + 1].color = vec4(col1, 1.0);
+        verts[idx + 1].flags = uvec4(cellFlags, 0u, 0u, 0u);
 
         verts[idx + 2].pos = vec4(v2, 1.0);
         verts[idx + 2].normal = vec4(n2, 0.0);
         verts[idx + 2].color = vec4(col2, 1.0);
-    }
+        verts[idx + 2].flags = uvec4(cellFlags, 0u, 0u, 0u);    }
 
 }

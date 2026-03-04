@@ -4,7 +4,9 @@
 layout(location = 0) in vec3 aPos;      // from OutVertex.pos.xyz
 layout(location = 1) in vec3 aNormal;   // from OutVertex.normal.xyz
 layout(location = 2) in vec3 aColor;    // from OutVertex.color.xyz
+layout(location=3) in uint aFlags;
 
+flat out uint vFlags;
 out vec3 fragPos;
 out vec3 vertexColor;
 out vec3 normal;
@@ -19,6 +21,7 @@ void main() {
 
     // per-vertex color from SSBO
     vertexColor = aColor;
+    vFlags = aFlags;
 
     // transform normal by normal matrix (model's inverse-transpose)
     mat3 normalMat = transpose(inverse(mat3(model)));

@@ -2,6 +2,7 @@
 in vec3 fragPos;
 in vec3 vertexColor;
 in vec3 normal;
+flat in uint vFlags;
 
 out vec4 FragColor;
 
@@ -19,6 +20,7 @@ const float PI = 3.14159265;
 const float MIN_ALBEDO = 0.01; // set >0 for debug visualizing lights on black planets
 
 void main() {
+    if ((vFlags & 1u) != 0u) discard;
     // surface albedo
     vec3 albedo = max(vertexColor, vec3(MIN_ALBEDO));
 
