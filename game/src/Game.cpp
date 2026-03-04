@@ -3275,14 +3275,14 @@ namespace gl3 {
                     for (int cz = camCZ - renderRadius; cz <= camCZ + renderRadius; ++cz) {
                         totalChecked++;
                         ChunkCoord coord{cx, cy, cz};
-                        if (!isChunkVisible(coord)) {
+                        /*if (!isChunkVisible(coord)) {
                             culledChunks++;
                             continue;
-                        }
+                        }*/
                         Chunk *chunk = chunkManager->getChunk(coord);
 
                         if (!chunk) continue;
-                        if (!hasSolidVoxels(*chunk)) continue;
+                        //if (!hasSolidVoxels(*chunk)) continue;
 
                         // Regenerate mesh if dirty
                         if (built < MAX_CHUNKS_PER_FRAME && chunk->meshDirty ||
@@ -3335,12 +3335,13 @@ namespace gl3 {
                     for (int cz = camCZ - renderRadius; cz <= camCZ + renderRadius; ++cz) {
                         totalChecked++;
                         ChunkCoord coord{cx, cy, cz};
-                        if (!isChunkVisible(coord)) {
+                        /*if (!isChunkVisible(coord)) {
                             culledChunks++;
                             continue;
-                        }
+                        }*/
                         Chunk *chunk = chunkManager->getChunk(coord);
-                        if (!chunk || !hasSolidVoxels(*chunk)) continue;
+                        if (!chunk) continue;
+                        //if(!hasSolidVoxels(*chunk)) continue;
 
                         // Skip if no geometry
                         if (chunk->gpuCache.vertexCount == 0 || !chunk->gpuCache.isValid) {
