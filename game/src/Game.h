@@ -20,7 +20,6 @@
 #include "rendering/MultiGridChunkManager.h"
 #include "Input/InputActionMap.h"
 #include "CharacterController.h"
-#include "physics/SpellPhysicsManager.h"
 #include "physics/VoxelPhysicsManager.h"
 
 namespace gl3 {
@@ -438,6 +437,13 @@ namespace gl3 {
         GLuint skyboxVBO=0;
         GLuint cubemapTexture = 0; // This replaces your noiseTexture for the background
 
+        // Skybox baking
+        GLuint nebulaCubemap = 0;
+        GLuint skyboxBakeFBO = 0;
+        GLuint skyboxBakeRBO = 0;
+
+        bool skyboxBaked = false;
+
         // Preview proxy geometry (simple cube fallback)
         GLuint previewCubeVAO = 0;
         GLuint previewCubeVBO = 0;
@@ -474,6 +480,8 @@ namespace gl3 {
 
         ////Shader:
         std::unique_ptr<Shader> skyboxShader;
+        std::unique_ptr<Shader> skyboxNebulaBakeShader;
+        std::unique_ptr<Shader> skyboxRuntimeShader;
         std::unique_ptr<Shader> voxelShader;
         std::unique_ptr<Shader> marchingCubesShader;
         std::unique_ptr<Shader> voxelSplatShader;
@@ -488,6 +496,8 @@ namespace gl3 {
         glm::vec3 sampleNormalAtWorld(const glm::vec3 &worldPos) const;
         void updateCamera();
         void createNoiseTexture();
+        void createNebulaCubemap(int size);
+        void bakeNebulaCubemap(int size);
         void setupSkybox();
 
         glm::vec2 getMouseDelta();

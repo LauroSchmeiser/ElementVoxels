@@ -4,7 +4,6 @@
 #include <vector>
 #include "glm/glm.hpp"
 #include <glad/glad.h>
-#include "../physics/SpellPhysicsManager.h"
 #include "../physics/VoxelPhysicsBody.h"
 
 namespace gl3 {
