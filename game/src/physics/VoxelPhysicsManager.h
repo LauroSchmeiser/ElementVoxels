@@ -45,12 +45,14 @@ namespace gl3 {
         void setBodyBodyCollisionCallback(BodyBodyCollisionCallback cb) { bodyBodyCollisionCallback = cb; }
         void removeBody(uint64_t id);
         void removeBody(VoxelPhysicsBody* body);
-        const std::deque<VoxelPhysicsBody>& getBodies() const { return bodies; }
+        const std::vector<std::unique_ptr<VoxelPhysicsBody>>& getBodies() const { return bodies; }
 
+
+        VoxelPhysicsBody* getBodyById(uint64_t id) const;
 
     private:
         MultiGridChunkManager* chunkManager;
-        std::deque<VoxelPhysicsBody> bodies;
+        std::vector<std::unique_ptr<VoxelPhysicsBody>> bodies;
         VoxelCollisionCallback voxelCollisionCallback;
         BodyBodyCollisionCallback bodyBodyCollisionCallback;
 

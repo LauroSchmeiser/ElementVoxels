@@ -1086,12 +1086,14 @@ namespace gl3 {
                 continue;
             }
 
-            // Update spell center from physics body if active
-            if (spellIt->physicsBody && spellIt->isPhysicsEnabled) {
-                spellIt->center = spellIt->physicsBody->position;
-                spellIt->formationParams.center = spellIt->physicsBody->position;
+            if (spellIt->physicsBodyId != 0) {
+                VoxelPhysicsBody* b = voxelPhysics->getBodyById(spellIt->physicsBodyId);
+                spellIt->physicsBody = b; // refresh cache (or don’t store at all)
+                if (b && spellIt->isPhysicsEnabled) {
+                    spellIt->center = b->position;
+                    spellIt->formationParams.center = b->position;
+                }
             }
-
             // Track which voxels have arrived this frame (ids)
             std::vector<uint64_t> newlyArrivedIDs;
 
@@ -1674,6 +1676,7 @@ namespace gl3 {
                     VoxelPhysicsBody::ShapeType::SPHERE,
                     glm::vec3(radius)
             );
+            spell.physicsBodyId = spell.physicsBody ? spell.physicsBody->id : 0;
 
             if (spell.physicsBody) {
                 spell.physicsBody->userData = &spell;
@@ -1945,13 +1948,13 @@ namespace gl3 {
         float mass = static_cast<float>(spell.animatedVoxelIDs.size()) * voxelVolume * 0.5f;
         mass = glm::clamp(mass, 1.0f, 1000.0f);
 
-        // ⚠️ Create physics body at spell.center (where animation ended)
         spell.physicsBody = voxelPhysics->createBody(
                 physicsBodyPosition,  // Use spell.center, not geomCenter!
                 mass,
                 shapeType,
                 extents
         );
+        spell.physicsBodyId = spell.physicsBody ? spell.physicsBody->id : 0;
 
         if (spell.physicsBody) {
             spell.physicsBody->userData = &spell;
@@ -2208,7 +2211,7 @@ namespace gl3 {
     }
 
     void Game::destroyPhysicsBodyForSpell(SpellEffect& spell) {
-        if (spell.physicsBody && voxelPhysics) {
+        if (spell.physicsBodyId != 0 && voxelPhysics) {
             createSpellFormation(spell.center,
                                  spell.formationParams,
                                  spell.strength,
@@ -2216,8 +2219,8 @@ namespace gl3 {
                                  spell.formationColor,
                                  spell.physicsBody->mass,
                                  spell.dominantType);
-            voxelPhysics->removeBody(spell.physicsBody);
-            spell.physicsBody = nullptr;
+            voxelPhysics->removeBody(spell.physicsBodyId);
+            spell.physicsBodyId = 0;
         }
 
         // Clean up mesh data

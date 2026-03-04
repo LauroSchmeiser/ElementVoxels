@@ -13,29 +13,39 @@ namespace gl3 {
     ) {
         static uint64_t nextId = 1;
 
-        VoxelPhysicsBody body;
-        body.id = nextId++;
-        body.position = position;
-        body.velocity = glm::vec3(0.0f);
-        body.mass = mass;
-        body.shapeType = shape;
-        body.shapeExtents = extents;
-        body.orientation = glm::quat(1, 0, 0, 0);
+        auto body = std::make_unique<VoxelPhysicsBody>();
+        body->id = nextId++;
+        body->position = position;
+        body->velocity = glm::vec3(0.0f);
+        body->mass = mass;
+        body->shapeType = shape;
+        body->shapeExtents = extents;
+        body->orientation = glm::quat(1,0,0,0);
 
-        // Calculate bounding radius
         switch(shape) {
-            case VoxelPhysicsBody::ShapeType::SPHERE:
-                body.radius = extents.x;
-                break;
-            case VoxelPhysicsBody::ShapeType::BOX:
-                body.radius = glm::length(extents);
-                break;
-            default:
-                body.radius = glm::length(extents);
+            case VoxelPhysicsBody::ShapeType::SPHERE: body->radius = extents.x; break;
+            case VoxelPhysicsBody::ShapeType::BOX:    body->radius = glm::length(extents); break;
+            default:                                  body->radius = glm::length(extents); break;
         }
 
-        bodies.push_back(body);
-        return &bodies.back();
+        VoxelPhysicsBody* ptr = body.get();
+        bodies.push_back(std::move(body));
+        return ptr;
+    }
+
+    VoxelPhysicsBody* VoxelPhysicsManager::getBodyById(uint64_t id) const {
+        for (auto& b : bodies) {
+            if (b->id == id) return b.get();
+        }
+        return nullptr;
+    }
+
+    void VoxelPhysicsManager::removeBody(uint64_t id) {
+        bodies.erase(
+                std::remove_if(bodies.begin(), bodies.end(),
+                               [id](const std::unique_ptr<VoxelPhysicsBody>& b){ return b->id == id; }),
+                bodies.end()
+        );
     }
 
     float VoxelPhysicsManager::sampleDensity(const glm::vec3& worldPos) {
@@ -179,14 +189,6 @@ namespace gl3 {
         }
 
         return false;
-    }
-
-    void VoxelPhysicsManager::removeBody(uint64_t id) {
-        bodies.erase(
-                std::remove_if(bodies.begin(), bodies.end(),
-                               [id](const VoxelPhysicsBody& b) { return b.id == id; }),
-                bodies.end()
-        );
     }
 
     void VoxelPhysicsManager::removeBody(VoxelPhysicsBody* body) {
@@ -409,89 +411,90 @@ namespace gl3 {
     void VoxelPhysicsManager::update(float dt, std::vector<uint64_t>& removedBodies) {
         removedBodies.clear();
 
-        for (auto it = bodies.begin(); it != bodies.end(); ) {
-            VoxelPhysicsBody& body = *it;
+        // ---- STEP 1: integrate + voxel collisions + lifetime ----
+        // Use index iteration so we can swap-remove safely.
+        size_t i = 0;
+        while (i < bodies.size()) {
+            VoxelPhysicsBody* body = bodies[i].get();
 
             // Lifetime check
-            if (body.lifetime > 0) {
-                body.lifetime -= dt;
-                if (body.lifetime <= 0) {
-                    removedBodies.push_back(body.id);
-                    it = bodies.erase(it);
-                    continue;
+            if (body->lifetime > 0.0f) {
+                body->lifetime -= dt;
+                if (body->lifetime <= 0.0f) {
+                    removedBodies.push_back(body->id);
+
+                    // swap-remove (O(1), invalidates pointer to THIS body, but we are deleting it anyway)
+                    bodies[i] = std::move(bodies.back());
+                    bodies.pop_back();
+                    continue; // don't increment i; process swapped-in element
                 }
             }
 
-            if (!body.active) {
-                ++it;
+            if (!body->active) {
+                ++i;
                 continue;
             }
 
-            // Apply gravity
-            body.velocity += gravity * dt;
+            body->velocity += gravity * dt;
 
-            // Store old position
-            glm::vec3 oldPos = body.position;
-            glm::vec3 oldVel = body.velocity;
+            glm::vec3 oldVel = body->velocity;
 
-            // Integrate position
-            body.position += body.velocity * dt;
+            body->position += body->velocity * dt;
 
-            // Integrate rotation
-            if (glm::length(body.angularVelocity) > 0.001f) {
-                glm::quat spin = glm::quat(0,
-                                           body.angularVelocity.x * dt * 0.5f,
-                                           body.angularVelocity.y * dt * 0.5f,
-                                           body.angularVelocity.z * dt * 0.5f
+            if (glm::length(body->angularVelocity) > 0.001f) {
+                glm::quat spin = glm::quat(
+                        0,
+                        body->angularVelocity.x * dt * 0.5f,
+                        body->angularVelocity.y * dt * 0.5f,
+                        body->angularVelocity.z * dt * 0.5f
                 );
-                body.orientation += spin * body.orientation;
-                body.orientation = glm::normalize(body.orientation);
+                body->orientation += spin * body->orientation;
+                body->orientation = glm::normalize(body->orientation);
             }
 
-            // Check collision
             glm::vec3 normal;
             float penetration;
 
-            if (checkVoxelCollision(body, normal, penetration)) {
-                float impactSpeed = glm::length(oldVel)*VOXEL_SIZE;
+            if (checkVoxelCollision(*body, normal, penetration)) {
+                float impactSpeed = glm::length(oldVel) * VOXEL_SIZE;
+                resolveCollision(*body, normal, penetration, impactSpeed);
 
-                // Resolve collision
-                resolveCollision(body, normal, penetration, impactSpeed);
-
-                // Callback
                 if (voxelCollisionCallback && impactSpeed > 1.0f * VOXEL_SIZE) {
-                    voxelCollisionCallback(&body, body.position, normal, impactSpeed);
+                    voxelCollisionCallback(body, body->position, normal, impactSpeed);
                 }
             }
 
-            ++it;
+            ++i;
         }
-        // ===== STEP 2: Check body-body collisions (O(n²) but n is small) =====
-        for (size_t i = 0; i < bodies.size(); ++i) {
-            for (size_t j = i + 1; j < bodies.size(); ++j) {
-                VoxelPhysicsBody& bodyA = bodies[i];
-                VoxelPhysicsBody& bodyB = bodies[j];
 
-                if (!bodyA.active || !bodyB.active) continue;
+        // ---- STEP 2: body-body collisions ----
+        // Build a raw pointer list of ACTIVE bodies for pairwise checks.
+        std::vector<VoxelPhysicsBody*> activeBodies;
+        activeBodies.reserve(bodies.size());
+        for (auto& up : bodies) {
+            if (up && up->active) activeBodies.push_back(up.get());
+        }
 
-                // Quick distance check before expensive collision test
-                float maxDist = bodyA.radius + bodyB.radius;
-                glm::vec3 delta = bodyB.position - bodyA.position;
+        for (size_t a = 0; a < activeBodies.size(); ++a) {
+            for (size_t b = a + 1; b < activeBodies.size(); ++b) {
+                VoxelPhysicsBody* bodyA = activeBodies[a];
+                VoxelPhysicsBody* bodyB = activeBodies[b];
+
+                float maxDist = bodyA->radius + bodyB->radius;
+                glm::vec3 delta = bodyB->position - bodyA->position;
                 float distSq = glm::dot(delta, delta);
 
-                if (distSq > maxDist * maxDist) {
-                    continue; // Too far apart, skip
-                }
+                if (distSq > maxDist * maxDist) continue;
 
                 glm::vec3 normal;
                 float penetration;
-
-                if (checkBodyBodyCollision(bodyA, bodyB, normal, penetration)) {
-                    resolveBodyBodyCollision(bodyA, bodyB, normal, penetration);
+                if (checkBodyBodyCollision(*bodyA, *bodyB, normal, penetration)) {
+                    resolveBodyBodyCollision(*bodyA, *bodyB, normal, penetration);
                 }
             }
         }
     }
+    
     glm::vec3 VoxelPhysicsManager::sampleNormal(const glm::vec3& worldPos) {
         const float e = VOXEL_SIZE * 0.5f;
 

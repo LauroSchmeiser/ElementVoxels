@@ -330,7 +330,8 @@ namespace gl3 {
         bool voxelsCleaned = false;  // Add this - true when animated voxels are removed
         bool markForRemoval = false; // Add this - set when ready to delete
 
-        VoxelPhysicsBody* physicsBody = nullptr; // The physics body if created
+        VoxelPhysicsBody* physicsBody = nullptr; // optional cache
+        uint64_t physicsBodyId = 0;              // authoritative identity#
         bool isPhysicsEnabled = false;     // Whether this formation has physics
         glm::vec3 initialVelocity = glm::vec3(0.0f);  // Velocity to apply when body is created
 

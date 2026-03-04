@@ -2,12 +2,29 @@
 #include "Game.h"
 
 namespace gl3 {
-    CharacterController::CharacterController(MultiGridChunkManager *chunkMgr, VoxelPhysicsManager *physicsMgr ,float height, float radius)
+    CharacterController::CharacterController(MultiGridChunkManager *chunkMgr, VoxelPhysicsManager *physicsMgr,
+                                             float height, float radius)
             : height(height), radius(radius), currentHeight(height), defaultHeight(height),
-              chunkManager(chunkMgr), physicsManager(physicsMgr)  {
+              chunkManager(chunkMgr), physicsManager(physicsMgr) {
     }
 
-    static float getDensityAtWorld(MultiGridChunkManager* chunkManager, const glm::vec3& worldPos) {
+    // Add helper near top of file (static)
+    static float
+    distancePointSegment(const glm::vec3 &p, const glm::vec3 &a, const glm::vec3 &b, glm::vec3 &outClosest) {
+        glm::vec3 ab = b - a;
+        float abLenSq = glm::dot(ab, ab);
+        if (abLenSq < 1e-8f) {
+            outClosest = a;
+            return glm::length(p - a);
+        }
+
+        float t = glm::dot(p - a, ab) / abLenSq;
+        t = glm::clamp(t, 0.0f, 1.0f);
+        outClosest = a + t * ab;
+        return glm::length(p - outClosest);
+    }
+
+    static float getDensityAtWorld(MultiGridChunkManager *chunkManager, const glm::vec3 &worldPos) {
         if (!chunkManager) return -10000.0f;
 
         const float chunkWorldSize = CHUNK_SIZE * VOXEL_SIZE;
@@ -16,7 +33,7 @@ namespace gl3 {
         int cz = static_cast<int>(std::floor(worldPos.z / chunkWorldSize));
 
         ChunkCoord coord{cx, cy, cz};
-        Chunk* chunk = chunkManager->getChunk(coord);
+        Chunk *chunk = chunkManager->getChunk(coord);
         if (!chunk) return -10000.0f;
 
         glm::vec3 chunkMin = glm::vec3(coord.x * chunkWorldSize,
@@ -39,7 +56,7 @@ namespace gl3 {
     }
 
     // Trilinear sample of the density field at arbitrary world position.
-    static float sampleDensityAtWorld(MultiGridChunkManager* chunkManager, const glm::vec3& worldPos) {
+    static float sampleDensityAtWorld(MultiGridChunkManager *chunkManager, const glm::vec3 &worldPos) {
         if (!chunkManager) return -10000.0f;
 
         const float chunkWorldSize = CHUNK_SIZE * VOXEL_SIZE;
@@ -69,7 +86,7 @@ namespace gl3 {
             for (int dy = 0; dy <= 1; ++dy) {
                 for (int dz = 0; dz <= 1; ++dz) {
                     glm::vec3 cornerWorld =
-                            chunkMin + glm::vec3((float)(ix + dx), (float)(iy + dy), (float)(iz + dz)) * VOXEL_SIZE;
+                            chunkMin + glm::vec3((float) (ix + dx), (float) (iy + dy), (float) (iz + dz)) * VOXEL_SIZE;
                     samples[dx][dy][dz] = getDensityAtWorld(chunkManager, cornerWorld);
                 }
             }
@@ -89,7 +106,7 @@ namespace gl3 {
         return lerp(c0, c1, fz);
     }
 
-    static glm::vec3 sampleNormalAtWorld(MultiGridChunkManager* chunkManager, const glm::vec3& worldPos) {
+    static glm::vec3 sampleNormalAtWorld(MultiGridChunkManager *chunkManager, const glm::vec3 &worldPos) {
         const float e = VOXEL_SIZE * 0.5f;
         float dx = sampleDensityAtWorld(chunkManager, worldPos + glm::vec3(e, 0, 0)) -
                    sampleDensityAtWorld(chunkManager, worldPos - glm::vec3(e, 0, 0));
@@ -121,7 +138,7 @@ namespace gl3 {
 
         const float maxStep = VOXEL_SIZE * 0.5f;
         int steps = 1;
-        if (segmentLength > 0.0f) steps = glm::clamp((int)std::ceil(segmentLength / maxStep), 2, 64);
+        if (segmentLength > 0.0f) steps = glm::clamp((int) std::ceil(segmentLength / maxStep), 2, 64);
         else steps = 2;
 
         float bestPen = -std::numeric_limits<float>::infinity();
@@ -129,7 +146,7 @@ namespace gl3 {
 
         // find deepest penetration along center-line
         for (int i = 0; i <= steps; ++i) {
-            float t = (steps > 0) ? (float)i / (float)steps : 0.0f;
+            float t = (steps > 0) ? (float) i / (float) steps : 0.0f;
             glm::vec3 samplePos = glm::mix(p0, p1, t);
 
             float sdf = sampleDensityAtWorld(chunkManager, samplePos);
@@ -239,7 +256,7 @@ namespace gl3 {
             }
 
             // Check physics body collision
-            VoxelPhysicsBody* collidingBody = nullptr;
+            VoxelPhysicsBody *collidingBody = nullptr;
             if (checkPhysicsBodyCollision(state.position, normal, penetration, &collidingBody)) {
                 state.position += normal * (penetration + 0.0001f);
 
@@ -481,55 +498,58 @@ namespace gl3 {
     }
 
     bool CharacterController::checkPhysicsBodyCollision(
-            const glm::vec3& testPosition,
-            glm::vec3& outNormal,
-            float& outPenetration,
-            VoxelPhysicsBody** outBody // **NEW: output parameter**
+            const glm::vec3 &testPosition,
+            glm::vec3 &outNormal,
+            float &outPenetration,
+            VoxelPhysicsBody **outBody
     ) const {
         if (!physicsManager) return false;
 
-        float playerRadius = radius + currentHeight * 0.5f;
+        // --- player capsule ---
+        glm::vec3 up(0.0f, 1.0f, 0.0f);
+        float halfSegment = glm::max(0.0f, (currentHeight * 0.5f) - radius);
+        glm::vec3 p0 = testPosition - up * halfSegment;
+        glm::vec3 p1 = testPosition + up * halfSegment;
+        float capR = radius;
 
         bool hitAny = false;
-        float maxPenetration = 0.0f;
-        glm::vec3 combinedNormal(0.0f);
-        VoxelPhysicsBody* collidingBody = nullptr;
+        float bestPen = 0.0f;
+        glm::vec3 bestNormal(0, 1, 0);
+        VoxelPhysicsBody *bestBody = nullptr;
 
-        const auto& bodies = physicsManager->getBodies();
+        const auto &bodies = physicsManager->getBodies();
+        for (const auto &upBody: bodies) {
+            VoxelPhysicsBody *body = upBody.get();
+            if (!body || !body->active) continue;
 
-        for (auto& body : bodies) {
-            if (!body.active) continue;
+            // Broadphase: capsule vs bounding sphere (works for all shapes)
+            glm::vec3 closest;
+            float dist = distancePointSegment(body->position, p0, p1, closest);
+            float minDist = capR + body->radius;
 
-            glm::vec3 bodyToPlayer = testPosition - body.position;
-            float distance = glm::length(bodyToPlayer);
-            float minDist = body.radius + playerRadius;
-
-            if (distance < minDist) {
+            if (dist < minDist) {
                 hitAny = true;
+                float pen = minDist - dist;
 
-                float penetration = minDist - distance;
-                glm::vec3 normal;
+                glm::vec3 n;
+                glm::vec3 dir = closest - body->position;
+                float len = glm::length(dir);
+                if (len > 1e-6f) n = dir / len;
+                else n = glm::vec3(0, 1, 0);
 
-                if (distance > 0.0001f) {
-                    normal = bodyToPlayer / distance;
-                } else {
-                    normal = glm::vec3(0, 1, 0);
-                }
-
-                if (penetration > maxPenetration) {
-                    maxPenetration = penetration;
-                    combinedNormal = normal;
-                    collidingBody = const_cast<VoxelPhysicsBody*>(&body);
+                if (pen > bestPen) {
+                    bestPen = pen;
+                    bestNormal = n;
+                    bestBody = body;
                 }
             }
         }
 
-        if (hitAny) {
-            outNormal = glm::normalize(combinedNormal);
-            outPenetration = maxPenetration;
-            if (outBody) *outBody = collidingBody;
-        }
+        if (!hitAny) return false;
 
-        return hitAny;
+        outNormal = glm::normalize(bestNormal);
+        outPenetration = bestPen;
+        if (outBody) *outBody = bestBody;
+        return true;
     }
 }
