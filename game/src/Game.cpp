@@ -459,7 +459,7 @@ namespace gl3 {
 
     // Helper function to adjust formation size based on collected volume
     void Game::adjustFormationForVolume(FormationParams& params, float volume /*world^3*/) {
-        const float packingEfficiency = 0.7f;
+        const float packingEfficiency = 0.3f;
         constexpr float PI = 3.14159265358979323846f;
 
         const float minWorldDim = gl3::VOXEL_SIZE * 0.15f; // don't shrink below half a voxel
@@ -467,7 +467,7 @@ namespace gl3 {
 
         switch(params.type) {
             case FormationType::SPHERE: {
-                float computedRadius = std::cbrt((3.0f / (4.0f * PI)) * (volume / packingEfficiency));
+                float computedRadius = std::cbrt((3.0f / (4.0f * PI)) * (volume/2 / packingEfficiency));
                 float maxRadius = std::max(minWorldDim, params.radius * 0.75f);
                 float minRadius = minWorldDim;
                 params.radius = glm::clamp(computedRadius, minRadius, maxRadius);
@@ -1234,8 +1234,7 @@ namespace gl3 {
         // Scale the formation parameters based on completion
         FormationParams partialParams = spell.formationParams;
 
-        // ⚠️ CRITICAL FIX: Update center BEFORE scaling
-        partialParams.center = spell.center;  // ← ADD THIS LINE!
+        partialParams.center = spell.center;
 
         switch(partialParams.type) {
             case FormationType::SPHERE:
@@ -1568,7 +1567,7 @@ namespace gl3 {
         if (!activeSpells.empty()) {
             SpellEffect& lastSpell = activeSpells.back();
             glm::vec3 launchDir = glm::normalize(getCameraFront());
-            float launchSpeed = strength * 2.5f * VOXEL_SIZE;
+            float launchSpeed = strength * 20.5f * VOXEL_SIZE;
 
             lastSpell.isPhysicsEnabled = true;
             lastSpell.creationTime = 0.0f;
@@ -3063,20 +3062,20 @@ namespace gl3 {
             DebugMode2=!DebugMode2;
         }
 
-        if (actions["CastSphere"].wasJustPressed) {
+        if (actions["CastSphere"].wasJustReleased) {
             std::cout << "Sphere Spell Triggered\n";
             RayCastResult hit = rayCastFromCamera(5.0f);
             glm::vec3 spellCenter = hit.hit ? hit.hitPosition :
                                     (cameraPos + getCameraFront() * 35.0f);
 
             // Cast spell with physics enabled
-            float spellRadius = 4.0f * VOXEL_SIZE;  // Adjust size
+            float spellRadius = 6.0f * VOXEL_SIZE;  // Adjust size
             float spellStrength = 4.0f;              // Affects velocity
 
             castSpellSphere(spellCenter, spellRadius, 0, spellStrength);
         }
 
-        if (actions["CastWall"].wasJustPressed) {
+        if (actions["CastWall"].wasJustReleased) {
             std::cout << "Wall Spell Triggered" << "\n";
             RayCastResult hit = rayCastFromCamera(250.0f);
             glm::vec3 spellCenter = hit.hit ? hit.hitPosition :
@@ -3095,7 +3094,7 @@ namespace gl3 {
                           wallWidth, wallHeight, wallThickness,
                           0, 2.0f*VOXEL_SIZE);
         }
-        if (actions["AirReset"].wasJustPressed) {
+        if (actions["AirReset"].wasJustReleased) {
             std::cout << "Platform Spell Triggered" << "\n";
             glm::vec3 spellCenter =(cameraPos + glm::vec3(0,-1,0) * 25.0f*VOXEL_SIZE);
 
@@ -3785,9 +3784,9 @@ namespace gl3 {
         // If you want "last selected", add a variable and update it in update().
         int previewMode = -1; // -1 none, 0 sphere, 1 wall
 
-        if (true) previewMode = 0;
-        else if (actions["CastWall"].isPressed) previewMode = 1;
-        else if (actions["AirReset"].isPressed) previewMode = 1;
+        if (actions["CastSphere"].isHeld) previewMode = 0;
+        else if (actions["CastWall"].isHeld) previewMode = 1;
+        else if (actions["AirReset"].isHeld) previewMode = 1;
         else return;
 
         // ---- Compute placement point (center) from camera raycast ----

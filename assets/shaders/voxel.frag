@@ -17,7 +17,7 @@ uniform float emission;
 uniform vec3 emissionColor;
 
 const float PI = 3.14159265;
-const float MIN_ALBEDO = 0.01; // set >0 for debug visualizing lights on black planets
+const float MIN_ALBEDO = 0.1; // set >0 for debug visualizing lights on black planets
 
 void main() {
     if ((vFlags & 1u) != 0u) discard;
