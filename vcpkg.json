@@ -5,7 +5,12 @@
     {
       "name": "tracy",
       "features": ["crash-handler"]
-    }
+    },
+    {
+      "name": "imgui",
+      "features": ["glfw-binding", "opengl3-binding", "docking-experimental"]
+    },
+    "glfw3"
   ],
   "builtin-baseline": "a747ea2aae6200fd089eeebc5411a6c93d677d59",
   "overrides": [

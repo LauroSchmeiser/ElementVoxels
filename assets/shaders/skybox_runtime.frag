@@ -27,7 +27,7 @@ void main() {
     vec3 dir = normalize(TexCoords);
 
     // --- nebula "movement" by rotating lookup direction (cheap) ---
-    float t = time * 0.035;             // slow
+    float t = time * 0.015;             // slow
     vec3 dNeb = rotY(t) * dir;
 
     vec3 nebula = texture(nebulaCube, dNeb).rgb;

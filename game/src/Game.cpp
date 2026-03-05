@@ -723,7 +723,10 @@ namespace gl3 {
         int maxVoxels = static_cast<int>((strength * 70.0f) / voxelVolume);
         maxVoxels = glm::clamp(maxVoxels, 50, 200);
 
-        std::cout << "[Spell] Targeting " << maxVoxels << " voxels for formation\n";
+        const size_t hardCandidateCap = (size_t)maxVoxels * 4;
+        bool stop = false;
+
+        std::cout << "[Spell] Targeting " << maxVoxels  << " voxels for formation\n";
 
         int typeCounts[8] = {0};
         auto chunks = chunkManager->getChunksInRadius(center, radius);
@@ -731,7 +734,6 @@ namespace gl3 {
         struct VoxelCandidate {
             glm::vec3 worldPos;
             glm::vec3 color;  // Keep original color
-            glm::vec3 normal;  // Store normal for later use
             ChunkCoord chunkCoord;
             glm::ivec3 localPos;
             float distanceSq;
@@ -744,7 +746,7 @@ namespace gl3 {
 
         // Collect candidates
         for (const auto& [coord, chunk] : chunks) {
-            if (!chunk || !hasSolidVoxels(*chunk)) continue;
+            if (stop||!chunk || !hasSolidVoxels(*chunk)) continue;
 
             glm::vec3 chunkMin = getChunkMin(coord);
             glm::vec3 chunkCenter = chunkMin + glm::vec3(CHUNK_SIZE * 0.5f) * VOXEL_SIZE;
@@ -760,9 +762,9 @@ namespace gl3 {
             int startZ = std::max(0, static_cast<int>((center.z - radius - chunkMin.z) / VOXEL_SIZE));
             int endZ = std::min(CHUNK_SIZE, static_cast<int>((center.z + radius - chunkMin.z) / VOXEL_SIZE) + 1);
 
-            for (int x = startX; x <= endX; ++x) {
-                for (int y = startY; y <= endY; ++y) {
-                    for (int z = startZ; z <= endZ; ++z) {
+            for (int x = startX; x <= endX&&!stop; ++x) {
+                for (int y = startY; y <= endY&&!stop; ++y) {
+                    for (int z = startZ; z <= endZ&&!stop; ++z) {
                         const Voxel& voxel = chunk->voxels[x][y][z];
 
                         if (voxel.isSolid() && voxel.material == targetMaterial) {
@@ -777,7 +779,6 @@ namespace gl3 {
                                 candidates.push_back({
                                                              worldPos,
                                                              voxel.color,  // Store original color, not lit
-                                                             normal,       // Store normal
                                                              coord,
                                                              {x, y, z},
                                                              distSq,
@@ -827,7 +828,14 @@ namespace gl3 {
 
         results.reserve(candidates.size());
 
-        // Process each candidate - SIMPLIFIED: just store original data, let shader do lighting
+        std::vector<CraterStampBatch::Stamp> stamps;
+        stamps.reserve(candidates.size());
+
+        // Also track which chunks might need markChunkModified
+        robin_hood::unordered_set<ChunkCoord, ChunkCoordHash> touchedChunks;
+        touchedChunks.reserve(candidates.size() / 4 + 8);
+
+        // Process each candidate - store original data, defer carving
         for (const auto& candidate : candidates) {
             AnimatedVoxel animVoxel;
 
@@ -837,19 +845,27 @@ namespace gl3 {
             animVoxel.animationSpeed = strength * 1.5f;
             animVoxel.hasArrived = false;
 
-            // SIMPLIFIED: Store original color and normal, let fragment shader handle lighting
-            animVoxel.color = candidate.color;  // Original albedo color
-            animVoxel.normal = candidate.normal;
+            animVoxel.color = candidate.color;
+
+            animVoxel.normal = calculateNormalAt(candidate.chunk, candidate.localPos);
 
             results.push_back(animVoxel);
 
-            // Create crater for this voxel
-            createExteriorSmoothCrater(candidate.chunk, candidate.localPos, candidate.worldPos);
+            // Defer crater creation: add a stamp instead
+            CraterStampBatch::Stamp s;
+            s.center = candidate.worldPos;
+            s.radius = 2.0f * gl3::VOXEL_SIZE; // match createExteriorSmoothCrater craterRadius
+            s.depth  = 5.5f;                  // match createExteriorSmoothCrater maxCraterDepth
+            stamps.push_back(s);
 
-            // Mark chunk as modified
-            candidate.chunk->meshDirty = true;
-            candidate.chunk->lightingDirty = true;
-            markChunkModified(candidate.chunkCoord);
+            touchedChunks.insert(candidate.chunkCoord);
+        }
+        // Apply all craters in one batched pass
+        CraterStampBatch::apply(chunkManager.get(), stamps, /*densityThreshold=*/-0.5f);
+
+        // Mark touched chunks + neighbors dirty once per chunk (needed for marching padding)
+        for (const ChunkCoord& c : touchedChunks) {
+            markChunkModified(c);
         }
 
         std::cout << "[Spell] Collected " << results.size() << "/" << maxVoxels
@@ -1415,77 +1431,22 @@ namespace gl3 {
         craterRadius = glm::clamp(craterRadius, VOXEL_SIZE, 10.0f * VOXEL_SIZE);
         maxCraterDepth = glm::clamp(maxCraterDepth, 1.0f, 5.0f);
 
-        int range = static_cast<int>(std::ceil(craterRadius / VOXEL_SIZE));
+        std::vector<ChunkCoord> touched;
+        touched.reserve(64);
 
-        bool chunkModified = false;
+        FastCraterCarver::carveCrater(
+                chunkManager.get(),
+                worldPos,
+                craterRadius,
+                maxCraterDepth,
+                -0.5f,
+                &touched,
+                /*autoCreateChunks=*/false
+        );
 
-        for (int dx = -range; dx <= range; ++dx) {
-            for (int dy = -range; dy <= range; ++dy) {
-                for (int dz = -range; dz <= range; ++dz) {
-                    int nx = voxelPos.x + dx;
-                    int ny = voxelPos.y + dy;
-                    int nz = voxelPos.z + dz;
-
-                    // Check if we're still in this chunk
-                    if (nx < 0 || nx > CHUNK_SIZE || ny < 0 || ny > CHUNK_SIZE || nz < 0 || nz > CHUNK_SIZE) {
-                        // Handle neighboring chunks if needed
-                        handleCraterInNeighboringChunk(worldPos, dx, dy, dz, craterRadius, maxCraterDepth, impactFactor);
-                        continue;
-                    }
-
-                    glm::vec3 offset = glm::vec3((float)dx, (float)dy, (float)dz) * VOXEL_SIZE;
-                    float dist = glm::length(offset);
-
-                    if (dist <= craterRadius) {
-                        float t = dist / craterRadius;
-                        float originalDensity = chunk->voxels[nx][ny][nz].density;
-
-                        // Only modify solid or semi-solid voxels
-                        if (originalDensity > -1.0f) {
-                            // Create crater shape
-                            float craterShape = (1.0f - t * t); // Smooth falloff
-                            float densityReduction = maxCraterDepth * craterShape;
-
-                            float newDensity = originalDensity - densityReduction;
-
-                            // Ensure we don't go too negative
-                            if (originalDensity > 2.0f) {
-                                newDensity = std::max(newDensity, 0.1f);
-                            }
-
-                            chunk->voxels[nx][ny][nz].density = newDensity;
-
-                            // Update type based on new density
-                            if (newDensity < -0.5f) {
-                                chunk->voxels[nx][ny][nz].type = 0; // Air
-                            } else {
-                                chunk->voxels[nx][ny][nz].type = 1; // Solid
-                            }
-
-                            chunkModified = true;
-                        }
-                    }
-                }
-            }
-        }
-
-        if (chunkModified) {
-            chunk->meshDirty = true;
-            chunk->lightingDirty = true;
-            markChunkModified(coord);
-
-            // Also mark neighboring chunks that might have been affected
-            for (int dx = -1; dx <= 1; ++dx) {
-                for (int dy = -1; dy <= 1; ++dy) {
-                    for (int dz = -1; dz <= 1; ++dz) {
-                        ChunkCoord neighbor{coord.x + dx, coord.y + dy, coord.z + dz};
-                        Chunk* neighborChunk = chunkManager->getChunk(neighbor);
-                        if (neighborChunk) {
-                            neighborChunk->meshDirty = true;
-                        }
-                    }
-                }
-            }
+// now do your “mark neighbors” logic if you still need it for marching padding
+        for (const ChunkCoord& c : touched) {
+            markChunkModified(c);
         }
     }
 
@@ -1559,7 +1520,7 @@ namespace gl3 {
     void Game::castSpellSphere(const glm::vec3& center, float radius,
                                uint64_t material, float strength) {
         // FIXED: radius is already in world units, don't multiply by VOXEL_SIZE again
-        float searchRadius = radius * 15.5f; // Just add a small margin
+        float searchRadius = radius * 1.5f; // Just add a small margin
 
         FormationParams params = FormationParams::Sphere(center, radius);
         castSpellWithFormation(center, searchRadius, material, strength, params);

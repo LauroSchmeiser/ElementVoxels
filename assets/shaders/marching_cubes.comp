@@ -277,6 +277,7 @@ void main() {
             if (t == 2u) { cellFlags |= 1u; break; }
         }
 
+
         verts[idx + 0].pos = vec4(v0, 1.0);
         verts[idx + 0].normal = vec4(n0, 0.0);
         verts[idx + 0].color = vec4(col0, 1.0);

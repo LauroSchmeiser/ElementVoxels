@@ -6,6 +6,7 @@ set(EXE_FILE Game)
 
 # Find Tracy package from vcpkg
 find_package(Tracy CONFIG REQUIRED)
+find_package(imgui CONFIG REQUIRED)
 
 # Set variables for source files
 file(GLOB_RECURSE SOURCE_FILES CONFIGURE_DEPENDS
@@ -38,6 +39,9 @@ add_executable(${EXE_FILE}
         src/physics/VoxelPhysicsManager.h
         src/physics/VoxelPhysicsManager.cpp
         src/rendering/GpuStructsStd430.h
+        src/physics/VoxelCarver.h
+        src/physics/FastCraterCarver.h
+        src/physics/CraterStampBatch.h
 )
 
 # Link Tracy and enable it
@@ -54,6 +58,7 @@ target_link_libraries(${EXE_FILE} PRIVATE
         glfw
         glm
         soloud
+        imgui::imgui
 )
 
 # Set asset root definition
