@@ -714,6 +714,54 @@ namespace gl3 {
         return result;
     }
 
+    int Game::estimateAvailableVoxels(const glm::vec3& center, float radius, uint64_t targetMaterial, int maxNeeded)
+    {
+        const float radiusSq = radius * radius;
+
+        // NOTE: cheap preview estimate
+        const int step = 2; // 1 = accurate but heavier; 2 or 3 is usually fine for preview
+
+        int count = 0;
+        auto chunks = chunkManager->getChunksInRadius(center, radius);
+
+        for (const auto& [coord, chunk] : chunks)
+        {
+            if (!chunk) continue;
+
+            glm::vec3 chunkMin = getChunkMin(coord);
+
+            int startX = std::max(0, static_cast<int>((center.x - radius - chunkMin.x) / VOXEL_SIZE));
+            int endX   = std::min(CHUNK_SIZE, static_cast<int>((center.x + radius - chunkMin.x) / VOXEL_SIZE) + 1);
+            int startY = std::max(0, static_cast<int>((center.y - radius - chunkMin.y) / VOXEL_SIZE));
+            int endY   = std::min(CHUNK_SIZE, static_cast<int>((center.y + radius - chunkMin.y) / VOXEL_SIZE) + 1);
+            int startZ = std::max(0, static_cast<int>((center.z - radius - chunkMin.z) / VOXEL_SIZE));
+            int endZ   = std::min(CHUNK_SIZE, static_cast<int>((center.z + radius - chunkMin.z) / VOXEL_SIZE) + 1);
+
+            for (int x = startX; x <= endX; x += step)
+                for (int y = startY; y <= endY; y += step)
+                    for (int z = startZ; z <= endZ; z += step)
+                    {
+                        const Voxel& v = chunk->voxels[x][y][z];
+                        if (!v.isSolid()) continue;
+                        if (v.material != targetMaterial) continue;
+
+                        glm::vec3 worldPos = chunkMin + glm::vec3((float)x, (float)y, (float)z) * VOXEL_SIZE;
+                        glm::vec3 diff = worldPos - center;
+                        if (glm::dot(diff, diff) > radiusSq) continue;
+
+                        ++count;
+                        if (count >= maxNeeded) return count; // early-out
+                    }
+        }
+
+        // step>1 undercounts, so scale up roughly (optional)
+        // For step=2 in 3D, sampling density is ~1/8, so multiply by 8.
+        if (step == 2) count *= 8;
+        else if (step == 3) count *= 27;
+
+        return count;
+    }
+
     void Game::findNearbyVoxelsForVisual(const glm::vec3& center, float radius,
                                          uint64_t targetMaterial,
                                          std::vector<AnimatedVoxel>& results,
@@ -798,10 +846,6 @@ namespace gl3 {
             }
         }
 
-        if (candidates.empty()) {
-            std::cout << "[Spell] No voxels found (material=" << targetMaterial << ")\n";
-            return;
-        }
 
         // Sort by distance to get closest voxels
         std::sort(candidates.begin(), candidates.end(),
@@ -3401,6 +3445,27 @@ namespace gl3 {
             // STEP 3: Now RENDER all visible chunks
             voxelShader->use();  // Activate RENDER shader
 
+            if (actions["CastSphere"].isHeld)
+            {
+                float maxDist = 250.0f;
+                RayCastResult hit = rayCastFromCamera(maxDist);
+
+                glm::vec3 center = hit.hit ? hit.hitPosition : (cameraPos + getCameraFront() * 35.0f);
+
+                // ---- Spell params (match your cast code) ----
+                float formationRadius = 2.0f * VOXEL_SIZE;     // your castSpellSphere uses 4*VOXEL_SIZE
+                float pullRadius      = formationRadius * 15.5f; // your searchRadius behavior
+
+                voxelShader->setInt("uOverlayEnabled", 1);
+                voxelShader->setVec3("uOverlayCenter", center);
+                voxelShader->setFloat("uOverlayRadius", pullRadius);
+                voxelShader->setUInt("uOverlayMaterial", (uint32_t)0); // 0..63
+                voxelShader->setVec3("uOverlayColor", glm::vec3(0.25f, 1.0f, 0.35f));
+                voxelShader->setFloat("uOverlayAlpha", 0.35f);
+            } else
+            {
+                voxelShader->setInt("uOverlayEnabled", 0);
+            }
             // Set common uniforms that don't change per chunk
 
             voxelShader->setMatrix("model", glm::mat4(1.0f));
@@ -3894,7 +3959,7 @@ namespace gl3 {
 
         // ---- Spell params (match your cast code) ----
         float formationRadius = 2.0f * VOXEL_SIZE;     // your castSpellSphere uses 4*VOXEL_SIZE
-        float pullRadius      = formationRadius * 15.5f; // your searchRadius behavior
+        float pullRadius      = formationRadius * 6.5f; // your searchRadius behavior
 
         // Wall params (match your CastWall in update())
         glm::vec3 wallNormal(0,0,1); // you pass this currently
@@ -3918,16 +3983,24 @@ namespace gl3 {
 
         spellPreviewShader->use();
 
+        float voxelVolume = VOXEL_SIZE * VOXEL_SIZE * VOXEL_SIZE;
+        int maxVoxels = (int)((4.0f * 70.0f) / voxelVolume);
+        maxVoxels = glm::clamp(maxVoxels, 5 , 200);
+
+        int available = estimateAvailableVoxels(center, pullRadius, 0, maxVoxels);
+        float fillRatio = maxVoxels > 0 ? (float)available / (float)maxVoxels : 1.0f;
+
+        spellPreviewShader->setFloat("uFillRatio", fillRatio);
+        spellPreviewShader->setVec3("uLowColor",  glm::vec3(1.0f, 0.2f, 0.2f)); // red
+        spellPreviewShader->setVec3("uHighColor", glm::vec3(0.2f, 1.0f, 0.2f)); // green
+
         spellPreviewShader->setMatrix("pv", pv);
         spellPreviewShader->setVec3("uCenter", center);
         spellPreviewShader->setFloat("uVoxelSize", VOXEL_SIZE);
 
-        spellPreviewShader->setFloat("uPullRadius", pullRadius);
 
         spellPreviewShader->setVec3("uFormationColor", glm::vec3(0.2f, 0.8f, 1.0f));
-        spellPreviewShader->setVec3("uPullColor", glm::vec3(0.2f, 0.6f, 1.0f));
         spellPreviewShader->setFloat("uFormationAlpha", 0.35f);
-        spellPreviewShader->setFloat("uPullAlpha", 0.10f);
 
         // ---- Draw formation preview ----
         if (previewMode == 0) {
@@ -4115,8 +4188,12 @@ namespace gl3 {
             glEnableVertexAttribArray(2);
             glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, stride, colorOffset);
 
+            //glEnableVertexAttribArray(3);
+            //glVertexAttribIPointer(3, 1, GL_UNSIGNED_INT, stride, flagsOffset);
             glEnableVertexAttribArray(3);
-            glVertexAttribIPointer(3, 1, GL_UNSIGNED_INT, stride, flagsOffset);
+            glVertexAttribIPointer(3, 1, GL_UNSIGNED_INT, sizeof(OutVertexStd430),
+                                   (void*)offsetof(OutVertexStd430, flags));
+
 
             // Unbind VAO/ARRAY_BUFFER
             glBindVertexArray(0);
@@ -4211,6 +4288,7 @@ namespace gl3 {
                     voxels[idx].color[2] = col.b;
                     voxels[idx].color[3] = 1.0f;
                     voxels[idx].type = srcVoxel->type;
+                    voxels[idx].material=srcVoxel->material;
                 }
             }
         }

@@ -5,7 +5,7 @@ in vec3 vLocalPos;
 
 out vec4 FragColor;
 
-uniform int uPreviewMode; // keep for later (0 sphere, 1 wall)
+uniform int uPreviewMode;
 
 // shared
 uniform vec3  uCenter;
@@ -14,19 +14,18 @@ uniform float uVoxelSize;
 // sphere
 uniform float uFormationRadius;
 
-// wall (unused for now but kept)
+// wall
 uniform vec3  uWallNormal;
 uniform vec3  uWallUp;
 uniform vec3  uWallSize;
 
-// pull overlay
-uniform float uPullRadius;
+// NEW: material availability feedback
+uniform float uFillRatio;       // 0..1+ (we clamp in shader)
+uniform vec3  uLowColor;        // e.g. red-ish
+uniform vec3  uHighColor;       // e.g. green-ish
 
-// colors / alpha
-uniform vec3  uFormationColor;
-uniform vec3  uPullColor;
+// alpha for formation shell
 uniform float uFormationAlpha;
-uniform float uPullAlpha;
 
 mat3 buildBasis(vec3 forward, vec3 up) {
     vec3 f = normalize(forward);
@@ -53,32 +52,28 @@ float formationSdf() {
 }
 
 void main() {
-    // Pull overlay (soft sphere volume)
-    float dPull = length(vLocalPos) - uPullRadius;
-    float pullFade = 2.0 * uVoxelSize;
-    float pullMask = 1.0 - smoothstep(0.0, pullFade, max(dPull, 0.0));
-    float pullA = uPullAlpha * pullMask;
-
-    // Formation overlay (thin shell)
+    // Formation overlay (thin shell around the SDF surface)
     float dForm = formationSdf();
     float shell = 0.6 * uVoxelSize;
     float formMask = 1.0 - smoothstep(shell, shell * 1.8, abs(dForm));
-    float formA = uFormationAlpha * formMask;
+    float a = uFormationAlpha * formMask;
 
-    // Optional hologram grid
+    if (a < 0.01) discard;
+
+    // Hologram grid shimmer
     float gridScale = 2.0 * uVoxelSize;
     vec3 g = abs(fract(vLocalPos / gridScale) - 0.5);
     float gridLine = min(min(g.x, g.y), g.z);
     float grid = 1.0 - smoothstep(0.06, 0.12, gridLine);
 
-    vec3 formationCol = uFormationColor * mix(0.75, 1.25, grid);
-    vec3 pullCol      = uPullColor;
+    // Availability color blend (red -> green)
+    float r = clamp(uFillRatio, 0.0, 1.0);
+    r = smoothstep(0.0, 1.0, r);
 
-    float a = clamp(pullA + formA, 0.0, 0.85);
-    if (a < 0.01) discard;
+    vec3 formationCol = mix(uLowColor, uHighColor, r);
 
-    vec3 col = pullCol * pullA + formationCol * formA;
-    col /= max(a, 1e-5);
+    // Apply shimmer to the tint
+    formationCol *= mix(0.75, 1.25, grid);
 
-    FragColor = vec4(col, a);
+    FragColor = vec4(formationCol, clamp(a, 0.0, 0.85));
 }

@@ -323,6 +323,8 @@ namespace gl3 {
                                          const std::vector<glm::vec3>& colors);
         void removeFormationVoxels(const SpellEffect& spell);
 
+        int estimateAvailableVoxels(const glm::vec3& center, float radius, uint64_t targetMaterial, int maxNeeded);
+
         // Precomputed sphere meshes at different LODs
         struct SphereMesh {
             std::vector<glm::vec3> vertices;
@@ -482,7 +484,7 @@ namespace gl3 {
 
         //Marching-cubes Variables
         size_t maxVerts = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5 * 3; //Max amount of vertices marching cubes can create
-        const int MAX_CHUNKS_PER_FRAME = 9;
+        const int MAX_CHUNKS_PER_FRAME = 5;
         //std::vector<Chunk> dirtyChunks;
         //SSBOs for marching cubes:
         GLuint ssboVoxels = 0, ssboEdgeTable = 0, ssboTriTable = 0,

@@ -10,10 +10,12 @@ struct alignas(16) CpuVoxelStd430 {
     float pad1;      // offset 8
     float pad2;      // offset 12
     float color[4];  // offset 16..31
-    uint32_t type;            // 4 bytes
-    uint32_t pad4, pad5, pad6;// pad to 16-byte multiple
+    uint32_t type;
+    uint32_t pad4, pad5, pad6;// pad to 16-byte multiple (4 bytes)
+    uint32_t material;
+    uint32_t pad7, pad8, pad9;// pad to 16-byte multiple (4 bytes)
 };
-static_assert(sizeof(CpuVoxelStd430) == 48, "CpuVoxelStd430 must be 48 bytes");
+static_assert(sizeof(CpuVoxelStd430) == 64, "CpuVoxelStd430 must be 64 bytes");
 static_assert(alignof(CpuVoxelStd430) == 16, "CpuVoxelStd430 must be 16-byte aligned");
 
 // std430-friendly OutVertex struct: matches GLSL
