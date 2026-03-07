@@ -42,6 +42,8 @@ struct OutVertex {
     vec4 pos;    // xyz: position, w: unused
     vec4 normal; // xyz: normal
     vec4 color;  // rgb: color, a: unused
+    vec2 uv;
+    vec2 padUV;
     uvec4 flags;
 };
 layout(std430, binding = 4) buffer Triangles {
@@ -84,7 +86,11 @@ vec3 sampleColor(ivec3 p) {
     return voxels[voxelIndex(clampVoxel(p))].color.xyz;
 }
 
-
+vec2 computePlanarUV(vec3 worldPos) {
+    // scale controls texel density
+    float scale = 0.1; // tweak
+    return worldPos.xz * scale;
+}
 /*  //new versions for fluid shaders, dont work with normal rendering
 float sampleDensity(ivec3 p) {
     int idx = p.x + p.y*voxelGridDim.x + p.z*voxelGridDim.x*voxelGridDim.y;
@@ -300,16 +306,20 @@ void main() {
         verts[idx + 0].normal = vec4(n0, 0.0);
         verts[idx + 0].color  = vec4(col0, 1.0);
         verts[idx + 0].flags  = uvec4(packedFlags, 0u, 0u, 0u);
+        verts[idx + 0].uv = computePlanarUV(v0);
 
         verts[idx + 1].pos    = vec4(v1, 1.0);
         verts[idx + 1].normal = vec4(n1, 0.0);
         verts[idx + 1].color  = vec4(col1, 1.0);
         verts[idx + 1].flags  = uvec4(packedFlags, 0u, 0u, 0u);
+        verts[idx + 1].uv = computePlanarUV(v1);
 
         verts[idx + 2].pos    = vec4(v2, 1.0);
         verts[idx + 2].normal = vec4(n2, 0.0);
         verts[idx + 2].color  = vec4(col2, 1.0);
         verts[idx + 2].flags  = uvec4(packedFlags, 0u, 0u, 0u);
+        verts[idx + 2].uv = computePlanarUV(v2);
+
     }
 
 }

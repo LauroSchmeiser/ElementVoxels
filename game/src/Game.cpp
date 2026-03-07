@@ -4174,6 +4174,8 @@ namespace gl3 {
             const void *posOffset = (void *) offsetof(OutVertexStd430, pos);
             const void *normalOffset = (void *) offsetof(OutVertexStd430, normal);
             const void *colorOffset = (void *) offsetof(OutVertexStd430, color);
+            const void *uvOffset = (void *)offsetof(OutVertexStd430, uv);
+
             const void *flagsOffset = (void *) offsetof(OutVertexStd430, flags);
 
             // aPos (vec3 in shader) <- OutVertex.pos (vec4 in buffer, we read first 3 components)
@@ -4191,9 +4193,11 @@ namespace gl3 {
             //glEnableVertexAttribArray(3);
             //glVertexAttribIPointer(3, 1, GL_UNSIGNED_INT, stride, flagsOffset);
             glEnableVertexAttribArray(3);
-            glVertexAttribIPointer(3, 1, GL_UNSIGNED_INT, sizeof(OutVertexStd430),
-                                   (void*)offsetof(OutVertexStd430, flags));
+            glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, stride, uvOffset);
 
+            glEnableVertexAttribArray(4);
+            glVertexAttribIPointer(4, 1, GL_UNSIGNED_INT, sizeof(OutVertexStd430),
+                                   (void*)offsetof(OutVertexStd430, flags));
 
             // Unbind VAO/ARRAY_BUFFER
             glBindVertexArray(0);

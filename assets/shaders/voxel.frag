@@ -2,6 +2,7 @@
 in vec3 fragPos;
 in vec3 vertexColor;
 in vec3 normal;
+in vec2 vUV;
 flat in uint vFlags;
 
 out vec4 FragColor;

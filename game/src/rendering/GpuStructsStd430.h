@@ -24,9 +24,11 @@ struct alignas(16) OutVertexStd430 {
     float pos[4];    // offset 0..15
     float normal[4]; // offset 16..31
     float color[4];  // offset 32..47
+    float uv[2];      // 48..55
+    float padUV[2];
     uint32_t flags[4];
 };
-static_assert(sizeof(OutVertexStd430) == 64, "OutVertexStd430 must be 48 bytes");
+static_assert(sizeof(OutVertexStd430) == 80, "OutVertexStd430 must be 80 bytes");
 static_assert(alignof(OutVertexStd430) == 16, "OutVertexStd430 must be 16-byte aligned");
 
 // Offsets used by glVertexAttribPointer
