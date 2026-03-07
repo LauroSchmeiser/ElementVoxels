@@ -222,11 +222,13 @@ namespace gl3 {
         );
 
         initSphereMeshCache();
+        initSpellCastAsync();
     }
 
 
 
     Game::~Game() {
+        shutdownSpellCastAsync();
         glfwTerminate();
     }
 
@@ -253,6 +255,7 @@ namespace gl3 {
             {
                 TRACY_CPU_ZONE("Frame::Simulation");
                 updateDeltaTime();
+                pumpAsyncSpellResults();
                 updateSpells(deltaTime);
             }
 
@@ -269,6 +272,7 @@ namespace gl3 {
             ////Post-Prod Steps?
 
             ////Rendering Steps
+
             ////Rendering Steps
             {
                 TRACY_CPU_ZONE("Frame::Rendering");
@@ -1523,9 +1527,18 @@ namespace gl3 {
         float searchRadius = radius * 1.5f; // Just add a small margin
 
         FormationParams params = FormationParams::Sphere(center, radius);
-        castSpellWithFormation(center, searchRadius, material, strength, params);
+        //castSpellWithFormation(center, searchRadius, material, strength, params);
+        SpellCastRequest req = buildSpellCastRequestSnapshot(center, searchRadius, material, strength, params);
+        req.physicsEnabled = true;
+        req.launchDir = glm::normalize(getCameraFront());
+        req.launchSpeed = strength * 20.5f * VOXEL_SIZE;
+        req.lifetime = 20.0f;
+        spellCastAsync->enqueueOrReplaceQueued(std::move(req));
+        //TracyPlot("SpellJobsCompletedQueue", (int)completed.size());
+        //TracyPlot("SpellHasQueued", queued.has_value() ? 1.0 : 0.0);
+        //TracyPlot("SpellHasInFlight", inFlight.has_value() ? 1.0 : 0.0);
 
-        if (!activeSpells.empty()) {
+        /*if (!activeSpells.empty()) {
             SpellEffect& lastSpell = activeSpells.back();
             glm::vec3 launchDir = glm::normalize(getCameraFront());
             float launchSpeed = strength * 20.5f * VOXEL_SIZE;
@@ -1535,7 +1548,7 @@ namespace gl3 {
             lastSpell.lifetime = 20.0f;
             lastSpell.center = center;
             lastSpell.initialVelocity = launchDir * launchSpeed;
-        }
+        }*/
     }
 
     void Game::castSpellWall(const glm::vec3& center, const glm::vec3& normal,
@@ -2193,6 +2206,116 @@ namespace gl3 {
         }
     }
 
+    void Game::initSpellCastAsync()
+    {
+        if (!spellCastAsync)
+            spellCastAsync = std::make_unique<SpellCastAsync>();
+    }
+
+    void Game::shutdownSpellCastAsync()
+    {
+        if (spellCastAsync)
+        {
+            spellCastAsync->stop();
+            spellCastAsync.reset();
+        }
+    }
+
+    SpellCastRequest Game::buildSpellCastRequestSnapshot(
+            const glm::vec3& center,
+            float searchRadius,
+            uint64_t targetMaterial,
+            float strength,
+            const FormationParams& baseFormationParams
+    )
+    {
+        SpellCastRequest req;
+        req.center = center;
+        req.searchRadius = searchRadius;
+        req.targetMaterial = targetMaterial;
+        req.strength = strength;
+        req.baseFormationParams = baseFormationParams;
+
+        // IMPORTANT: main-thread snapshot; worker must not touch chunkManager/chunks directly.
+        auto chunks = chunkManager->getChunksInRadius(center, searchRadius);
+
+        req.chunks.reserve(chunks.size());
+
+        for (const auto& [coord, chunk] : chunks)
+        {
+            if (!chunk) continue;
+
+            SpellCastRequest::ChunkSnapshot snap;
+            snap.coord = coord;
+            snap.chunkMinWorld = getChunkMin(coord);
+            snap.voxelsLinear.resize((CHUNK_SIZE + 1) * (CHUNK_SIZE + 1) * (CHUNK_SIZE + 1));
+
+            for (int x = 0; x <= CHUNK_SIZE; ++x)
+                for (int y = 0; y <= CHUNK_SIZE; ++y)
+                    for (int z = 0; z <= CHUNK_SIZE; ++z)
+                    {
+                        snap.voxelsLinear[(size_t)x + (size_t)y * (CHUNK_SIZE + 1) + (size_t)z * (CHUNK_SIZE + 1) * (CHUNK_SIZE + 1)]
+                                = chunk->voxels[x][y][z];
+                    }
+
+            req.chunks.push_back(std::move(snap));
+        }
+
+        return req;
+    }
+
+    void Game::pumpAsyncSpellResults()
+    {
+        if (!spellCastAsync) return;
+
+        SpellCastResult r;
+        while (spellCastAsync->tryPopCompleted(r))
+        {
+            if (!r.ok)
+            {
+                std::cout << "[SpellAsync] failed: " << r.debugMsg << "\n";
+                continue;
+            }
+
+            std::lock_guard<std::mutex> lk(spellApplyMutex);
+
+            // 1) Apply crater stamps (world mutation)
+            if (!r.craterStamps.empty())
+            {
+                CraterStampBatch::apply(chunkManager.get(), r.craterStamps, -0.5f);
+            }
+
+            // 2) Mark touched chunks dirty (and neighbors via your existing helper)
+            // De-dup the touched list
+            robin_hood::unordered_set<ChunkCoord, ChunkCoordHash> touchedSet;
+            touchedSet.reserve(r.touchedChunks.size());
+            for (const auto& c : r.touchedChunks)
+                touchedSet.insert(c);
+
+            for (const auto& c : touchedSet)
+                markChunkModified(c);
+
+            // 3) Spawn animated voxels + spell in main thread (assign stable IDs here)
+            SpellEffect spell = r.spell;
+
+            for (auto& v : r.visualVoxels)
+            {
+                v.id = nextAnimatedVoxelID++;
+                // now that world exists on main thread, you can compute a better normal if desired:
+                // - locate chunk and local pos again OR use your sampleNormalAtWorld()
+                v.normal = sampleNormalAtWorld(v.currentPos);
+
+                animatedVoxels.push_back(v);
+                animatedVoxelIndexMap[v.id] = animatedVoxels.size() - 1;
+                spell.animatedVoxelIDs.push_back(v.id);
+            }
+
+            activeSpells.push_back(std::move(spell));
+
+            std::cout << "[SpellAsync] applied: " << r.visualVoxels.size()
+                      << " voxels, type=" << int(r.spell.dominantType) << "\n";
+        }
+    }
 
 ////----Debugging Code--------------------------------------------------------------------------------------------------------------------------
 

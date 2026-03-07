@@ -24,7 +24,9 @@
 #include "physics/VoxelCarver.h"
 #include "physics/FastCraterCarver.h"
 #include "physics/CraterStampBatch.h"
-
+#include <mutex>
+#include <memory>
+#include "spells/SpellCastAsync.h"
 
 namespace gl3 {
     class Game {
@@ -198,6 +200,22 @@ namespace gl3 {
         //// Spell System
         std::deque<SpellEffect> activeSpells;
         std::vector<AnimatedVoxel> animatedVoxels;
+
+        std::unique_ptr<SpellCastAsync> spellCastAsync;
+        std::mutex spellApplyMutex;
+
+        void initSpellCastAsync();
+        void shutdownSpellCastAsync();
+        void pumpAsyncSpellResults(); // call once per frame on main thread
+
+        SpellCastRequest buildSpellCastRequestSnapshot(
+                const glm::vec3& center,
+                float searchRadius,
+                uint64_t targetMaterial,
+                float strength,
+                const FormationParams& baseFormationParams
+        );
+
 
         // Stable id logging for animated voxels
         std::unordered_map<uint64_t, size_t> animatedVoxelIndexMap;

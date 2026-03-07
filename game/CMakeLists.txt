@@ -42,6 +42,8 @@ add_executable(${EXE_FILE}
         src/physics/VoxelCarver.h
         src/physics/FastCraterCarver.h
         src/physics/CraterStampBatch.h
+        src/spells/spellCastAsync.h
+        src/spells/spellCastAsync.cpp
 )
 
 # Link Tracy and enable it
