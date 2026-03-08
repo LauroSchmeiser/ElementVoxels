@@ -17,6 +17,18 @@ namespace gl3 {
         ChunkCoord coord;
         bool meshDirty = true;
 
+        struct BurnState {
+            bool active = false;
+            float t = 0.0f;           // seconds since burn start
+            float duration = 1.25f;   // seconds to fully disappear
+            glm::vec3 center = glm::vec3(0.0f);
+            float radius = 0.0f;      // 0 => disable distance term; else spherical propagation
+            float noiseScale = 0.35f;
+            float edgeWidth = 0.12f;
+            float slowAccum=0.0f;
+        };
+        BurnState burn;
+
         // GPU CACHE - stored with the chunk!
         struct GPUCache {
             GLuint vao = 0;

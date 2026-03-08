@@ -340,6 +340,19 @@ namespace gl3 {
         float creationTime = 0.0f;
         float lifetime = 50.0f; // -1 = infinite
         PhysicsMeshData physicsMesh;
+
+        // Add these fields to gl3::SpellEffect
+        struct BurnState {
+            bool active = false;
+            float t = 0.0f;
+            float duration = 1.0f;
+            glm::vec3 center = glm::vec3(0.0f);
+            float radius = 0.0f;
+            float noiseScale = 0.45f;
+            float edgeWidth = 0.12f;
+            float slowAccum=0.0f;
+        };
+        BurnState burn;
     };
 
 

@@ -325,7 +325,27 @@ namespace gl3 {
 
         int estimateAvailableVoxels(const glm::vec3& center, float radius, uint64_t targetMaterial, int maxNeeded);
 
-        // Precomputed sphere meshes at different LODs
+        static float burn01(float t, float duration);
+        void startSpellBurn(gl3::SpellEffect& spell, float radiusWorld, float durationSec);
+        void startChunkBurn(gl3::Chunk* chunk, const glm::vec3& chunkCenterWorld, float radiusWorld, float durationSec);
+        void forceCleanupSpellAnimatedVoxels(SpellEffect& s);
+        bool isSpellTooSmall(const gl3::SpellEffect& s);
+        bool isSpellTooSlow(const gl3::SpellEffect& s, float speedThreshold);
+        bool isChunkMeshTooSmall(const gl3::Chunk& c, uint32_t vtxThreshold);
+        static inline float smooth01(float x) {
+            x = glm::clamp(x, 0.0f, 1.0f);
+            return x * x * (3.0f - 2.0f * x); // smoothstep(0,1,x)
+        }
+
+// Make burn visually clearer: spend more time "not burned", then ramp.
+        static inline float burnCurve(float u01) {
+            // 0..1 -> hold, then ramp:
+            // tweak 0.25 to "delay" start of dissolve, makes it clearer.
+            float t = glm::clamp((u01 - 0.25f) / (1.0f - 0.25f), 0.0f, 1.0f);
+            return smooth01(t);
+        }
+
+            // Precomputed sphere meshes at different LODs
         struct SphereMesh {
             std::vector<glm::vec3> vertices;
             std::vector<glm::vec3> normals;

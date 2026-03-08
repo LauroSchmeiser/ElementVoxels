@@ -4,8 +4,8 @@
 layout(location = 0) in vec3 aPos;      // from OutVertex.pos.xyz
 layout(location = 1) in vec3 aNormal;   // from OutVertex.normal.xyz
 layout(location = 2) in vec3 aColor;    // from OutVertex.color.xyz
-layout(location=3) in uint aFlags;
-layout(location = 4) in vec2 aUV;
+layout(location = 3) in vec2 aUV;
+layout(location = 4) in uint aFlags;
 
 flat out uint vFlags;
 out vec3 fragPos;
