@@ -186,7 +186,7 @@ namespace gl3 {
 
         materials.params[0].roughness = 0.85f;
         materials.params[0].specular  = 0.02f;
-        materials.params[0].uvScale   = 1.0f;
+        materials.params[0].uvScale   = 0.25f;
 
         materials.params[1].roughness = 0.85f;
         materials.params[1].specular  = 0.02f;

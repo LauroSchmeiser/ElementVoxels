@@ -96,6 +96,29 @@ float burnBayer4(vec2 p) {
     return (float(m[idx]) + 0.5) / 16.0;
 }
 
+vec3 sampleTriplanarAlbedo(uint mat, vec3 worldPos, vec3 N)
+{
+    // weights from normal
+    vec3 w = abs(normalize(N));
+    // sharpen blend so it doesn't look muddy
+    w = pow(w, vec3(4.0));
+    w /= (w.x + w.y + w.z + 1e-6);
+
+    float s = uUVScale[mat];
+
+    // Project onto the 3 planes:
+    // X-facing uses YZ, Y-facing uses XZ, Z-facing uses XY
+    vec2 uvX = worldPos.yz * s;
+    vec2 uvY = worldPos.xz * s;
+    vec2 uvZ = worldPos.xy * s;
+
+    vec3 tx = texture(uAlbedoArray, vec3(uvX, float(mat))).rgb;
+    vec3 ty = texture(uAlbedoArray, vec3(uvY, float(mat))).rgb;
+    vec3 tz = texture(uAlbedoArray, vec3(uvZ, float(mat))).rgb;
+
+    return tx * w.x + ty * w.y + tz * w.z;
+}
+
 void main() {
     if ((vFlags & 1u) != 0u) discard;
 
@@ -105,7 +128,7 @@ void main() {
 
     // Sample albedo texture for this material
     float uvScale = uUVScale[mat];
-    vec3 texAlbedo = texture(uAlbedoArray, vec3(vUV * uvScale, float(mat))).rgb;
+    vec3 texAlbedo = sampleTriplanarAlbedo(mat, fragPos, N);
 
     // Mix texture with voxel/vertex tint (your "color mixed in" requirement)
     // tweak blend: 1.0 = fully tinted, 0.0 = no tint
