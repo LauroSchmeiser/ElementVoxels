@@ -266,6 +266,7 @@ namespace gl3 {
                 glfwPollEvents();
                 updatePhysics();
                 update();
+                updateChunkBurns(deltaTime);
             }
 
 
@@ -338,21 +339,18 @@ namespace gl3 {
     void Game::markChunkModified(const ChunkCoord &coord) {
         Chunk *chunk = chunkManager->getChunk(coord);
         if (chunk) {
-            chunk->meshDirty = true;
+            if (!chunk->isCleared) chunk->meshDirty = true;
 
-            // Also mark neighboring chunks because Marching Cubes needs padding
-            for (int dx = -1; dx <= 1; ++dx) {
-                for (int dy = -1; dy <= 1; ++dy) {
-                    for (int dz = -1; dz <= 1; ++dz) {
+            for (int dx=-1; dx<=1; ++dx)
+                for (int dy=-1; dy<=1; ++dy)
+                    for (int dz=-1; dz<=1; ++dz) {
                         ChunkCoord neighbor{coord.x + dx, coord.y + dy, coord.z + dz};
                         Chunk *neighborChunk = chunkManager->getChunk(neighbor);
                         if (neighborChunk) {
-                            neighborChunk->meshDirty = true;
-                            neighborChunk->lightingDirty=true;
+                            if (!neighborChunk->isCleared) neighborChunk->meshDirty = true;
+                            neighborChunk->lightingDirty = true;
                         }
                     }
-                }
-            }
         }
     }
 
@@ -1138,62 +1136,79 @@ namespace gl3 {
 
     void Game::updateSpells(float dt) {
         TRACY_CPU_ZONE("Game::updateSpells");
-        // Update each active spell
-        for (auto spellIt = activeSpells.begin(); spellIt != activeSpells.end(); ) {
-            if (spellIt->lifetime > 0) {
-                spellIt->creationTime += dt;  // ← Increment age
+
+        // Tunables (world units/sec)
+        const float kSlowSpeedThreshold = 300.10f * VOXEL_SIZE; // "too slow"
+        const float kSlowTimeToBurn     = 0.75f;              // must be slow for this long
+        const float kBurnDuration       = 3.0f;               // slower burn (clearer)
+
+        for (size_t i = 0; i < activeSpells.size(); /*manual*/) {
+            gl3::SpellEffect& s = activeSpells[i];
+
+            if (s.lifetime > 0.0f) s.creationTime += dt;
+
+            // Refresh physics pointer (may become null if physics removed it)
+            if (s.physicsBodyId != 0 && voxelPhysics) {
+                s.physicsBody = voxelPhysics->getBodyById(s.physicsBodyId);
+                if (s.physicsBody && s.isPhysicsEnabled) {
+                    s.center = s.physicsBody->position;
+                    s.formationParams.center = s.physicsBody->position;
+                }
+            } else {
+                s.physicsBody = nullptr;
             }
-            // Skip if already marked for removal
-            if (spellIt->markForRemoval) {
-                destroyPhysicsBodyForSpell(*spellIt);
-                spellIt = activeSpells.erase(spellIt);
+
+            // If physics body disappeared, mark for removal (prevents later crashes)
+            if (s.physicsBodyId != 0 && !s.physicsBody) {
+                s.markForRemoval = true;
+            }
+
+            // If already marked -> clean and erase
+            if (s.markForRemoval) {
+                forceCleanupSpellAnimatedVoxels(s);
+                destroyPhysicsBodyForSpell(s);
+                activeSpells.erase(activeSpells.begin() + (ptrdiff_t)i);
                 continue;
             }
 
-            if (spellIt->physicsBodyId != 0) {
-                VoxelPhysicsBody* b = voxelPhysics->getBodyById(spellIt->physicsBodyId);
-                spellIt->physicsBody = b; // refresh cache (or don’t store at all)
-                if (b && spellIt->isPhysicsEnabled) {
-                    spellIt->center = b->position;
-                    spellIt->formationParams.center = b->position;
-                }
-            }
-            if (spellIt->burn.active) {
-                // keep burn centered on the moving body
-                spellIt->burn.center = spellIt->center;
-                spellIt->burn.t += dt;
+            // Burn advance
+            if (s.burn.active) {
+                s.burn.center = s.center; // follow the body
+                s.burn.t += dt;
 
-                if (burn01(spellIt->burn.t, spellIt->burn.duration) >= 1.0f) {
-                    // Finished burning: deterministic cleanup
-                    forceCleanupSpellAnimatedVoxels(*spellIt);
-
-                    // Remove physics body + mesh + (optionally) carve back into world etc.
-                    destroyPhysicsBodyForSpell(*spellIt);
-
-                    // Now remove spell
-                    activeSpells.erase(spellIt);
+                if (burn01(s.burn.t, s.burn.duration) >= 1.0f) {
+                    // Burn complete -> deterministic cleanup
+                    forceCleanupSpellAnimatedVoxels(s);
+                    destroyPhysicsBodyForSpell(s);
+                    activeSpells.erase(activeSpells.begin() + (ptrdiff_t)i);
                     continue;
                 }
-            } else {
-                // Trigger burn if too small OR (too slow for long enough)
-                bool tooSmall = isSpellTooSmall(*spellIt);
 
-                bool tooSlowNow = isSpellTooSlow(*spellIt, 500.35f*deltaTime*VOXEL_SIZE );
-                if (tooSlowNow) spellIt->burn.slowAccum += dt;
-                else spellIt->burn.slowAccum = 0.0f;
-
-                bool tooSlowLong = (spellIt->burn.slowAccum >= 1.35f);
-
-                if (tooSmall || tooSlowLong) {
-                    float r = glm::max(spellIt->formationParams.getBoundingRadius(), 1.0f * VOXEL_SIZE);
-                    startSpellBurn(*spellIt, r, 2.0f);
-                }
+                // While burning, skip heavy “formation arrival” work for speed
+                ++i;
+                continue;
             }
+
+            // Burn trigger policy
+            const bool tooSmall = isSpellTooSmall(s);
+
+            const bool tooSlowNow = isSpellTooSlowNow(s, kSlowSpeedThreshold);
+            s.burn.slowAccum = tooSlowNow ? (s.burn.slowAccum + dt) : 0.0f;
+
+            const bool tooSlowLong = (s.burn.slowAccum >= kSlowTimeToBurn);
+
+            if (tooSmall || tooSlowLong) {
+                const float r = glm::max(s.formationParams.getBoundingRadius(), 1.0f * VOXEL_SIZE);
+                startSpellBurn(s, r, kBurnDuration);
+                ++i;
+                continue;
+            }
+
             // Track which voxels have arrived this frame (ids)
             std::vector<uint64_t> newlyArrivedIDs;
 
             // Check each voxel ID in this spell
-            for (uint64_t id : spellIt->animatedVoxelIDs) {
+            for (uint64_t id : s.animatedVoxelIDs) {
                 auto itIndex = animatedVoxelIndexMap.find(id);
 
                 if (itIndex == animatedVoxelIndexMap.end()) {
@@ -1229,10 +1244,10 @@ namespace gl3 {
             }
 
             // Create partial geometry for newly arrived voxels
-            if (!newlyArrivedIDs.empty() && !spellIt->geometryCreated) {
+            if (!newlyArrivedIDs.empty() && !s.geometryCreated) {
                 int arrivedCount = 0;
-                int total = (int)spellIt->animatedVoxelIDs.size();
-                for (uint64_t id : spellIt->animatedVoxelIDs) {
+                int total = (int)s.animatedVoxelIDs.size();
+                for (uint64_t id : s.animatedVoxelIDs) {
                     auto jt = animatedVoxelIndexMap.find(id);
                     if (jt == animatedVoxelIndexMap.end()) {
                         ++arrivedCount;
@@ -1248,29 +1263,29 @@ namespace gl3 {
                     std::cout << arrivedCount << "/" << total
                               << " voxels arrived. Creating final geometry...\n";
 
-                    createSpellFormation(spellIt->center,
-                                         spellIt->formationParams,
-                                         spellIt->strength,
-                                         spellIt->targetMaterial,
-                                         spellIt->formationColor,
-                                         spellIt->animatedVoxelIDs.size(),
-                                         spellIt->dominantType);
-                    spellIt->geometryCreated = true;
+                    createSpellFormation(s.center,
+                                         s.formationParams,
+                                         s.strength,
+                                         s.targetMaterial,
+                                         s.formationColor,
+                                         s.animatedVoxelIDs.size(),
+                                         s.dominantType);
+                    s.geometryCreated = true;
                 } else if (arrivalRatio > 0.0005f) {
-                    createPartialFormation(*spellIt, arrivalRatio);
+                    createPartialFormation(s, arrivalRatio);
                 }
             }
 
             // CREATE PHYSICS BODY AFTER GEOMETRY IS READY
-            if (spellIt->geometryCreated && spellIt->isPhysicsEnabled &&
-                spellIt->physicsBody == nullptr) {
-                createPhysicsBodyForSpell(*spellIt);
+            if (s.geometryCreated && s.isPhysicsEnabled &&
+                    s.physicsBody == nullptr) {
+                createPhysicsBodyForSpell(s);
             }
 
             // FIXED: Check if all voxels have arrived and we have physics
-            if (spellIt->geometryCreated && spellIt->isPhysicsEnabled && !spellIt->voxelsCleaned) {
+            if (s.geometryCreated && s.isPhysicsEnabled && !s.voxelsCleaned) {
                 int stillAnimating = 0;
-                for (uint64_t id : spellIt->animatedVoxelIDs) {
+                for (uint64_t id : s.animatedVoxelIDs) {
                     auto jt = animatedVoxelIndexMap.find(id);
                     if (jt != animatedVoxelIndexMap.end()) {
                         AnimatedVoxel &v = animatedVoxels[jt->second];
@@ -1282,10 +1297,10 @@ namespace gl3 {
                     // All voxels have arrived - clean them up but KEEP THE SPELL for physics
                     std::cout << "All voxels arrived for spell. Cleaning voxel data, keeping physics body.\n";
 
-                    spellIt->voxelsCleaned = true;
+                    s.voxelsCleaned = true;
 
                     // Remove all animated voxel IDs from the global list
-                    for (uint64_t id : spellIt->animatedVoxelIDs) {
+                    for (uint64_t id : s.animatedVoxelIDs) {
                         auto jt = animatedVoxelIndexMap.find(id);
                         if (jt != animatedVoxelIndexMap.end()) {
                             animatedVoxels[jt->second].isAnimating = false;
@@ -1293,50 +1308,47 @@ namespace gl3 {
                     }
 
                     // Clear the ID list to free memory
-                    spellIt->animatedVoxelIDs.clear();
+                    s.animatedVoxelIDs.clear();
                 }
             }
 
-            if (spellIt->burn.active) {
-                ++spellIt;
-                continue;
-            }
-
-            ++spellIt;
+            ++i;
         }
 
         // Clean up non-animating voxels (same as before)
-        for (size_t i = 0; i < animatedVoxels.size(); ) {
-            if (!animatedVoxels[i].isAnimating) {
-                uint64_t removedID = animatedVoxels[i].id;
+        for (size_t vi = 0; vi < animatedVoxels.size(); ) {
+            if (!animatedVoxels[vi].isAnimating) {
+                uint64_t removedID = animatedVoxels[vi].id;
                 size_t last = animatedVoxels.size() - 1;
-                if (i != last) {
-                    animatedVoxels[i] = animatedVoxels[last];
-                    animatedVoxelIndexMap[animatedVoxels[i].id] = i;
+                if (vi != last) {
+                    animatedVoxels[vi] = animatedVoxels[last];
+                    animatedVoxelIndexMap[animatedVoxels[vi].id] = vi;
                 }
                 animatedVoxels.pop_back();
                 animatedVoxelIndexMap.erase(removedID);
             } else {
-                ++i;
+                ++vi;
             }
         }
 
         cleanupExpiredSpells();
     }
 
-    void Game::forceCleanupSpellAnimatedVoxels(SpellEffect& s) {
-        // Make sure any leftover animated voxels are removed deterministically.
-        // Your existing "global cleanup non-animating voxels" relies on isAnimating=false.
+    bool Game::isSpellTooSlowNow(const gl3::SpellEffect& s, float speedThresholdWorld) const {
+        if (!s.physicsBody) return false;
+        return glm::length(s.physicsBody->velocity) < speedThresholdWorld;
+    }
+
+    void Game::forceCleanupSpellAnimatedVoxels(gl3::SpellEffect& s) {
         for (uint64_t id : s.animatedVoxelIDs) {
             auto it = animatedVoxelIndexMap.find(id);
             if (it == animatedVoxelIndexMap.end()) continue;
             size_t idx = it->second;
             if (idx >= animatedVoxels.size()) continue;
             animatedVoxels[idx].isAnimating = false;
-            animatedVoxels[idx].hasArrived  = true; // optional, but helps your renderAnimatedVoxels gating
+            animatedVoxels[idx].hasArrived  = true;
         }
         s.animatedVoxelIDs.clear();
-        // Now the existing post-pass that compacts animatedVoxels will actually remove them.
     }
 
     bool Game::isSpellTooSmall(const gl3::SpellEffect& s) {
@@ -1349,6 +1361,61 @@ namespace gl3 {
     bool Game:: isSpellTooSlow(const gl3::SpellEffect& s, float speedThreshold) {
         if (!s.physicsBody) return false;
         return glm::length(s.physicsBody->velocity) < speedThreshold;
+    }
+
+    void Game::updateChunkBurns(float dt)
+    {
+        TRACY_CPU_ZONE("Game::updateChunkBurns");
+
+        // (A) Advance + finish burns for *all* chunks (cheap branch; only active burns do work)
+        chunkManager->forEachChunk([&](gl3::Chunk* chunk) {
+            if (!chunk) return;
+            if (!chunk->burn.active) return;
+
+            chunk->burn.t += dt;
+            if (burn01(chunk->burn.t, chunk->burn.duration) >= 1.0f)
+            {
+                // Terminal clear: remove voxel source data and prevent rebuild loops
+                chunk->clear();
+                chunk->isCleared = true;
+
+                // Make sure rendering stops immediately
+                chunk->gpuCache.vertexCount = 0;
+
+                // IMPORTANT: avoid auto-regenerating a mesh for an empty chunk.
+                // Your renderChunks() rebuild condition uses (!isValid || meshDirty).
+                chunk->meshDirty = false;
+                chunk->gpuCache.isValid = true; // "valid but empty"
+
+                chunk->burn.active = false;
+            }
+        });
+
+        // (B) Trigger policy less often (mesh-too-small) — also should run over ALL chunks
+        // that you want to be eligible to burn (static chunks included if that’s your goal).
+        static int tick = 0;
+        const bool doPolicyThisFrame = (++tick % 10) == 0;
+        if (!doPolicyThisFrame) return;
+
+        // Choose which categories are eligible. If you want *everything*, use forEachChunk again.
+        chunkManager->forEachChunk([&](gl3::Chunk* chunk) {
+            if (!chunk) return;
+            if (chunk->isCleared) return;
+            if (chunk->burn.active) return;
+
+            // You currently skip chunks with vertexCount==0 in render; policy should also skip them.
+            if (!chunk->gpuCache.isValid || chunk->gpuCache.vertexCount == 0) return;
+
+            // Threshold in vertices (NOT triangles). Tune this.
+            const uint32_t kSmallVtx = 100;
+
+            if (isChunkMeshTooSmall(*chunk, kSmallVtx))
+            {
+                glm::vec3 chunkMin = getChunkMin(chunk->coord);
+                glm::vec3 center   = chunkMin + glm::vec3(CHUNK_SIZE * 0.5f) * VOXEL_SIZE;
+                startChunkBurn(chunk, center, (CHUNK_SIZE * 0.6f) * VOXEL_SIZE, /*duration*/ 3.5f);
+            }
+        });
     }
 
 // --------------------------
@@ -2297,18 +2364,39 @@ namespace gl3 {
         std::cout << "Removed formation voxels from chunks\n";
     }
 
-    void Game::destroyPhysicsBodyForSpell(SpellEffect& spell) {
+    void Game::destroyPhysicsBodyForSpell(gl3::SpellEffect& spell) {
+        // If body already gone, just clean render mesh
         if (spell.physicsBodyId != 0 && voxelPhysics) {
-            createSpellFormation(spell.center,
-                                 spell.formationParams,
-                                 spell.strength,
-                                 spell.targetMaterial,
-                                 spell.formationColor,
-                                 spell.physicsBody->mass,
-                                 spell.dominantType);
+
+            // IMPORTANT: refresh pointer, because it may already be removed by physics manager
+            gl3::VoxelPhysicsBody* body = voxelPhysics->getBodyById(spell.physicsBodyId);
+
+            // If body exists, detach userData before removing (avoids callback using freed SpellEffect pointer)
+            if (body) {
+                body->userData = nullptr;
+            }
+
+            // If you want to "bake back into world" before deleting, do it WITHOUT using spell.physicsBody pointer.
+            // (Using spell.physicsBody->mass here is a common crash.)
+            // Use a safe mass fallback:
+            const float safeCollectedProxy = (float)spell.physicsMesh.vertexCount; // or store spell.collectedVoxelCount when created
+
+            createSpellFormation(
+                    spell.center,
+                    spell.formationParams,
+                    spell.strength,
+                    spell.targetMaterial,
+                    spell.formationColor,
+                    (size_t)safeCollectedProxy,
+                    spell.dominantType
+            );
+
             voxelPhysics->removeBody(spell.physicsBodyId);
             spell.physicsBodyId = 0;
         }
+
+        spell.physicsBody = nullptr;           // <- critical (avoid stale pointer)
+        spell.isPhysicsEnabled = false;
 
         // Clean up mesh data
         if (spell.physicsMesh.vao) {
@@ -2316,8 +2404,9 @@ namespace gl3 {
             glDeleteBuffers(1, &spell.physicsMesh.vbo);
             spell.physicsMesh.vao = 0;
             spell.physicsMesh.vbo = 0;
-            spell.physicsMesh.isValid = false;
         }
+        spell.physicsMesh.isValid = false;
+        spell.physicsMesh.vertexCount = 0;
     }
 
     void Game::initSpellCastAsync()
@@ -3582,30 +3671,6 @@ namespace gl3 {
                         glm::vec3 chunkMin = getChunkMin(chunk->coord);
                         glm::vec3 chunkCenter = chunkMin + glm::vec3(CHUNK_SIZE * 0.5f) * VOXEL_SIZE;
 
-                        // If burn active: advance timer
-                        if (chunk->burn.active) {
-                            chunk->burn.t += deltaTime;
-
-                            // When finished: actually clear chunk voxels (optional) or just hide forever / unload
-                            if (burn01(chunk->burn.t, chunk->burn.duration) >= 1.0f) {
-                                // Visual gone; choose one:
-                                // (A) clear voxels and mark dirty (removes geometry)
-                                chunk->clear();
-
-                                // or (B) just stop drawing by zeroing vertexCount and marking invalid:
-                                // chunk->gpuCache.vertexCount = 0;
-                                // chunk->gpuCache.isValid = false;
-                            }
-                        } else {
-                            // Deterministic trigger example:
-                            // If chunk has very little geometry, start burning it.
-                            // (This is cheap and uses data you already have.)
-                            if (chunk->gpuCache.isValid && chunk->gpuCache.vertexCount > 0 && chunk->gpuCache.vertexCount < 120) {
-                                startChunkBurn(chunk, chunkCenter,
-                                        /*radiusWorld=*/(CHUNK_SIZE * 0.6f) * VOXEL_SIZE,
-                                        /*durationSec=*/1.5f);
-                            }
-                        }
                         // Update lights for this chunk (check if outdated)
                         if (frameCounter - chunk->gpuCache.lastLightUpdateFrame > LIGHT_UPDATE_INTERVAL ||
                             chunk->gpuCache.nearbyLights.empty()) {
@@ -4194,6 +4259,29 @@ namespace gl3 {
 //------Marching Cubes-Code---------------------------------------------------------------------------------------------------------------------
 
     void Game::generateChunkMesh(Chunk *chunk) {
+        if (!chunk) return;
+
+        // if chunk is terminal-cleared, ensure it stays empty
+        if (chunk->isCleared) {
+            chunk->gpuCache.vertexCount = 0;
+            chunk->gpuCache.isValid = true;
+            chunk->meshDirty = false;
+            return;
+        }
+        auto hasAnySolid = [&](){
+            for (int x=0; x<=CHUNK_SIZE; ++x)
+                for (int y=0; y<=CHUNK_SIZE; ++y)
+                    for (int z=0; z<=CHUNK_SIZE; ++z)
+                        if (chunk->voxels[x][y][z].type != 0) return true;
+            return false;
+        };
+
+        if (!hasAnySolid()) {
+            chunk->gpuCache.vertexCount = 0;
+            chunk->gpuCache.isValid = true;
+            chunk->meshDirty = false;
+            return;
+        }
         TRACY_CPU_ZONE("Game::generateChunkMesh");
         TRACY_GPU_ZONE("MarchingCubes::ChunkMesh");
 
@@ -4974,32 +5062,38 @@ namespace gl3 {
     }
 
     // 1) Helper to start burn on a chunk (call when you decide it should cleanup)
-    void Game::startChunkBurn(gl3::Chunk* chunk, const glm::vec3& chunkCenterWorld, float radiusWorld, float durationSec) {
+    void Game::startChunkBurn(gl3::Chunk* chunk, const glm::vec3& chunkCenterWorld,
+                              float radiusWorld, float durationSec)
+    {
         if (!chunk) return;
-        if (chunk->burn.active) return; // don't restart every frame
+        if (chunk->burn.active) return; // important: do not restart
+
         chunk->burn.active = true;
         chunk->burn.t = 0.0f;
         chunk->burn.duration = durationSec;
         chunk->burn.center = chunkCenterWorld;
         chunk->burn.radius = radiusWorld;
-        chunk->burn.noiseScale = 0.18f; // slower, bigger features
-        chunk->burn.edgeWidth  = 0.10f; // clearer edge
+        chunk->burn.noiseScale = 0.18f;
+        chunk->burn.edgeWidth  = 0.10f;
         chunk->burn.slowAccum  = 0.0f;
     }
 
-    void Game::startSpellBurn(gl3::SpellEffect& spell, float radiusWorld, float durationSec) {
-        if (spell.burn.active) return; // don't restart every frame
+    void Game::startSpellBurn(gl3::SpellEffect& spell, float radiusWorld, float durationSec)
+    {
+        if (spell.burn.active) return; // important: do not restart
+
         spell.burn.active = true;
         spell.burn.t = 0.0f;
         spell.burn.duration = durationSec;
-        spell.burn.center = spell.center;
+        spell.burn.center = spell.center; // will follow physics body in updateSpells
         spell.burn.radius = radiusWorld;
         spell.burn.noiseScale = 0.22f;
         spell.burn.edgeWidth  = 0.10f;
         spell.burn.slowAccum  = 0.0f;
     }
 
-// 0..1 burn progress (but use curve in shader uniform)
+
+    // 0..1 burn progress (but use curve in shader uniform)
     float Game::burn01(float t, float duration) {
         if (duration <= 1e-4f) return 1.0f;
         return glm::clamp(t / duration, 0.0f, 1.0f);

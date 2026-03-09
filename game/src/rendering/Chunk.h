@@ -29,6 +29,7 @@ namespace gl3 {
         };
         BurnState burn;
 
+        bool isCleared = false;
         // GPU CACHE - stored with the chunk!
         struct GPUCache {
             GLuint vao = 0;

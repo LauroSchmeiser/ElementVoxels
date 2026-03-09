@@ -351,6 +351,7 @@ namespace gl3 {
             float noiseScale = 0.45f;
             float edgeWidth = 0.12f;
             float slowAccum=0.0f;
+
         };
         BurnState burn;
     };

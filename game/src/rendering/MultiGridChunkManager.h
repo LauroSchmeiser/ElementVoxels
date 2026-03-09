@@ -128,6 +128,24 @@ namespace gl3 {
             }
         }
 
+        void forEachChunk(const std::function<void(Chunk*)>& callback) {
+            for (Chunk* chunk : staticGrid.chunkPointers) {
+                callback(chunk);
+            }
+            for (Chunk* chunk : emissiveGrid.chunkPointers) {
+                callback(chunk);
+            }
+            for (Chunk* chunk : dynamicGrid.chunkPointers) {
+                callback(chunk);
+            }
+            for (Chunk* chunk : fluidGrid.chunkPointers) {
+                callback(chunk);
+            }
+            for (Chunk* chunk : interactiveGrid.chunkPointers) {
+                callback(chunk);
+            }
+        }
+
         void forEachEmissiveChunk(const std::function<void(Chunk*)>& callback) {
             for (Chunk* chunk : emissiveGrid.chunkPointers) {
                 callback(chunk);

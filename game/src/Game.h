@@ -330,6 +330,8 @@ namespace gl3 {
         void startChunkBurn(gl3::Chunk* chunk, const glm::vec3& chunkCenterWorld, float radiusWorld, float durationSec);
         void forceCleanupSpellAnimatedVoxels(SpellEffect& s);
         bool isSpellTooSmall(const gl3::SpellEffect& s);
+        void updateChunkBurns(float dt);
+        bool isSpellTooSlowNow(const gl3::SpellEffect& s, float speedThresholdWorld) const;
         bool isSpellTooSlow(const gl3::SpellEffect& s, float speedThreshold);
         bool isChunkMeshTooSmall(const gl3::Chunk& c, uint32_t vtxThreshold);
         static inline float smooth01(float x) {
