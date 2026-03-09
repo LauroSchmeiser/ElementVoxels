@@ -44,6 +44,9 @@ add_executable(${EXE_FILE}
         src/physics/CraterStampBatch.h
         src/spells/spellCastAsync.h
         src/spells/spellCastAsync.cpp
+        src/rendering/MaterialSystem.h
+        src/rendering/MaterialSystem.cpp
+        src/rendering/stb_image_impl.cpp
 )
 
 # Link Tracy and enable it

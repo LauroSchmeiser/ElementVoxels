@@ -176,6 +176,27 @@ namespace gl3 {
             std::cerr << "Failed to create metaballSplatShader: " << e.what() << std::endl;
             // optionally abort here
         }
+        std::vector<std::string> mats;
+        mats.push_back(gl3::resolveAssetPath("textures/cobble.jpg").string());
+        mats.push_back(gl3::resolveAssetPath("textures/water.png").string());
+        mats.push_back(gl3::resolveAssetPath("textures/dirt.jpg").string());
+
+        materials.initTextureArrayFromFiles(mats);
+        materialAlbedoArrayTexId = materials.albedoArrayTex;
+
+        materials.params[0].roughness = 0.85f;
+        materials.params[0].specular  = 0.02f;
+        materials.params[0].uvScale   = 1.0f;
+
+        materials.params[1].roughness = 0.85f;
+        materials.params[1].specular  = 0.02f;
+        materials.params[1].uvScale   = 1.0f;
+
+        materials.params[2].roughness = 0.05f;
+        materials.params[2].specular  = 0.5f;
+        materials.params[2].uvScale   = 1.0f;
+
+
 
         audio.init();
         audio.setGlobalVolume(0.1f);
@@ -1712,7 +1733,7 @@ namespace gl3 {
         SpellCastRequest req = buildSpellCastRequestSnapshot(center, searchRadius, material, strength, params);
         req.physicsEnabled = true;
         req.launchDir = glm::normalize(getCameraFront());
-        req.launchSpeed = strength * 1.0f * VOXEL_SIZE;
+        req.launchSpeed = strength * 20.0f * VOXEL_SIZE;
         req.lifetime = 20.0f;
         spellCastAsync->enqueueOrReplaceQueued(std::move(req));
         //TracyPlot("SpellJobsCompletedQueue", (int)completed.size());
@@ -3512,7 +3533,7 @@ namespace gl3 {
         glDepthMask(depthMask);
     }
 
-    void Game::renderChunks() {
+    void Game:: renderChunks() {
         TRACY_CPU_ZONE("Game::renderChunks");
         TRACY_GPU_ZONE("Chunks (total)");
         int built = 0;
@@ -3621,7 +3642,7 @@ namespace gl3 {
                 voxelShader->setFloat("uOverlayRadius", pullRadius);
                 voxelShader->setUInt("uOverlayMaterial", (uint32_t)0); // 0..63
                 voxelShader->setVec3("uOverlayColor", glm::vec3(0.25f, 1.0f, 0.35f));
-                voxelShader->setFloat("uOverlayAlpha", 0.35f);
+                voxelShader->setFloat("uOverlayAlpha", 0.25f);
             } else
             {
                 voxelShader->setInt("uOverlayEnabled", 0);
@@ -3632,6 +3653,24 @@ namespace gl3 {
             voxelShader->setMatrix("mvp", pv);
             voxelShader->setVec3("viewPos", cameraPos);
             voxelShader->setVec3("ambientColor", glm::vec3(0.002f));
+
+            // texture unit 0
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D_ARRAY, materialAlbedoArrayTexId);
+            voxelShader->setInt("uAlbedoArray", 0);
+
+            std::array<float, 64> rough{};
+            std::array<float, 64> spec{};
+            std::array<float, 64> uvScale{};
+            for (int i = 0; i < 64; ++i) {
+                rough[i] = materials.params[i].roughness;
+                spec[i]  = materials.params[i].specular;
+                uvScale[i] = materials.params[i].uvScale;
+            }
+
+            voxelShader->setFloatArray("uMatRoughness", rough.data(), 64);
+            voxelShader->setFloatArray("uMatSpecular",  spec.data(), 64);
+            voxelShader->setFloatArray("uUVScale",      uvScale.data(), 64);
 
             voxelShader->setInt("uBurnEnabled", 0);
             voxelShader->setFloat("uBurn", 0.0f);
@@ -3945,6 +3984,25 @@ namespace gl3 {
 
         voxelShader->setVec3("viewPos", cameraPos);
         voxelShader->setVec3("ambientColor", glm::vec3(0.002f));
+
+        // texture unit 0
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, materialAlbedoArrayTexId);
+        voxelShader->setInt("uAlbedoArray", 0);
+
+        std::array<float, 64> rough{};
+        std::array<float, 64> spec{};
+        std::array<float, 64> uvScale{};
+        for (int i = 0; i < 64; ++i) {
+            rough[i] = materials.params[i].roughness;
+            spec[i]  = materials.params[i].specular;
+            uvScale[i] = materials.params[i].uvScale;
+        }
+
+        voxelShader->setFloatArray("uMatRoughness", rough.data(), 64);
+        voxelShader->setFloatArray("uMatSpecular",  spec.data(), 64);
+        voxelShader->setFloatArray("uUVScale",      uvScale.data(), 64);
+
 
         voxelShader->setInt("uBurnEnabled", 0);
         voxelShader->setFloat("uBurn", 0.0f);

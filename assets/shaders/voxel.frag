@@ -39,6 +39,12 @@ uniform float uBurnEdgeWidth;
 uniform vec3  uBurnEmberColor;
 uniform float uBurnCharStrength;
 
+// --- MATERIALS / TEXTURES ---
+uniform sampler2DArray uAlbedoArray;   // layer = materialId
+uniform float uMatRoughness[64];       // 0..1
+uniform float uMatSpecular[64];        // 0..1 (simple spec strength)
+uniform float uUVScale[64];            // texel density per material (optional but very useful)
+
 const float PI = 3.14159265;
 const float MIN_ALBEDO = 0.1;
 
@@ -93,12 +99,32 @@ float burnBayer4(vec2 p) {
 void main() {
     if ((vFlags & 1u) != 0u) discard;
 
+    // bits1..6 = material id (0..63)
     uint mat = (vFlags >> 1u) & 63u;
-
-    vec3 albedo = max(vertexColor, vec3(MIN_ALBEDO));
     vec3 N = normalize(normal);
 
+    // Sample albedo texture for this material
+    float uvScale = uUVScale[mat];
+    vec3 texAlbedo = texture(uAlbedoArray, vec3(vUV * uvScale, float(mat))).rgb;
+
+    // Mix texture with voxel/vertex tint (your "color mixed in" requirement)
+    // tweak blend: 1.0 = fully tinted, 0.0 = no tint
+    float tintStrength = 0.65;
+    vec3 albedo = mix(texAlbedo, texAlbedo * vertexColor, tintStrength);
+    albedo = max(albedo, vec3(MIN_ALBEDO));
+
+    // Lighting (diffuse + simple spec)
+    vec3 V = normalize(viewPos - fragPos);
+
     vec3 lightAccum = vec3(0.0);
+    vec3 specAccum  = vec3(0.0);
+
+    float rough = clamp(uMatRoughness[mat], 0.02, 1.0);
+    float specStrength = clamp(uMatSpecular[mat], 0.0, 1.0);
+
+    // map roughness -> shininess (cheap Blinn-Phong mapping)
+    float shininess = mix(256.0, 8.0, rough);
+
     for (int i = 0; i < numLights; ++i) {
         vec3 toLight = lightPos[i] - fragPos;
         float distSq = dot(toLight, toLight);
@@ -106,9 +132,19 @@ void main() {
         vec3 L = toLight / max(dist, 0.001);
 
         float NdotL = max(dot(N, L), 0.0);
-        float attenuation = 1.0 / (distSq + 1.0);
+        float attenuation = 7.5 / (distSq + 1.0);
         float intensity = lightIntensity[i] * attenuation;
-        lightAccum += lightColor[i] * intensity * NdotL;
+
+        vec3 radiance = lightColor[i] * intensity;
+
+        // Lambert diffuse
+        lightAccum += radiance * NdotL;
+
+        // Blinn-Phong spec
+        vec3 H = normalize(L + V);
+        float NdotH = max(dot(N, H), 0.0);
+        float spec = pow(NdotH, shininess) * specStrength * step(0.0, NdotL);
+        specAccum += radiance * spec;
     }
 
     vec3 diffuse = lightAccum * (albedo / PI);
@@ -141,7 +177,7 @@ void main() {
         emiss += edge * uBurnEmberColor;
     }
 
-    vec3 hdr = ambient + diffuse + emiss;
+    vec3 hdr = ambient + diffuse + specAccum + emiss;
     vec3 color = hdr / (hdr + vec3(1.0));
 
     // Overlay

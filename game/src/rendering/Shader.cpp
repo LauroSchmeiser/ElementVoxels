@@ -165,6 +165,15 @@ namespace gl3 {
         glUniform1ui(loc, value);
     }
 
+    void Shader::setFloatArray(const std::string &uniformName, const GLfloat *data, GLsizei count) const
+    {
+        GLint loc = glGetUniformLocation(shaderProgram, uniformName.c_str());
+        if (loc == -1) {
+            std::cout << "Warning: uniform not found (maybe optimized out): " << uniformName << "\n";
+            return;
+        }
+        glUniform1fv(loc, count, data);
+    }
     void Shader::use() const {
         glUseProgram(shaderProgram);
     }

@@ -33,6 +33,7 @@ namespace gl3 {
         void setFloat(const std::string &uniformName, float value) const;
         void setInt(const std::string &uniformName, int value) const;
         void setUInt(const std::string &uniformName, unsigned int value) const;
+        void setFloatArray(const std::string &uniformName, const GLfloat *data, GLsizei count) const;
         unsigned int getProgramID() const { return shaderProgram; }  // <-- ADD THIS
 
         void use() const;

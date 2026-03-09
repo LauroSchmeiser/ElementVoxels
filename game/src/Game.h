@@ -27,6 +27,9 @@
 #include <mutex>
 #include <memory>
 #include "spells/SpellCastAsync.h"
+#include "rendering/MaterialSystem.h"
+#include "../../extern/stb_image.h"
+
 
 namespace gl3 {
     class Game {
@@ -516,6 +519,10 @@ namespace gl3 {
         SunBillboard sunBillboards;
         std::vector<SunInstance> emissiveBillboards;
         int emissiveUpdateCounter=0;
+
+        //Materials:
+        gl3::MaterialSystem materials;
+        GLuint materialAlbedoArrayTexId = 0;
 
         ////Input
         std::unique_ptr<CharacterController> characterController;

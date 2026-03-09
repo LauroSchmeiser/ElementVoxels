@@ -8,6 +8,7 @@ add_subdirectory(extern/glfw)
 add_subdirectory(extern/glm)
 add_subdirectory(extern/soloud)
 add_subdirectory(extern/tinygltf)
+
 add_definitions(-DNOMINMAX)
 
 add_subdirectory(game)
