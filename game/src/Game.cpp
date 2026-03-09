@@ -186,7 +186,7 @@ namespace gl3 {
 
         materials.params[0].roughness = 0.85f;
         materials.params[0].specular  = 0.02f;
-        materials.params[0].uvScale   = 0.25f;
+        materials.params[0].uvScale   = 0.05f;
 
         materials.params[1].roughness = 0.85f;
         materials.params[1].specular  = 0.02f;
@@ -3187,7 +3187,7 @@ namespace gl3 {
             light.pos = sumPos / float(count);
             light.color = sumColor / float(count);
             // Tune intensity scaling if VOXEL_SIZE changes (it affects perceived scale)
-            light.intensity = float(count) * 35.0f;
+            light.intensity = float(count) * 65.0f;
             light.id = makeLightID(coord.x, coord.y, coord.z);
 
             chunk->emissiveLights.push_back(light);

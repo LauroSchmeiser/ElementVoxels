@@ -46,7 +46,7 @@ uniform float uMatSpecular[64];        // 0..1 (simple spec strength)
 uniform float uUVScale[64];            // texel density per material (optional but very useful)
 
 const float PI = 3.14159265;
-const float MIN_ALBEDO = 0.1;
+const float MIN_ALBEDO = 0.0;
 
 // ---- renamed: burnHash / burnNoise ----
 float burnHash13(vec3 p) {
