@@ -11,6 +11,10 @@
 #include <cstdint>
 #include "rendering/GpuStructsStd430.h"
 #include "tracy/TracyOpenGL.hpp"
+#include "scenes/MainMenuScene.h"
+#include "scenes/GameplayScene.h"
+#include "scenes/LoadingScene.h"
+
 #ifndef TRACY_GPU_ENABLED
 #define TRACY_CPU_ZONE(nameStr) ZoneScopedN(nameStr)
 #define TRACY_GPU_ZONE(nameStr) TracyGpuZone(nameStr)
@@ -165,6 +169,8 @@ namespace gl3 {
         glfwSetWindowUserPointer(window, this);
         glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
 
+        imguiLayer.init(window, "#version 460");
+
         skyboxRuntimeShader = std::make_unique<Shader>("shaders/skybox.vert", "shaders/skybox_runtime.frag");
         voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel.frag");
         marchingCubesShader = std::make_unique<Shader>("shaders/marching_cubes.comp");
@@ -176,89 +182,36 @@ namespace gl3 {
             std::cerr << "Failed to create metaballSplatShader: " << e.what() << std::endl;
             // optionally abort here
         }
-        std::vector<std::string> mats;
-        mats.push_back(gl3::resolveAssetPath("textures/cobble.jpg").string());
-        mats.push_back(gl3::resolveAssetPath("textures/water.png").string());
-        mats.push_back(gl3::resolveAssetPath("textures/dirt.jpg").string());
-
-        materials.initTextureArrayFromFiles(mats);
-        materialAlbedoArrayTexId = materials.albedoArrayTex;
-
-        materials.params[0].roughness = 0.85f;
-        materials.params[0].specular  = 0.02f;
-        materials.params[0].uvScale   = 0.05f;
-
-        materials.params[1].roughness = 0.85f;
-        materials.params[1].specular  = 0.02f;
-        materials.params[1].uvScale   = 1.0f;
-
-        materials.params[2].roughness = 0.05f;
-        materials.params[2].specular  = 0.5f;
-        materials.params[2].uvScale   = 1.0f;
-
-
 
         audio.init();
         audio.setGlobalVolume(0.1f);
-        voxelPhysics = std::make_unique<VoxelPhysicsManager>(chunkManager.get());
 
-        // Create character controller after physics manager exists
-        characterController = std::make_unique<CharacterController>(
-                chunkManager.get(),
-                voxelPhysics.get(),
-                1.8f,
-                1.0f
-                );
+        // Register scenes
+        sceneManager.registerScene(SceneId::MainMenu, std::make_unique<MainMenuScene>());
+        sceneManager.registerScene(SceneId::Gameplay, std::make_unique<GameplayScene>());
+        sceneManager.registerScene(SceneId::Loading, std::make_unique<LoadingScene>());
 
-        // **Set voxel collision callback (body hits world)**
-        voxelPhysics->setVoxelCollisionCallback(
-                [this](gl3::VoxelPhysicsBody* body,
-                        const glm::vec3& hitPos,
-                        const glm::vec3& hitNormal,
-                        float impactSpeed) {
-                    onSpellCollision(static_cast<SpellEffect*>(body->userData),
-                                             hitPos, hitNormal, impactSpeed);
-                }
-        );
-
-        //  Set body-body collision callback
-        voxelPhysics->setBodyBodyCollisionCallback(
-                [this](gl3::VoxelPhysicsBody* bodyA,
-                        gl3::VoxelPhysicsBody* bodyB,
-                        const glm::vec3& hitPos,
-                        const glm::vec3& hitNormal,
-                        float impactSpeed) {
-                    onBodyBodyCollision(bodyA, bodyB, hitPos, hitNormal, impactSpeed);
-                }
-        );
-
-        // Set player-body collision callback
-        characterController->setPlayerBodyCollisionCallback(
-                [this](gl3::VoxelPhysicsBody* body,
-                        const glm::vec3& hitPos,
-                        const glm::vec3& hitNormal,
-                        float playerSpeed) {
-                    onPlayerBodyCollision(body, hitPos, hitNormal, playerSpeed);
-                }
-        );
-
-        initSphereMeshCache();
-        initSpellCastAsync();
+        // Start at main menu
+        sceneManager.requestChange(SceneId::Loading );
+        sceneManager.applyPendingChange();
     }
 
 
 
     Game::~Game() {
+        imguiLayer.shutdown();
         shutdownSpellCastAsync();
         glfwTerminate();
     }
 
 
-////-----Run-Method-----------------------------------------------------------------------------------------------------------------------------
+    void Game::initGameplayIfNeeded() {
+        if (gameplayInitialized) return;
+        initGameplaySystems();
+        gameplayInitialized = true;
+    }
 
-    void Game::run() {
-        TracyGpuContext
-        TRACY_CPU_ZONE("Game::run");
+    void Game::initGameplaySystems() {
         ////Initialization-Steps
         setupSkybox();
         bakeNebulaCubemap(512);
@@ -267,58 +220,258 @@ namespace gl3 {
         generateChunks();
         setupCamera();
         setupVEffects();
+        fillMaterialTable();
+    }
 
-        while (!glfwWindowShouldClose(window)) {
-            TRACY_CPU_ZONE("Frame");
-            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); // Clear both at once
-
-            ////Simulation Steps
-            {
-                TRACY_CPU_ZONE("Frame::Simulation");
-                updateDeltaTime();
-                pumpAsyncSpellResults();
-                updateSpells(deltaTime);
-            }
-
-
-            ////Input-Steps
-            {
-                TRACY_CPU_ZONE("Frame::Input+Physics+Update");
-                glfwPollEvents();
-                updatePhysics();
-                update();
-                updateChunkBurns(deltaTime);
-            }
+    void Game::fillMaterialTable()
+    {
+        std::vector<std::string> mats;
+        mats.push_back(gl3::resolveAssetPath("textures/cobble.jpg").string());
+        mats.push_back(gl3::resolveAssetPath("textures/wood.jpg").string());
+        mats.push_back(gl3::resolveAssetPath("textures/water.png").string());
+        mats.push_back(gl3::resolveAssetPath("textures/dirt.jpg").string());
+        mats.push_back(gl3::resolveAssetPath("textures/water2.jpg").string());
+        mats.push_back(gl3::resolveAssetPath("textures/metal.jpg").string());
+        mats.push_back(gl3::resolveAssetPath("textures/gem.jpg").string());
 
 
-            ////Post-Prod Steps?
+        materials.initTextureArrayFromFiles(mats);
+        materialAlbedoArrayTexId = materials.albedoArrayTex;
 
-            ////Rendering Steps
+        materials.params[0].roughness = 1.0f;
+        materials.params[0].specular  = 0.05f;
+        materials.params[0].uvScale   = 0.05f;
 
-            ////Rendering Steps
-            {
-                TRACY_CPU_ZONE("Frame::Rendering");
+        materials.params[1].roughness = 0.5f;
+        materials.params[1].specular  = 0.15f;
+        materials.params[1].uvScale   = 0.05f;
 
-                if(!DebugMode1) {
-                    renderSkybox();
+        materials.params[2].roughness = 0.05f;
+        materials.params[2].specular  = 0.5f;
+        materials.params[2].uvScale   = 0.02f;
+
+        materials.params[3].roughness = 1.0f;
+        materials.params[3].specular  = 0.05f;
+        materials.params[3].uvScale   = 0.05f;
+
+        materials.params[4].roughness = 1.0f;
+        materials.params[4].specular  = 0.05f;
+        materials.params[4].uvScale   = 0.005f;
+
+        materials.params[5].roughness = 1.0f;
+        materials.params[5].specular  = 0.05f;
+        materials.params[5].uvScale   = 0.005f;
+
+        materials.params[6].roughness = 1.0f;
+        materials.params[6].specular  = 0.05f;
+        materials.params[6].uvScale   = 0.05f;
+
+        materials.params[7].roughness = 1.0f;
+        materials.params[7].specular  = 0.05f;
+        materials.params[7].uvScale   = 0.05f;
+    }
+
+    void Game::generateAssets()
+    {
+        initSphereMeshCache();
+        initSpellCastAsync();
+    }
+
+    void Game::setupControls() {
+        // Create character controller after physics manager exists
+        characterController = std::make_unique<CharacterController>(
+                chunkManager.get(),
+                voxelPhysics.get(),
+                1.8f,
+                1.0f
+        );
+
+        // Set player-body collision callback
+        characterController->setPlayerBodyCollisionCallback(
+                [this](gl3::VoxelPhysicsBody* body,
+                       const glm::vec3& hitPos,
+                       const glm::vec3& hitNormal,
+                       float playerSpeed) {
+                    onPlayerBodyCollision(body, hitPos, hitNormal, playerSpeed);
                 }
+        );
 
-                renderChunks();
-                renderAnimatedVoxels();
-                renderPhysicsFormations();
-                renderSpellPreview();
+    }
+
+    void Game::setupPhysics() {
+        voxelPhysics = std::make_unique<VoxelPhysicsManager>(chunkManager.get());
+        //  Set body-body collision callback
+        voxelPhysics->setBodyBodyCollisionCallback(
+                [this](gl3::VoxelPhysicsBody* bodyA,
+                       gl3::VoxelPhysicsBody* bodyB,
+                       const glm::vec3& hitPos,
+                       const glm::vec3& hitNormal,
+                       float impactSpeed) {
+                    onBodyBodyCollision(bodyA, bodyB, hitPos, hitNormal, impactSpeed);
+                }
+        );
+        // **Set voxel collision callback (body hits world)**
+        voxelPhysics->setVoxelCollisionCallback(
+                [this](gl3::VoxelPhysicsBody* body,
+                       const glm::vec3& hitPos,
+                       const glm::vec3& hitNormal,
+                       float impactSpeed) {
+                    onSpellCollision(static_cast<SpellEffect*>(body->userData),
+                                     hitPos, hitNormal, impactSpeed);
+                }
+        );
+    }
+
+    void Game::updateGameplayFrame() {
+        // the parts of your while-loop that are "update/sim/input/physics"
+        updateDeltaTime();
+        pumpAsyncSpellResults();
+        updateSpells(deltaTime);
+
+        glfwPollEvents();
+        updatePhysics();
+        update();
+        updateChunkBurns(deltaTime);
+    }
+
+    void Game::renderGameplayFrame() {
+        if(!DebugMode1) renderSkybox();
+        renderChunks();
+        renderAnimatedVoxels();
+        renderPhysicsFormations();
+        renderSpellPreview();
+        DisplayFPSCount();
+    }
+
+    void Game::beginGameplayPreload()
+    {
+        // If already done, keep it done.
+        if (gameplayInitialized) {
+            preloadStage = PreloadStage::Done;
+            preloadStageName = "Ready";
+            return;
+        }
+
+        preloadStage = PreloadStage::SetupSkybox;
+        preloadStageName = "Preparing skybox...";
+    }
+
+    float Game::tickGameplayPreload()
+    {
+        if (gameplayInitialized) {
+            preloadStage = PreloadStage::Done;
+            preloadStageName = "Ready";
+            return 1.0f;
+        }
+
+        switch (preloadStage)
+        {
+            case PreloadStage::NotStarted:
+                beginGameplayPreload();
+                return 0.0f;
+
+            case PreloadStage::SetupSkybox:
+                preloadStageName = "Preparing skybox...";
+                setupSkybox();
+                preloadStage = PreloadStage::BakeNebula;
+                return 0.10f;
+
+            case PreloadStage::BakeNebula:
+                preloadStageName = "Baking nebula cubemap...";
+                bakeNebulaCubemap(512);
+                preloadStage = PreloadStage::SetupSSBOs;
+                return 0.20f;
+
+            case PreloadStage::SetupSSBOs:
+                preloadStageName = "Setting up GPU buffers...";
+                setupSSBOsAndTables();
+                preloadStage = PreloadStage::SetupControls;
+                return 0.30f;
+
+            case PreloadStage::SetupControls:
+                preloadStageName = "Setting up controls...";
+                setupControls();
+                preloadStage = PreloadStage::SetupInput;
+                return 0.35f;
+
+            case PreloadStage::SetupInput:
+                preloadStageName = "Setting up input...";
+                setupInput();
+                preloadStage = PreloadStage::GenerateChunks;
+                return 0.40f;
+
+            case PreloadStage::GenerateChunks:
+                preloadStageName = "Generating world...";
+                generateChunks();
+                preloadStage = PreloadStage::FillMaterialTable;
+                return 0.5f;
+
+            case PreloadStage::FillMaterialTable:
+                preloadStageName = "Loading materials...";
+                fillMaterialTable();
+                preloadStage = PreloadStage::SetupCamera;
+                return 0.6f;
+
+            case PreloadStage::SetupCamera:
+                preloadStageName = "Setting up camera...";
+                setupCamera();
+                preloadStage = PreloadStage::SetupAssets;
+                return 0.7f;
+
+            case PreloadStage::SetupAssets:
+                preloadStageName = "Loading assets...";
+                generateAssets();
+                preloadStage = PreloadStage::SetupPhysics;
+                return 0.8f;
+
+            case PreloadStage::SetupPhysics:
+                preloadStageName = "Setting up physics...";
+                setupPhysics();
+                preloadStage = PreloadStage::SetupVEffects;
+                return 0.85f;
+
+            case PreloadStage::SetupVEffects:
+                preloadStageName = "Finalizing effects...";
+                setupVEffects();
+                preloadStage = PreloadStage::Done;
+
+                gameplayInitialized = true;
+                preloadStageName = "Ready";
+                return 0.9f;
+
+            case PreloadStage::Done:
+            default:
+                gameplayInitialized = true;
+                preloadStageName = "Ready";
+                return 1.0f;
+        }
+    }
+
+////-----Run-Method-----------------------------------------------------------------------------------------------------------------------------
+
+    void Game::run() {
+        TracyGpuContext
+        TRACY_CPU_ZONE("Game::run");
+
+        // main loop now delegates to current scene
+        while (!glfwWindowShouldClose(window)) {
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+            updateDeltaTime(); // dt for menu as well
+
+            if (sceneManager.current()) {
+                sceneManager.current()->update(*this, deltaTime);
             }
 
-            ////UI
-            {
-                TRACY_CPU_ZONE("Frame::UI");
-                DisplayFPSCount();
+            // Apply scene changes after update (safe)
+            sceneManager.applyPendingChange();
+
+            if (sceneManager.current()) {
+                sceneManager.current()->render(*this);
             }
 
-            ////SwapBuffer
             glfwSwapBuffers(window);
             TracyGpuCollect;
-
             FrameMark;
         }
     }
@@ -2757,6 +2910,7 @@ namespace gl3 {
         std::uniform_real_distribution<float> distPos(-(ChunkCount * 4), (ChunkCount * 4)); // Reduced range
         std::uniform_real_distribution<float> distScale(0.5f, 3.0f);
         std::uniform_real_distribution<float> distColor(0.3f, 1.0f);
+        std::uniform_real_distribution<float> distMat(0.0f, 7.9f);
 
         std::vector<WorldPlanet> worldPlanets;
 
@@ -2768,6 +2922,7 @@ namespace gl3 {
         p.radius = distScale(rng) * CHUNK_SIZE;
         p.color = glm::vec3(distColor(rng), distColor(rng), distColor(rng));
         p.type = 1; // solid
+        p.material=(int)distMat(rng);
         worldPlanets.push_back(p);
         cameraPos=p.worldPos+glm::vec3(0,VOXEL_SIZE,0);
         characterController->setPosition(cameraPos);
@@ -2777,6 +2932,7 @@ namespace gl3 {
             p.radius = distScale(rng) * CHUNK_SIZE;
             p.color = glm::vec3(distColor(rng), distColor(rng), distColor(rng));
             p.type = 1; // solid
+            p.material=(int)distMat(rng);
             worldPlanets.push_back(p);
         }
 
@@ -3331,7 +3487,7 @@ namespace gl3 {
 
         // Now use clean, readable input checks
         if (actions["Escape"].wasJustPressed) {
-            glfwSetWindowShouldClose(window, true);
+           // glfwSetWindowShouldClose(window, true);
         }
 
         if (actions["ToggleDebug"].wasJustPressed) {

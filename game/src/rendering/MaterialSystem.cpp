@@ -5,6 +5,7 @@
 
 // stb_image
 #include "../../../extern/stb_image.h"
+#include "../../../extern/stb_image_resize2.h"
 #include <glad/glad.h>
 
 namespace gl3 {
@@ -52,6 +53,19 @@ namespace gl3 {
 
         glGenTextures(1, &albedoArrayTex);
         glBindTexture(GL_TEXTURE_2D_ARRAY, albedoArrayTex);
+
+        int tw=0, th=0, td=0;
+        glGetTexLevelParameteriv(GL_TEXTURE_2D_ARRAY, 0, GL_TEXTURE_WIDTH,  &tw);
+        glGetTexLevelParameteriv(GL_TEXTURE_2D_ARRAY, 0, GL_TEXTURE_HEIGHT, &th);
+        glGetTexLevelParameteriv(GL_TEXTURE_2D_ARRAY, 0, GL_TEXTURE_DEPTH,  &td);
+
+        std::cout << "MaterialSystem: GL_TEXTURE_2D_ARRAY allocated w=" << tw
+                  << " h=" << th << " layers=" << td << "\n";
+
+        GLenum err = glGetError();
+        if (err != GL_NO_ERROR) {
+            std::cout << "MaterialSystem: GL error after creating array: " << err << "\n";
+        }
 
         // Allocate storage for all layers (RGBA8)
         glTexImage3D(GL_TEXTURE_2D_ARRAY,
@@ -101,20 +115,17 @@ namespace gl3 {
                 std::cout << "MaterialSystem: size mismatch for " << materialPaths[layer]
                           << " expected " << width << "x" << height
                           << " got " << lw << "x" << lh
-                          << " (filling fallback yellow)\n";
+                          << " (resizing texture)\n";
 
-                stbi_image_free(img);
+                auto resized = resizeToRGBA(img, lw, lh, width, height);
 
-                std::vector<unsigned char> fallback;
-                fillSolidRGBA(fallback, width, height, 255, 255, 0, 255);
-
-                glTexSubImage3D(GL_TEXTURE_2D_ARRAY,
-                                0,
+                glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0,
                                 0, 0, layer,
                                 width, height, 1,
-                                GL_RGBA,
-                                GL_UNSIGNED_BYTE,
-                                fallback.data());
+                                GL_RGBA, GL_UNSIGNED_BYTE,
+                                resized.data());
+
+                stbi_image_free(img);
                 continue;
             }
 
@@ -163,4 +174,16 @@ namespace gl3 {
         width = height = 0;
     }
 
+    std::vector<unsigned char> MaterialSystem::resizeToRGBA(
+            const unsigned char* src, int sw, int sh,
+            int dw, int dh)
+    {
+        std::vector<unsigned char> out(size_t(dw) * size_t(dh) * 4);
+        stbir_resize_uint8_linear(
+                src, sw, sh, 0,
+                out.data(), dw, dh, 0,
+                STBIR_RGBA
+        );
+        return out;
+    }
 } // namespace gl3

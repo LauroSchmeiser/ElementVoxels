@@ -29,9 +29,13 @@
 #include "spells/SpellCastAsync.h"
 #include "rendering/MaterialSystem.h"
 #include "../../extern/stb_image.h"
-
+#include "SceneManager.h"
+#include "ui/ImGuiLayer.h"
 
 namespace gl3 {
+    enum class SceneId : uint8_t;
+    class SceneManager;
+
     class Game {
     public:
         ////basics (public):
@@ -43,10 +47,13 @@ namespace gl3 {
 
         GLFWwindow *getWindow() { return window; }
 
+        gl3::ImGuiLayer& imgui() { return imguiLayer; }
+
+        gl3::ImGuiLayer imguiLayer;
+
     private:
         ////basics (private):
         static void framebuffer_size_callback(GLFWwindow *window, int width, int height);
-
 
         ////Chunk Management:
         //std::unique_ptr<ChunkManager> chunkManager = std::make_unique<ChunkManager>(); // other manager (old)
@@ -385,6 +392,11 @@ namespace gl3 {
 
         void setupVEffects();
 
+        void generateAssets();
+
+        void setupControls();
+
+        void setupPhysics();
 
         ////Simulation-Steps
         //Physics:
@@ -419,7 +431,9 @@ namespace gl3 {
 
         ////Rendering-Steps::
         //General Rendering:
+    public:
         void renderSkybox();
+    private:
         void renderChunks();
         void renderAnimatedVoxels();
         void renderPhysicsFormations();
@@ -523,6 +537,8 @@ namespace gl3 {
         //Materials:
         gl3::MaterialSystem materials;
         GLuint materialAlbedoArrayTexId = 0;
+        void fillMaterialTable();
+
 
         ////Input
         std::unique_ptr<CharacterController> characterController;
@@ -539,6 +555,48 @@ namespace gl3 {
         std::unique_ptr<Shader> voxelSplatShader;
         std::unique_ptr<Shader> spellPreviewShader;
 
+    public:
+        ///Scenes
+        void requestSceneChange(SceneId id) { sceneManager.requestChange(id); }
+        bool isGameplayInitialized() const { return gameplayInitialized; }
+        void beginGameplayPreload();
+        float tickGameplayPreload();
+        const std::string& getGameplayPreloadStageName() const { return preloadStageName; }
+
+
+
+
+        void initGameplayIfNeeded();
+        void updateGameplayFrame();
+        void renderGameplayFrame();
+
+    private:
+
+        SceneManager sceneManager{*this};
+
+        bool gameplayInitialized = false;
+
+        // split initialization so menu can show instantly
+        void initCoreSystems();     // window/glad/shaders/audio/materials (fast-ish)
+        void initGameplaySystems(); // chunk generation, camera, vfx, etc (slow)
+        enum class PreloadStage : uint8_t {
+            NotStarted = 0,
+            SetupSkybox,
+            BakeNebula,
+            SetupSSBOs,
+            SetupControls,
+            SetupInput,
+            GenerateChunks,
+            FillMaterialTable,
+            SetupCamera,
+            SetupAssets,
+            SetupPhysics,
+            SetupVEffects,
+            Done
+        };
+
+        PreloadStage preloadStage = PreloadStage::NotStarted;
+        std::string preloadStageName;
 
 
         ////helper functions:
@@ -555,5 +613,6 @@ namespace gl3 {
         glm::vec2 getMouseDelta();
         glm::dvec2 previousMousePos = glm::dvec2(0.0, 0.0);
         bool hasPreviousMousePos = false;
+
     };
 }

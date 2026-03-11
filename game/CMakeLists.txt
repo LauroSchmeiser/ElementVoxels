@@ -47,6 +47,21 @@ add_executable(${EXE_FILE}
         src/rendering/MaterialSystem.h
         src/rendering/MaterialSystem.cpp
         src/rendering/stb_image_impl.cpp
+        src/rendering/stb_image_resize_impl.cpp
+        src/SceneId.h
+        src/IScene.h
+        src/SceneManager.cpp
+        src/scenes/MainMenuScene.h
+        src/scenes/MainMenuScene.cpp
+        src/scenes/GameplayScene.h
+        src/scenes/GameplayScene.cpp
+        src/SceneManager.h
+        src/scenes/MainMenuScene.cpp
+        src/scenes/MainMenuScene.h
+        src/ui/ImGuiLayer.cpp
+        src/ui/ImGuiLayer.h
+        src/scenes/LoadingScene.cpp
+        src/scenes/LoadingScene.h
 )
 
 # Link Tracy and enable it

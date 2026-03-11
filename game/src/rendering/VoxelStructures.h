@@ -12,7 +12,7 @@ namespace gl3 {
 
     struct Voxel {
         uint8_t type = 0;
-        uint64_t material=0;
+        uint32_t material=0;
         float density = 1.0f;
         glm::vec3 color = glm::vec3(1.0f);
 
