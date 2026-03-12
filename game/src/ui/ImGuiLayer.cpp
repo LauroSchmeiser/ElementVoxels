@@ -16,11 +16,11 @@ namespace gl3 {
         ImGuiIO& io = ImGui::GetIO();
         (void)io;
 
-        // optional default style
         ImGui::StyleColorsDark();
 
-        // Init platform/renderer backends
-        ImGui_ImplGlfw_InitForOpenGL(window, /*install_callbacks=*/true);
+        // IMPORTANT:
+        // Don't let ImGui replace your GLFW callbacks (your Input system likely needs them).
+        ImGui_ImplGlfw_InitForOpenGL(window, /*install_callbacks=*/false);
         ImGui_ImplOpenGL3_Init(glslVersion);
 
         initialized = true;

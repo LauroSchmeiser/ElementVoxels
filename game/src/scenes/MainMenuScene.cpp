@@ -28,6 +28,7 @@ namespace gl3 {
 
     void MainMenuScene::render(Game& game)
     {
+        setWindowTitle(game);
         // 1) Draw skybox as aesthetic background
         game.renderSkybox();
 

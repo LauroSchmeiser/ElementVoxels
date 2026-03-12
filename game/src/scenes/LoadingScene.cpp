@@ -19,8 +19,9 @@ namespace gl3 {
         game.beginGameplayPreload();
     }
 
-    void LoadingScene::onExit(Game& /*game*/)
+    void LoadingScene::onExit(Game& game)
     {
+        glfwSetInputMode(game.getWindow(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
     }
 
     void LoadingScene::update(Game& game, float dt)

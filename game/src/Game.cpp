@@ -192,7 +192,7 @@ namespace gl3 {
         sceneManager.registerScene(SceneId::Loading, std::make_unique<LoadingScene>());
 
         // Start at main menu
-        sceneManager.requestChange(SceneId::Loading );
+        sceneManager.requestChange(SceneId::Loading);
         sceneManager.applyPendingChange();
     }
 
@@ -216,6 +216,9 @@ namespace gl3 {
         setupSkybox();
         bakeNebulaCubemap(512);
         setupSSBOsAndTables();
+        setupPhysics();
+        setupControls();
+        generateAssets();
         setupInput();
         generateChunks();
         setupCamera();
@@ -324,13 +327,13 @@ namespace gl3 {
 
     void Game::updateGameplayFrame() {
         // the parts of your while-loop that are "update/sim/input/physics"
-        updateDeltaTime();
+        //updateDeltaTime();
         pumpAsyncSpellResults();
         updateSpells(deltaTime);
 
         glfwPollEvents();
-        updatePhysics();
         update();
+        updatePhysics();
         updateChunkBurns(deltaTime);
     }
 
@@ -385,48 +388,48 @@ namespace gl3 {
             case PreloadStage::SetupSSBOs:
                 preloadStageName = "Setting up GPU buffers...";
                 setupSSBOsAndTables();
-                preloadStage = PreloadStage::SetupControls;
+                preloadStage = PreloadStage::SetupPhysics;
                 return 0.30f;
+
+            case PreloadStage::SetupPhysics:
+                preloadStageName = "Setting up physics...";
+                setupPhysics();
+                preloadStage = PreloadStage::SetupControls;
+                return 0.35f;
 
             case PreloadStage::SetupControls:
                 preloadStageName = "Setting up controls...";
                 setupControls();
                 preloadStage = PreloadStage::SetupInput;
-                return 0.35f;
+                return 0.40f;
 
             case PreloadStage::SetupInput:
                 preloadStageName = "Setting up input...";
                 setupInput();
                 preloadStage = PreloadStage::GenerateChunks;
-                return 0.40f;
+                return 0.50f;
 
             case PreloadStage::GenerateChunks:
                 preloadStageName = "Generating world...";
                 generateChunks();
                 preloadStage = PreloadStage::FillMaterialTable;
-                return 0.5f;
+                return 0.6f;
 
             case PreloadStage::FillMaterialTable:
                 preloadStageName = "Loading materials...";
                 fillMaterialTable();
                 preloadStage = PreloadStage::SetupCamera;
-                return 0.6f;
+                return 0.7f;
 
             case PreloadStage::SetupCamera:
                 preloadStageName = "Setting up camera...";
                 setupCamera();
                 preloadStage = PreloadStage::SetupAssets;
-                return 0.7f;
+                return 0.75f;
 
             case PreloadStage::SetupAssets:
                 preloadStageName = "Loading assets...";
                 generateAssets();
-                preloadStage = PreloadStage::SetupPhysics;
-                return 0.8f;
-
-            case PreloadStage::SetupPhysics:
-                preloadStageName = "Setting up physics...";
-                setupPhysics();
                 preloadStage = PreloadStage::SetupVEffects;
                 return 0.85f;
 
@@ -457,6 +460,7 @@ namespace gl3 {
         while (!glfwWindowShouldClose(window)) {
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+            glfwPollEvents();
             updateDeltaTime(); // dt for menu as well
 
             if (sceneManager.current()) {
@@ -3114,7 +3118,7 @@ namespace gl3 {
             std::cout<<"move Input: "<<moveInput.x<<" X,"<<moveInput.y<<" Y,"<<moveInput.z<<" Z,"<<"\n";
             // Update character with camera-relative movement
             characterController->update(deltaTime, moveInput, jump, sprint, crouch, mouseDelta, cameraFront, cameraRight, airSlam );
-
+            std::cout<<"move Input: "<<moveInput.x<<" ...\n";
             accumulator -= fixedTimeStep;
 
             // Update physics and get bodies that were removed
