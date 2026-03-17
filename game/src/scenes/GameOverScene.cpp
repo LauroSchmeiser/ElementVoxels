@@ -1,34 +1,34 @@
 #include "../Game.h"
 #include "../SceneId.h"
-#include "MainMenuScene.h"
+#include "GameOverScene.h"
 
 #include <imgui.h>
 #include <GLFW/glfw3.h>
 
 namespace gl3 {
 
-    void MainMenuScene::onEnter(Game& game)
+    void GameOverScene::onEnter(Game& game)
     {
         // show cursor for menu usage
         glfwSetInputMode(game.getWindow(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
         open = true;
-        game.setupSkybox();
-        game.bakeNebulaCubemap(512);
+        //game.setupSkybox();
+        //game.bakeNebulaCubemap(512);
     }
 
-    void MainMenuScene::onExit(Game& game)
+    void GameOverScene::onExit(Game& game)
     {
         // optional: hide cursor when leaving menu
         glfwSetInputMode(game.getWindow(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
     }
 
-    void MainMenuScene::update(Game& game, float /*dt*/)
+    void GameOverScene::update(Game& game, float /*dt*/)
     {
         // Typical: allow Alt+F4 / window close handled elsewhere.
         // No simulation needed here.
     }
 
-    void MainMenuScene::render(Game& game)
+    void GameOverScene::render(Game& game)
     {
         setWindowTitle(game);
         // 1) Draw skybox as aesthetic background
@@ -53,13 +53,15 @@ namespace gl3 {
                 ImGuiWindowFlags_NoCollapse |
                 ImGuiWindowFlags_NoTitleBar;
 
-        if (ImGui::Begin("MainMenu", &open, flags))
+        if (ImGui::Begin("Game Over", &open, flags))
         {
             ImGui::SetCursorPosY(20.0f);
 
             ImGui::PushFont(nullptr);
-            ImGui::SetCursorPosX((panelW - ImGui::CalcTextSize("Element Voxels").x) * 0.5f);
-            ImGui::TextUnformatted("Element Voxels");
+            ImGui::SetCursorPosX((panelW - ImGui::CalcTextSize("Game Over").x) * 0.5f);
+            //ImGui::TextUnformatted("Game Over");
+            ImGui::TextColored(ImVec4(1.0f,0.0f,0.0f,1.0f),"Game Over");
+            ImGui::SetWindowFontScale(3);
             ImGui::PopFont();
 
             ImGui::Spacing();
@@ -69,7 +71,7 @@ namespace gl3 {
             const ImVec2 btnSize(panelW * 0.75f, 44.0f);
             ImGui::SetCursorPosX((panelW - btnSize.x) * 0.5f);
 
-            if (ImGui::Button("Start Game", btnSize))
+            if (ImGui::Button("Restart Game", btnSize))
             {
                 game.requestSceneChange(SceneId::Loading);
             }
@@ -79,8 +81,7 @@ namespace gl3 {
 
             if (ImGui::Button("Back to Desktop", btnSize))
             {
-                //glfwSetWindowShouldClose(game.getWindow(), true);
-                game.requestSceneChange(SceneId::GameOver);
+                glfwSetWindowShouldClose(game.getWindow(), true);
             }
         }
         ImGui::End();
@@ -88,21 +89,21 @@ namespace gl3 {
         game.imgui().endFrame();
     }
 
-    void MainMenuScene::setWindowTitle(Game& game) {
-            static double lastTime = 0.0;
-            static int frames = 0;
+    void GameOverScene::setWindowTitle(Game& game) {
+        static double lastTime = 0.0;
+        static int frames = 0;
 
-            double currentTime = glfwGetTime();
-            frames++;
+        double currentTime = glfwGetTime();
+        frames++;
 
-            if (currentTime - lastTime >= 1.0) {
-                double fps = frames / (currentTime - lastTime);
-                frames = 0;
-                lastTime = currentTime;
+        if (currentTime - lastTime >= 1.0) {
+            double fps = frames / (currentTime - lastTime);
+            frames = 0;
+            lastTime = currentTime;
 
-                std::string title = "Voxel Engine | FPS: " + std::to_string((int)fps);
-                glfwSetWindowTitle(game.getWindow(), title.c_str());
-            }
+            std::string title = "Voxel Engine | FPS: " + std::to_string((int)fps);
+            glfwSetWindowTitle(game.getWindow(), title.c_str());
+        }
     }
 
 } // namespace gl3

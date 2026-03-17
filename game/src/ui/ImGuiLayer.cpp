@@ -18,9 +18,8 @@ namespace gl3 {
 
         ImGui::StyleColorsDark();
 
-        // IMPORTANT:
-        // Don't let ImGui replace your GLFW callbacks (your Input system likely needs them).
-        ImGui_ImplGlfw_InitForOpenGL(window, /*install_callbacks=*/false);
+
+        ImGui_ImplGlfw_InitForOpenGL(window, /*install_callbacks=*/true);
         ImGui_ImplOpenGL3_Init(glslVersion);
 
         initialized = true;

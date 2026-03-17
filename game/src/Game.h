@@ -47,6 +47,10 @@ namespace gl3 {
 
         GLFWwindow *getWindow() { return window; }
 
+        int getWindowWidth() {return windowWidth;}
+        int getWindowHeight() {return windowHeight;}
+
+
         gl3::ImGuiLayer& imgui() { return imguiLayer; }
 
         gl3::ImGuiLayer imguiLayer;
@@ -580,24 +584,39 @@ namespace gl3 {
         void initCoreSystems();     // window/glad/shaders/audio/materials (fast-ish)
         void initGameplaySystems(); // chunk generation, camera, vfx, etc (slow)
         enum class PreloadStage : uint8_t {
-            NotStarted = 0,
-            SetupSkybox,
-            BakeNebula,
-            SetupSSBOs,
-            SetupControls,
-            SetupInput,
-            GenerateChunks,
-            FillMaterialTable,
-            SetupCamera,
-            SetupAssets,
-            SetupPhysics,
-            SetupVEffects,
+            NotStarted,
+
+            // immutable
+            Boot_Skybox,
+            Boot_Nebula,
+            Boot_SSBOs,
+            Boot_Materials,
+            Boot_Assets,
+            Boot_VEffects,
+
+            // mutable
+            Run_Physics,
+            Run_Controls,
+            Run_Input,
+            Run_World,
+            Run_Camera,
+
             Done
         };
+
 
         PreloadStage preloadStage = PreloadStage::NotStarted;
         std::string preloadStageName;
 
+        bool bootLoaded = false;   // immutable done once
+        bool needsNewRun = true;   // set true whenever we want a fresh run
+        bool doNewRun = true;
+        void markNeedsNewRun() { needsNewRun = true; }
+
+        void ensureBootLoaded();     // immutable
+        void resetGameplayRunState(); // mutable reset
+
+        void clearWorldAndGameplayObjects();
 
         ////helper functions:
         RayCastResult rayCastFromCamera(float maxDistance = 1000.0f);
@@ -607,9 +626,11 @@ namespace gl3 {
         void updateCamera();
         void createNoiseTexture();
         void createNebulaCubemap(int size);
+    public:
+        void beginGameplayPreload(bool newRun);
         void bakeNebulaCubemap(int size);
         void setupSkybox();
-
+    private:
         glm::vec2 getMouseDelta();
         glm::dvec2 previousMousePos = glm::dvec2(0.0, 0.0);
         bool hasPreviousMousePos = false;

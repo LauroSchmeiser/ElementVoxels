@@ -14,6 +14,7 @@
 #include "scenes/MainMenuScene.h"
 #include "scenes/GameplayScene.h"
 #include "scenes/LoadingScene.h"
+#include "scenes/GameOverScene.h"
 
 #ifndef TRACY_GPU_ENABLED
 #define TRACY_CPU_ZONE(nameStr) ZoneScopedN(nameStr)
@@ -190,9 +191,11 @@ namespace gl3 {
         sceneManager.registerScene(SceneId::MainMenu, std::make_unique<MainMenuScene>());
         sceneManager.registerScene(SceneId::Gameplay, std::make_unique<GameplayScene>());
         sceneManager.registerScene(SceneId::Loading, std::make_unique<LoadingScene>());
+        sceneManager.registerScene(SceneId::GameOver, std::make_unique<GameOverScene>());
 
-        // Start at main menu
-        sceneManager.requestChange(SceneId::Loading);
+
+                // Start at main menu
+        sceneManager.requestChange(SceneId::MainMenu);
         sceneManager.applyPendingChange();
     }
 
@@ -346,108 +349,171 @@ namespace gl3 {
         DisplayFPSCount();
     }
 
-    void Game::beginGameplayPreload()
+    void gl3::Game::beginGameplayPreload(bool newRun)
     {
-        // If already done, keep it done.
-        if (gameplayInitialized) {
-            preloadStage = PreloadStage::Done;
-            preloadStageName = "Ready";
-            return;
-        }
+        doNewRun = newRun;
 
-        preloadStage = PreloadStage::SetupSkybox;
-        preloadStageName = "Preparing skybox...";
+        gameplayInitialized = false;
+        preloadStage = PreloadStage::NotStarted;
+        preloadStageName = "Starting...";
     }
 
-    float Game::tickGameplayPreload()
+    float gl3::Game::tickGameplayPreload()
     {
+        // Already ready for this run
         if (gameplayInitialized) {
-            preloadStage = PreloadStage::Done;
             preloadStageName = "Ready";
             return 1.0f;
         }
 
+        // Decide which stage we are going to run next
+        if (preloadStage == PreloadStage::NotStarted) {
+            if (!bootLoaded) {
+                preloadStage = PreloadStage::Boot_Skybox;
+            } else if (doNewRun) {
+                preloadStage = PreloadStage::Run_Physics;
+            } else {
+                // boot loaded and not requesting a new run -> just go
+                preloadStage = PreloadStage::Done;
+            }
+        }
+
         switch (preloadStage)
         {
-            case PreloadStage::NotStarted:
-                beginGameplayPreload();
-                return 0.0f;
-
-            case PreloadStage::SetupSkybox:
+            // ---------------- immutable boot ----------------
+            case PreloadStage::Boot_Skybox:
                 preloadStageName = "Preparing skybox...";
                 setupSkybox();
-                preloadStage = PreloadStage::BakeNebula;
+                preloadStage = PreloadStage::Boot_Nebula;
                 return 0.10f;
 
-            case PreloadStage::BakeNebula:
+            case PreloadStage::Boot_Nebula:
                 preloadStageName = "Baking nebula cubemap...";
                 bakeNebulaCubemap(512);
-                preloadStage = PreloadStage::SetupSSBOs;
+                preloadStage = PreloadStage::Boot_SSBOs;
                 return 0.20f;
 
-            case PreloadStage::SetupSSBOs:
+            case PreloadStage::Boot_SSBOs:
                 preloadStageName = "Setting up GPU buffers...";
                 setupSSBOsAndTables();
-                preloadStage = PreloadStage::SetupPhysics;
+                preloadStage = PreloadStage::Boot_Materials;
                 return 0.30f;
 
-            case PreloadStage::SetupPhysics:
-                preloadStageName = "Setting up physics...";
-                setupPhysics();
-                preloadStage = PreloadStage::SetupControls;
-                return 0.35f;
-
-            case PreloadStage::SetupControls:
-                preloadStageName = "Setting up controls...";
-                setupControls();
-                preloadStage = PreloadStage::SetupInput;
-                return 0.40f;
-
-            case PreloadStage::SetupInput:
-                preloadStageName = "Setting up input...";
-                setupInput();
-                preloadStage = PreloadStage::GenerateChunks;
-                return 0.50f;
-
-            case PreloadStage::GenerateChunks:
-                preloadStageName = "Generating world...";
-                generateChunks();
-                preloadStage = PreloadStage::FillMaterialTable;
-                return 0.6f;
-
-            case PreloadStage::FillMaterialTable:
+            case PreloadStage::Boot_Materials:
                 preloadStageName = "Loading materials...";
                 fillMaterialTable();
-                preloadStage = PreloadStage::SetupCamera;
-                return 0.7f;
+                preloadStage = PreloadStage::Boot_Assets;
+                return 0.40f;
 
-            case PreloadStage::SetupCamera:
-                preloadStageName = "Setting up camera...";
-                setupCamera();
-                preloadStage = PreloadStage::SetupAssets;
-                return 0.75f;
-
-            case PreloadStage::SetupAssets:
+            case PreloadStage::Boot_Assets:
                 preloadStageName = "Loading assets...";
                 generateAssets();
-                preloadStage = PreloadStage::SetupVEffects;
-                return 0.85f;
+                preloadStage = PreloadStage::Boot_VEffects;
+                return 0.50f;
 
-            case PreloadStage::SetupVEffects:
+            case PreloadStage::Boot_VEffects:
                 preloadStageName = "Finalizing effects...";
                 setupVEffects();
-                preloadStage = PreloadStage::Done;
+                bootLoaded = true;
 
-                gameplayInitialized = true;
-                preloadStageName = "Ready";
-                return 0.9f;
+                // After boot, continue into run init if requested
+                preloadStage = doNewRun ? PreloadStage::Run_Physics : PreloadStage::Done;
+                return 0.60f;
+
+                // ---------------- mutable run ----------------
+            case PreloadStage::Run_Physics:
+                preloadStageName = "Setting up physics...";
+                clearWorldAndGameplayObjects(); // wipe run state first
+                setupPhysics();
+                preloadStage = PreloadStage::Run_Controls;
+                return 0.70f;
+
+            case PreloadStage::Run_Controls:
+                preloadStageName = "Setting up controls...";
+                setupControls();
+                preloadStage = PreloadStage::Run_Input;
+                return 0.75f;
+
+            case PreloadStage::Run_Input:
+                preloadStageName = "Setting up input...";
+                setupInput();
+                preloadStage = PreloadStage::Run_World;
+                return 0.80f;
+
+            case PreloadStage::Run_World:
+                preloadStageName = "Generating world...";
+                generateChunks();
+                preloadStage = PreloadStage::Run_Camera;
+                return 0.92f;
+
+            case PreloadStage::Run_Camera:
+                preloadStageName = "Setting up camera...";
+                setupCamera();
+                preloadStage = PreloadStage::Done;
+                return 0.97f;
 
             case PreloadStage::Done:
             default:
                 gameplayInitialized = true;
+                needsNewRun = false;
                 preloadStageName = "Ready";
                 return 1.0f;
         }
+    }
+
+    void Game::ensureBootLoaded()
+    {
+        if (bootLoaded) return;
+
+        // IMPORTANT: only stuff you NEVER want to redo on restart
+        setupSkybox();
+        bakeNebulaCubemap(512);
+        setupSSBOsAndTables();
+        fillMaterialTable();
+        generateAssets();
+        setupVEffects();
+
+        bootLoaded = true;
+    }
+
+    void Game::clearWorldAndGameplayObjects()
+    {
+        // Clear spells / animations
+        activeSpells.clear();
+        animatedVoxels.clear();
+        animatedVoxelIndexMap.clear();
+        nextAnimatedVoxelID = 1;
+
+        // If you have other per-run gameplay state, clear it here:
+        // FilledChunks = 0; etc.
+
+
+        chunkManager->clear();
+        // Clear chunks/world
+        // If MultiGridChunkManager has a "clear all" API, call it.
+        // Otherwise you need to iterate all existing chunks and clear/unload them.
+        // (Pseudo - replace with your real API)
+        //
+        // chunkManager->clearAll();  <-- ideal
+    }
+
+    void Game::resetGameplayRunState()
+    {
+        // This should restore the gameplay to a "fresh run" condition
+        clearWorldAndGameplayObjects();
+
+        // Recreate physics + controller each run, so old spell bodies despawn and state is clean
+        setupPhysics();
+        setupControls();
+
+        // Rebuild input mapping (optional; but safe if you want consistent bindings)
+        setupInput();
+
+        // Generate new world
+        generateChunks();
+
+        // Reset camera/player after world is generated (your generateChunks sets cameraPos + controller position)
+        setupCamera();
     }
 
 ////-----Run-Method-----------------------------------------------------------------------------------------------------------------------------
@@ -2917,6 +2983,10 @@ namespace gl3 {
         std::uniform_real_distribution<float> distMat(0.0f, 7.9f);
 
         std::vector<WorldPlanet> worldPlanets;
+
+        //clear old data:
+        chunkManager->clear();
+
 
         // Create solid planets (type 1)
         int planetCount = 20;

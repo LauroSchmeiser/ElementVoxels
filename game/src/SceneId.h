@@ -6,5 +6,6 @@ namespace gl3 {
         MainMenu = 0,
         Loading = 1,
         Gameplay = 2,
+        GameOver = 3,
     };
 }

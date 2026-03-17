@@ -62,6 +62,8 @@ add_executable(${EXE_FILE}
         src/ui/ImGuiLayer.h
         src/scenes/LoadingScene.cpp
         src/scenes/LoadingScene.h
+        src/scenes/GameOverScene.cpp
+        src/scenes/GameOverScene.h
 )
 
 # Link Tracy and enable it
