@@ -5073,6 +5073,12 @@ namespace gl3 {
     void Game::updateCamera() {
         // Get player head/eye position
         glm::vec3 headPos = characterController->getCameraPosition();
+        float distsq=glm::sqrt(headPos.x*headPos.x+headPos.y*headPos.y+headPos.z*headPos.z);
+        std::cout<<"Distance: "<< distsq << "/"<< 750<<"\n";
+        if(distsq>750)
+        {
+            requestSceneChange(SceneId::GameOver);
+        }
         // Desired camera offset behind the player (tweak this)
         const float cameraFollowDistance = 1.75f * VOXEL_SIZE; // how far behind the head
         const float cameraHeightOffset = 2.5f*VOXEL_SIZE;                // extra vertical offset if needed

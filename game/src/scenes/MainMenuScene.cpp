@@ -55,6 +55,8 @@ namespace gl3 {
 
         if (ImGui::Begin("MainMenu", &open, flags))
         {
+            ImGui::SetWindowFontScale(3);
+
             ImGui::SetCursorPosY(20.0f);
 
             ImGui::PushFont(nullptr);
@@ -79,8 +81,8 @@ namespace gl3 {
 
             if (ImGui::Button("Back to Desktop", btnSize))
             {
-                //glfwSetWindowShouldClose(game.getWindow(), true);
-                game.requestSceneChange(SceneId::GameOver);
+                glfwSetWindowShouldClose(game.getWindow(), true);
+                //game.requestSceneChange(SceneId::GameOver);
             }
         }
         ImGui::End();
