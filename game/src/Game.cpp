@@ -15,6 +15,7 @@
 #include "scenes/GameplayScene.h"
 #include "scenes/LoadingScene.h"
 #include "scenes/GameOverScene.h"
+#include <imgui.h>;
 
 #ifndef TRACY_GPU_ENABLED
 #define TRACY_CPU_ZONE(nameStr) ZoneScopedN(nameStr)
@@ -347,6 +348,8 @@ namespace gl3 {
         renderPhysicsFormations();
         renderSpellPreview();
         DisplayFPSCount();
+
+        renderGameplayUI();
     }
 
     void gl3::Game::beginGameplayPreload(bool newRun)
@@ -372,6 +375,7 @@ namespace gl3 {
                 preloadStage = PreloadStage::Boot_Skybox;
             } else if (doNewRun) {
                 preloadStage = PreloadStage::Run_Physics;
+                setPlayerHealth(getPlayerMaxHealth());
             } else {
                 // boot loaded and not requesting a new run -> just go
                 preloadStage = PreloadStage::Done;
@@ -514,6 +518,129 @@ namespace gl3 {
 
         // Reset camera/player after world is generated (your generateChunks sets cameraPos + controller position)
         setupCamera();
+    }
+
+    // Add near other Game methods
+    void Game::setPaused(bool p)
+    {
+        if (paused == p) return;
+        paused = p;
+
+        if (paused) {
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+            // Optional: clear mouse delta history so unpausing doesn't "jump"
+            hasPreviousMousePos = false;
+        } else {
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+            hasPreviousMousePos = false;
+        }
+    }
+
+    void Game::togglePaused()
+    {
+        setPaused(!paused);
+    }
+
+    void Game::renderGameplayUI()
+    {
+        // HUD + pause menu overlay
+        imguiLayer.beginFrame();
+
+        // ----------------
+        // (A) Health bar
+        // ----------------
+        {
+            ImGuiWindowFlags flags =
+                    ImGuiWindowFlags_NoDecoration |
+                    ImGuiWindowFlags_AlwaysAutoResize |
+                    ImGuiWindowFlags_NoMove |
+                    ImGuiWindowFlags_NoSavedSettings |
+                    ImGuiWindowFlags_NoFocusOnAppearing |
+                    ImGuiWindowFlags_NoNav;
+
+            const ImVec2 pad(12.0f, 12.0f);
+            ImGui::SetNextWindowPos(pad, ImGuiCond_Always);
+
+            // Slight translucent background
+            ImGui::SetNextWindowBgAlpha(0.35f);
+
+            if (ImGui::Begin("HUD_Health", nullptr, flags))
+            {
+                float maxH = glm::max(1.0f, playerMaxHealth);
+                float frac = glm::clamp(playerHealth / maxH, 0.0f, 1.0f);
+
+                ImGui::TextUnformatted("Health");
+                ImGui::PushItemWidth(220.0f);
+
+                // Color the bar from red->green
+                ImVec4 col = ImVec4(1.0f - frac, frac, 0.15f, 1.0f);
+                ImGui::PushStyleColor(ImGuiCol_PlotHistogram, col);
+                ImGui::ProgressBar(frac, ImVec2(220.0f, 18.0f));
+                ImGui::PopStyleColor();
+
+                ImGui::Text("%d / %d", (int)playerHealth, (int)playerMaxHealth);
+                ImGui::PopItemWidth();
+            }
+            ImGui::End();
+        }
+
+        // ----------------
+        // (B) Pause menu
+        // ----------------
+        if (paused)
+        {
+            ImGuiIO& io = ImGui::GetIO();
+            const ImVec2 center(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
+
+            ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+            ImGui::SetNextWindowSize(ImVec2(420, 220), ImGuiCond_Always);
+
+            ImGuiWindowFlags flags =
+                    ImGuiWindowFlags_NoResize |
+                    ImGuiWindowFlags_NoMove |
+                    ImGuiWindowFlags_NoCollapse |
+                    ImGuiWindowFlags_NoTitleBar;
+
+            ImGui::SetNextWindowBgAlpha(0.65f);
+
+            if (ImGui::Begin("PauseMenu", nullptr, flags))
+            {
+                ImGui::SetWindowFontScale(2.0f);
+                ImGui::SetCursorPosY(18.0f);
+                ImGui::SetCursorPosX((420.0f - ImGui::CalcTextSize("Paused").x) * 0.5f);
+                ImGui::TextUnformatted("Paused");
+                ImGui::SetWindowFontScale(1.0f);
+
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                const ImVec2 btnSize(420.0f * 0.75f, 44.0f);
+                ImGui::SetCursorPosX((420.0f - btnSize.x) * 0.5f);
+
+                if (ImGui::Button("Resume", btnSize)) {
+                    setPaused(false);
+                }
+
+                ImGui::Spacing();
+                ImGui::SetCursorPosX((420.0f - btnSize.x) * 0.5f);
+
+                if (ImGui::Button("Back to Main Menu", btnSize)) {
+                    setPaused(false);
+                    requestSceneChange(SceneId::MainMenu);
+                }
+
+                ImGui::Spacing();
+                ImGui::SetCursorPosX((420.0f - btnSize.x) * 0.5f);
+
+                if (ImGui::Button("Exit to Desktop", btnSize)) {
+                    glfwSetWindowShouldClose(getWindow(), true);
+                }
+            }
+            ImGui::End();
+        }
+
+        imguiLayer.endFrame();
     }
 
 ////-----Run-Method-----------------------------------------------------------------------------------------------------------------------------
@@ -3212,7 +3339,9 @@ namespace gl3 {
 
     void Game::onPlayerBodyCollision(gl3::VoxelPhysicsBody *body, const glm::vec3 &hitPos, const glm::vec3 &hitNormal,
                                      float playerSpeed) {
-
+        float hitSpeed=glm::sqrt(body->velocity.x*body->velocity.x+body->velocity.y*body->velocity.y+body->velocity.z*body->velocity.z)/400;
+        setPlayerHealth(getPlayerHealth()-(glm::sqrt(body->mass*hitSpeed)));
+        body->velocity=glm::vec3(body->velocity.x/10,body->velocity.y/10,body->velocity.z/10);
     }
 
     void Game::onBodyBodyCollision(gl3::VoxelPhysicsBody *bodyA, gl3::VoxelPhysicsBody *bodyB, const glm::vec3 &hitPos,
@@ -3550,6 +3679,13 @@ namespace gl3 {
 ////----Input Code------------------------------------------------------------------------------------------------------------------------------
 
     void Game::update() {
+
+        if(getPlayerHealth()<=0)
+        {
+            requestSceneChange(SceneId::MainMenu);
+        }
+        //for
+
         emissiveUpdateCounter++;
         if (++emissiveUpdateCounter >= 30) { // Every 30 frames
             processEmissiveChunks();
@@ -3566,6 +3702,7 @@ namespace gl3 {
 
         if (actions["ToggleDebug"].wasJustPressed) {
             DebugMode1 = !DebugMode1;
+            activeSpellMat=0;
             std::cout << "Debug mode: " << (DebugMode1 ? "ON" : "OFF") << "\n";
 
             // Optional: Update shaders like before
@@ -3580,21 +3717,35 @@ namespace gl3 {
 
         if (actions["DebugMode1"].wasJustPressed&&DebugMode1) {
             activeDebugMode = 1;
+        } else if(actions["DebugMode1"].wasJustPressed)
+        {
+            activeSpellMat=1;
         }
         if (actions["DebugMode2"].wasJustPressed&&DebugMode1) {
             activeDebugMode = 2;
+        } else if (actions["DebugMode2"].wasJustPressed) {
+            activeSpellMat = 2;
         }
         if (actions["DebugMode3"].wasJustPressed&&DebugMode1) {
             activeDebugMode = 3;
+        } else  if (actions["DebugMode3"].wasJustPressed) {
+            activeSpellMat = 3;
         }
         if (actions["DebugMode4"].wasJustPressed&&DebugMode1) {
             activeDebugMode = 4;
         }
+        else if (actions["DebugMode4"].wasJustPressed) {
+            activeSpellMat = 4;
+        }
         if (actions["DebugMode5"].wasJustPressed&&DebugMode1) {
             activeDebugMode = 5;
+        } else  if (actions["DebugMode5"].wasJustPressed) {
+            activeSpellMat = 5;
         }
         if (actions["DebugMode6"].wasJustPressed&&DebugMode1) {
             activeDebugMode = 6;
+        } else if (actions["DebugMode6"].wasJustPressed) {
+            activeSpellMat = 6;
         }
         if (actions["Wireframe"].wasJustPressed&&DebugMode1) {
             DebugMode2=!DebugMode2;
@@ -3610,7 +3761,7 @@ namespace gl3 {
             float spellRadius = 6.0f * VOXEL_SIZE;  // Adjust size
             float spellStrength = 4.0f;              // Affects velocity
 
-            castSpellSphere(spellCenter, spellRadius, 0, spellStrength);
+            castSpellSphere(spellCenter, spellRadius, activeSpellMat, spellStrength);
         }
 
         if (actions["CastWall"].wasJustReleased) {
@@ -5077,7 +5228,7 @@ namespace gl3 {
         std::cout<<"Distance: "<< distsq << "/"<< 750<<"\n";
         if(distsq>750)
         {
-            requestSceneChange(SceneId::GameOver);
+            setPlayerHealth(getPlayerHealth()-0.2f);
         }
         // Desired camera offset behind the player (tweak this)
         const float cameraFollowDistance = 1.75f * VOXEL_SIZE; // how far behind the head

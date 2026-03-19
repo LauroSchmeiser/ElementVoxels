@@ -15,6 +15,8 @@ namespace gl3 {
 
     private:
         bool initialized = false;
+        bool escWasDown = false;
+
     };
 
 } // namespace gl3

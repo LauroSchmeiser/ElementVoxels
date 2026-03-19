@@ -630,10 +630,24 @@ namespace gl3 {
         void beginGameplayPreload(bool newRun);
         void bakeNebulaCubemap(int size);
         void setupSkybox();
+
+        float getPlayerHealth() const { return playerHealth; }
+        float getPlayerMaxHealth() const { return playerMaxHealth; }
+        void setPlayerHealth(float h) { playerHealth = glm::clamp(h, 0.0f, playerMaxHealth); }
+        void setPlayerMaxHealth(float h) { playerMaxHealth = glm::max(1.0f, h); playerHealth = glm::min(playerHealth, playerMaxHealth); }
+        bool isPaused() const { return paused; }
+        void setPaused(bool p);
+        void togglePaused();
+        void renderGameplayUI();
     private:
         glm::vec2 getMouseDelta();
         glm::dvec2 previousMousePos = glm::dvec2(0.0, 0.0);
         bool hasPreviousMousePos = false;
+        float playerMaxHealth = 100.0f;
+        float playerHealth    = 100.0f;
+
+        bool paused = false;
+        int activeSpellMat=0;
 
     };
 }
