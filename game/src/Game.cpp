@@ -3341,7 +3341,7 @@ namespace gl3 {
                                      float playerSpeed) {
         float hitSpeed=glm::sqrt(body->velocity.x*body->velocity.x+body->velocity.y*body->velocity.y+body->velocity.z*body->velocity.z)/400;
         setPlayerHealth(getPlayerHealth()-(glm::sqrt(body->mass*hitSpeed)));
-        body->velocity=glm::vec3(body->velocity.x/10,body->velocity.y/10,body->velocity.z/10);
+        body->velocity=glm::vec3(body->velocity.x/VOXEL_SIZE,body->velocity.y/VOXEL_SIZE,body->velocity.z/VOXEL_SIZE);
     }
 
     void Game::onBodyBodyCollision(gl3::VoxelPhysicsBody *bodyA, gl3::VoxelPhysicsBody *bodyB, const glm::vec3 &hitPos,
@@ -3684,7 +3684,16 @@ namespace gl3 {
         {
             requestSceneChange(SceneId::MainMenu);
         }
-        //for
+        chunkManager->forEachEmissiveChunk([this](Chunk *chunk) {
+            for (auto &light: chunk->emissiveLights) {
+                glm::vec3 dist=(cameraPos-light.pos);
+                float distsq = glm::sqrt(dist.x*dist.x+ dist.y*dist.y+ dist.z*dist.z);
+                if(distsq<0.0006f*light.intensity)
+                {
+                    setPlayerHealth(getPlayerHealth()-0.0075f*distsq);
+                }
+            }
+        });
 
         emissiveUpdateCounter++;
         if (++emissiveUpdateCounter >= 30) { // Every 30 frames
