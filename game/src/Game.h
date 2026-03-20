@@ -533,10 +533,25 @@ namespace gl3 {
         GLuint ssboVoxels = 0, ssboEdgeTable = 0, ssboTriTable = 0,
         ssboCounter = 0, ssboTriangles = 0, particleSSBO = 0, fieldBitsSSBO = 0;
 
+
         //vEffects
         SunBillboard sunBillboards;
         std::vector<SunInstance> emissiveBillboards;
         int emissiveUpdateCounter=0;
+
+        // Post-processing FBO
+        GLuint postFBO = 0;
+        GLuint postColorTex = 0;   // RGBA16F scene color
+        GLuint postDepthTex = 0;   // DEPTH_COMPONENT24/32F scene depth
+
+        // Fullscreen quad/triangle
+        GLuint postVAO = 0;
+        GLuint postVBO = 0;
+
+        std::unique_ptr<Shader> postShader;
+
+        void initPostFBO();
+        void CreateFullscreenTriangle(GLuint& vao, GLuint& vbo);
 
         //Materials:
         gl3::MaterialSystem materials;
@@ -589,6 +604,7 @@ namespace gl3 {
             // immutable
             Boot_Skybox,
             Boot_Nebula,
+            Boot_PostProcessor,
             Boot_SSBOs,
             Boot_Materials,
             Boot_Assets,

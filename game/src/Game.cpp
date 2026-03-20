@@ -133,6 +133,7 @@ namespace gl3 {
         if (game) {
             game->windowWidth = width;
             game->windowHeight = height;
+            game->initPostFBO();
         }
     }
 
@@ -177,6 +178,7 @@ namespace gl3 {
         voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel.frag");
         marchingCubesShader = std::make_unique<Shader>("shaders/marching_cubes.comp");
         spellPreviewShader = std::make_unique<Shader>("shaders/spell_prev.vert", "shaders/spell_prev.frag");
+        postShader = std::make_unique<Shader>("shaders/post_fullscreen.vert", "shaders/post_fog_glow.frag");
 
         try {
             voxelSplatShader = std::make_unique<Shader>("shaders/metaball_splat.comp");
@@ -342,13 +344,61 @@ namespace gl3 {
     }
 
     void Game::renderGameplayFrame() {
+        // 1) Render scene into postFBO
+        //glBindFramebuffer(GL_FRAMEBUFFER, postFBO);
+        glViewport(0, 0, windowWidth, windowHeight);
+
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_TRUE);
+        glClearColor(0,0,0,1);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
         if(!DebugMode1) renderSkybox();
         renderChunks();
         renderAnimatedVoxels();
         renderPhysicsFormations();
         renderSpellPreview();
-        DisplayFPSCount();
 
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+       /*
+        // 2) Post pass to screen (fog + glow)
+        glDisable(GL_DEPTH_TEST);
+        glDepthMask(GL_FALSE);
+
+        postShader->use();
+
+        postShader->setInt("uSceneColor", 0);
+        postShader->setInt("uSceneDepth", 1);
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, postColorTex);
+
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, postDepthTex);
+
+        postShader->setFloat("uNear", 0.1f);
+        postShader->setFloat("uFar", 500.0f);
+
+        postShader->setFloat("uExposure", 1.0f);
+        postShader->setFloat("uGamma", 2.2f);
+
+        postShader->setFloat("uFogStrength", 3.0f);
+        postShader->setFloat("uFogStart", 50.0f);
+        postShader->setFloat("uFogEnd", 1050.0f);
+
+        postShader->setFloat("uGlowThreshold", 2.0f);  // if HDR-ish
+        postShader->setFloat("uGlowStrength", 0.85f);
+
+        postShader->setVec2("uInvResolution", glm::vec2(1.0f / windowWidth, 1.0f / windowHeight));
+
+        glBindVertexArray(postVAO);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glBindVertexArray(0);
+
+        */
+        // UI and other stuff AFTER post
+        DisplayFPSCount();
         renderGameplayUI();
     }
 
@@ -394,8 +444,14 @@ namespace gl3 {
             case PreloadStage::Boot_Nebula:
                 preloadStageName = "Baking nebula cubemap...";
                 bakeNebulaCubemap(512);
-                preloadStage = PreloadStage::Boot_SSBOs;
+                preloadStage = PreloadStage::Boot_PostProcessor;
                 return 0.20f;
+
+            case PreloadStage::Boot_PostProcessor:
+                preloadStageName = "Preparing Post-processing...";
+                initPostFBO();
+                preloadStage = PreloadStage::Boot_SSBOs;
+                return 0.25f;
 
             case PreloadStage::Boot_SSBOs:
                 preloadStageName = "Setting up GPU buffers...";
@@ -570,12 +626,13 @@ namespace gl3 {
                 float frac = glm::clamp(playerHealth / maxH, 0.0f, 1.0f);
 
                 ImGui::TextUnformatted("Health");
-                ImGui::PushItemWidth(220.0f);
+                ImGui::SetWindowFontScale(2);
+                ImGui::PushItemWidth(320.0f);
 
                 // Color the bar from red->green
                 ImVec4 col = ImVec4(1.0f - frac, frac, 0.15f, 1.0f);
                 ImGui::PushStyleColor(ImGuiCol_PlotHistogram, col);
-                ImGui::ProgressBar(frac, ImVec2(220.0f, 18.0f));
+                ImGui::ProgressBar(frac, ImVec2(320.0f, 30.0f));
                 ImGui::PopStyleColor();
 
                 ImGui::Text("%d / %d", (int)playerHealth, (int)playerMaxHealth);
@@ -641,6 +698,51 @@ namespace gl3 {
         }
 
         imguiLayer.endFrame();
+    }
+
+    void Game::initPostFBO()
+    {
+        // Cleanup if re-init (e.g. resize)
+        if (postFBO) {
+            glDeleteFramebuffers(1, &postFBO);
+            glDeleteTextures(1, &postColorTex);
+            glDeleteTextures(1, &postDepthTex);
+            postFBO = postColorTex = postDepthTex = 0;
+        }
+
+        glGenFramebuffers(1, &postFBO);
+        glBindFramebuffer(GL_FRAMEBUFFER, postFBO);
+
+        // Color: HDR-ish so glow has headroom
+        glGenTextures(1, &postColorTex);
+        glBindTexture(GL_TEXTURE_2D, postColorTex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, windowWidth, windowHeight, 0, GL_RGBA, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, postColorTex, 0);
+
+        // Depth: MUST be a texture to sample in post
+        glGenTextures(1, &postDepthTex);
+        glBindTexture(GL_TEXTURE_2D, postDepthTex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, windowWidth, windowHeight, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, postDepthTex, 0);
+
+        GLenum drawBufs[] = { GL_COLOR_ATTACHMENT0 };
+        glDrawBuffers(1, drawBufs);
+
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+            std::cerr << "postFBO incomplete!\n";
+        }
+
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+        // Fullscreen tri + shader
+        if (!postVAO) CreateFullscreenTriangle(postVAO, postVBO);
+
+        // Load your post shader (paths should match resolveAssetPath usage)
+        postShader = std::make_unique<Shader>("shaders/post_fullscreen.vert", "shaders/post_fog_glow.frag");
     }
 
 ////-----Run-Method-----------------------------------------------------------------------------------------------------------------------------
@@ -5553,4 +5655,31 @@ namespace gl3 {
         return glm::clamp(t / duration, 0.0f, 1.0f);
     }
 
+
+    void Game::CreateFullscreenTriangle(GLuint& vao, GLuint& vbo)
+    {
+        // Fullscreen triangle (no index buffer)
+        // positions (x,y) + uvs (u,v)
+        const float verts[] = {
+                //  x,  y,   u,  v
+                -1.f, -1.f, 0.f, 0.f,
+                3.f, -1.f, 2.f, 0.f,
+                -1.f,  3.f, 0.f, 2.f
+        };
+
+        glGenVertexArrays(1, &vao);
+        glGenBuffers(1, &vbo);
+
+        glBindVertexArray(vao);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
+
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+
+        glBindVertexArray(0);
+    }
 }

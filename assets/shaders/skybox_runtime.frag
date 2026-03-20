@@ -55,6 +55,8 @@ void main() {
 
     // optional tone map / gamma depending on your pipeline
     color = pow(color, vec3(1.0/0.25));
+    color= color/(color+1.0);
+
 
     FragColor = vec4(color, 1.0);
 }

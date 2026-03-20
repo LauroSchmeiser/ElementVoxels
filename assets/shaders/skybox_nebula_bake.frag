@@ -105,7 +105,7 @@ void main() {
     vec3 finalColor = nebulaColor * 3.5;
 
     // keep it HDR-ish in bake, or clamp depending on your pipeline
-    finalColor = max(finalColor, vec3(0.0));
+  //  finalColor = max(finalColor, vec3(0.0));
 
     FragColor = vec4(finalColor, 1.0);
 }

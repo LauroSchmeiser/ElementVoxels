@@ -201,6 +201,7 @@ void main() {
     }
 
     vec3 hdr = ambient + diffuse + specAccum + emiss;
+    hdr= pow(hdr, vec3(1.0/0.5));
     vec3 color = hdr / (hdr + vec3(1.0));
 
     // Overlay
@@ -212,6 +213,8 @@ void main() {
         float a = clamp(uOverlayAlpha * mask * m, 0.0, 1.0);
         color = mix(color, uOverlayColor, a);
     }
+    //color= color*2.75;
+   // color = pow(color, vec3(1.0/0.5));
 
     FragColor = vec4(color, 1.0);
 }
