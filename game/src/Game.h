@@ -286,18 +286,7 @@ namespace gl3 {
 
         void createPartialFormation(const SpellEffect& spell, float completionRatio);
 
-        void createExteriorSmoothCrater(Chunk* chunk, const glm::ivec3& voxelPos,
-                                        const glm::vec3& worldPos);
-
-        void handleCraterInNeighboringChunk(const glm::vec3& worldPos,
-                                                  int dx, int dy, int dz,
-                                                  float craterRadius,
-                                                  float maxCraterDepth,
-                                                  float impactFactor);
-
         void createCraterAtPosition(const glm::vec3& worldPos, float impactFactor, float spellRadius);
-
-        float randomFloat(float min, float max);
 
         void castSpellSphere(const glm::vec3& center, float radius,
                                    uint64_t material = 0, float strength = 1.0f);
@@ -406,8 +395,6 @@ namespace gl3 {
         //Physics:
         void updatePhysics();
 
-        void applyImpactAtPosition(const glm::vec3 &worldPos, float radius, float impulse, float mass);
-
         void updateDeltaTime();
 
         //Lighting:
@@ -425,8 +412,6 @@ namespace gl3 {
         ////Input-Steps
         void update();
 
-        void handleCameraInput();
-
         glm::vec3 getCameraFront() const;
 
 
@@ -442,7 +427,6 @@ namespace gl3 {
         void renderAnimatedVoxels();
         void renderPhysicsFormations();
         void renderSpellPreview();
-        void renderFluidPlanets();
 
         //marching cubes Shader:
         void generateChunkMesh(Chunk *chunk);
@@ -454,7 +438,6 @@ namespace gl3 {
         void setComputeUniforms(const glm::vec3 &position, Shader &computeShader);
 
         //vertex/frag Shader:
-        void drawTriangles(Shader &voxelShader, Chunk *chunk);
         void ensurePreviewCube();
         void ensurePreviewSphereMesh();
 
@@ -578,7 +561,6 @@ namespace gl3 {
         ///Scenes
         void requestSceneChange(SceneId id) { sceneManager.requestChange(id); }
         bool isGameplayInitialized() const { return gameplayInitialized; }
-        void beginGameplayPreload();
         float tickGameplayPreload();
         const std::string& getGameplayPreloadStageName() const { return preloadStageName; }
 
@@ -596,7 +578,6 @@ namespace gl3 {
         bool gameplayInitialized = false;
 
         // split initialization so menu can show instantly
-        void initCoreSystems();     // window/glad/shaders/audio/materials (fast-ish)
         void initGameplaySystems(); // chunk generation, camera, vfx, etc (slow)
         enum class PreloadStage : uint8_t {
             NotStarted,
@@ -624,13 +605,10 @@ namespace gl3 {
         PreloadStage preloadStage = PreloadStage::NotStarted;
         std::string preloadStageName;
 
-        bool bootLoaded = false;   // immutable done once
-        bool needsNewRun = true;   // set true whenever we want a fresh run
+        bool bootLoaded = false;
+        bool needsNewRun = true;
         bool doNewRun = true;
         void markNeedsNewRun() { needsNewRun = true; }
-
-        void ensureBootLoaded();     // immutable
-        void resetGameplayRunState(); // mutable reset
 
         void clearWorldAndGameplayObjects();
 
