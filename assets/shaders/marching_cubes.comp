@@ -1,10 +1,7 @@
 #version 430
 
-// layout sizes - tune to your chunk size
 layout (local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
 
-// Input voxel grid (density + color)
-// we store voxels in Z-major or any consistent order: index = x + y*W + z*W*H
 struct Voxel {
     float density;
     float pad0;
@@ -32,12 +29,12 @@ layout(std430, binding = 2) readonly buffer TriTableSSBO {
 };
 
 
-// Atomic counter for allocating vertices (we allocate per-vertex)
+// Atomic counter for allocating vertices
 layout(std430, binding = 3) buffer Counter {
     uint vertexCounter;
 };
 
-// Output triangle buffer (interleaved vertex attributes)
+// Output triangle buffer
 struct OutVertex {
     vec4 pos;    // xyz: position, w: unused
     vec4 normal; // xyz: normal
@@ -50,26 +47,11 @@ layout(std430, binding = 4) buffer Triangles {
     OutVertex verts[]; // sized to max vertices = numCells * 5 * 3
 };
 
-//----------------------------------------------------------------
-//particles implementation
-//----------------------------------------------------------------
-layout(std430, binding = 6) buffer FieldBits { uint fieldBits[]; };
 
-float readField(int idx) {
-    return uintBitsToFloat(fieldBits[idx]);
-}
+uniform ivec3 voxelGridDim;
+uniform vec3 gridOrigin;
+uniform float voxelSize;
 
-//----------------------------------------------------------------
-//End of particles imoplementation
-//----------------------------------------------------------------
-
-// Uniforms: grid dims and cell size & origin
-uniform ivec3 voxelGridDim; // now = (25,25,25)
-uniform vec3 gridOrigin;    // world position of voxel[0,0,0]
-uniform float voxelSize;    // spacing between voxels
-
-
-// Helpers to read voxel by 3D coords (clamp safe)
 int voxelIndex(ivec3 p) {
     return p.x + p.y * voxelGridDim.x + p.z * voxelGridDim.x * voxelGridDim.y;
 }
@@ -87,31 +69,17 @@ vec3 sampleColor(ivec3 p) {
 }
 
 vec2 computePlanarUV(vec3 worldPos) {
-    // scale controls texel density
-    float scale = 0.1; // tweak
+    float scale = 0.1;
     return worldPos.xz * scale;
 }
-/*  //new versions for fluid shaders, dont work with normal rendering
-float sampleDensity(ivec3 p) {
-    int idx = p.x + p.y*voxelGridDim.x + p.z*voxelGridDim.x*voxelGridDim.y;
-    return uintBitsToFloat(fieldBits[idx]);
-}
 
-
-vec3 sampleColor(ivec3 p) {
-    // for now, assign fixed color or encode particle type
-    return vec3(0.2f, 0.5f, 1.0f); // blueish fluid
-}*/
-
-// interpolate along edge p1->p2 where d1,d2 are densities
 vec3 vertexInterpolate(vec3 p1, vec3 p2, float d1, float d2) {
     float denom = (d1 - d2);
     float t = abs(denom) < 1e-6 ? 0.5 : (d1 / denom);
     return mix(p1, p2, clamp(t, 0.0, 1.0));
 }
-// Trilinear sample of density at fractional voxel coords (voxel index space).
+
 float sampleDensityTrilinear(vec3 idxF) {
-    // safe range so we can access i0+1 without hitting dim-1 issues
     vec3 p = clamp(idxF, vec3(0.0), vec3(voxelGridDim) - vec3(1.001));
 
     ivec3 i0 = ivec3(floor(p));
@@ -138,16 +106,11 @@ float sampleDensityTrilinear(vec3 idxF) {
     return mix(d0, d1, f.z);
 }
 
-// Seam-safe normal: clamp the *center* sample position into [1 .. dim-2],
-// so idxF +/- h never collapses due to border clamping.
 vec3 computeNormal(vec3 worldPos) {
     vec3 idxF = (worldPos - gridOrigin) / voxelSize;
 
-    // IMPORTANT: stay away from the padded volume boundary by 1 voxel
-    // (because you only padded by 1).
     idxF = clamp(idxF, vec3(1.0), vec3(voxelGridDim) - vec3(2.0));
 
-    // central difference step in index space
     const float h = 0.5;
 
     float dx = sampleDensityTrilinear(idxF + vec3(h,0,0)) - sampleDensityTrilinear(idxF - vec3(h,0,0));
@@ -157,16 +120,13 @@ vec3 computeNormal(vec3 worldPos) {
     vec3 g = vec3(dx, dy, dz);
     float len = length(g);
 
-    // density increases into solid => gradient points inward => outward normal is -grad
     return (len > 1e-8) ? (-g / len) : vec3(0,1,0);
 }
 
-// helper to read triTable row: triTable is flattened as [case*16 + j]
 int triTableOffset(int caseIndex, int j) {
     return caseIndex * 16 + j;
 }
 
-// Computes 3D world position of voxel index (i,j,k)
 vec3 voxelWorldPos(ivec3 v) {
     return gridOrigin + vec3(v) * voxelSize;
 }
@@ -205,7 +165,7 @@ void main() {
     }
 
     int e = edgeTable[caseIndex];
-    if (e == 0) return; // no triangles
+    if (e == 0) return;
 
     vec3 edgeVertex[12];
     vec3 edgeColor[12];
@@ -213,7 +173,6 @@ void main() {
     vec3 pos[8];
     for (int i=0;i<8;i++) pos[i] = voxelWorldPos(corners[i]);
 
-    // STANDARD edge->corner mapping (important)
     const int edgeToCornerA[12] = int[](0,1,2,3,4,5,6,7,0,1,2,3);
     const int edgeToCornerB[12] = int[](1,2,3,0,5,6,7,4,4,5,6,7);
 
@@ -235,7 +194,6 @@ void main() {
         int i1 = flattenedTriTable[base + tri + 1];
         int i2 = flattenedTriTable[base + tri + 2];
 
-        // gather triangle vertices & colors
         vec3 v0 = edgeVertex[i0];
         vec3 v1 = edgeVertex[i1];
         vec3 v2 = edgeVertex[i2];
@@ -244,34 +202,27 @@ void main() {
         vec3 col1 = edgeColor[i1];
         vec3 col2 = edgeColor[i2];
 
-        // compute geometric face normal
         vec3 fn = cross(v1 - v0, v2 - v0);
         float fnLen = length(fn);
         if (fnLen > 1e-9) {
             fn = normalize(fn);
         } else {
-            fn = vec3(0.0, 1.0, 0.0); // fallback
+            fn = vec3(0.0, 1.0, 0.0);
         }
 
-        // compute gradient-based normal (points outward for SDF). Use vertex 0 as sample.
         vec3 g0 = computeNormal(v0);
 
-        // If face normal points opposite to SDF gradient, flip triangle winding so it's consistently outward
         if (dot(fn, g0) < 0.0) {
-            // swap v1 <-> v2 and their colors
             vec3 tmpV = v1; v1 = v2; v2 = tmpV;
             vec3 tmpC = col1; col1 = col2; col2 = tmpC;
 
-            // flip face normal
             fn = -fn;
         }
 
-        // use smoothed per-vertex normals derived from the SDF gradient
         vec3 n0 = computeNormal(v0);
         vec3 n1 = computeNormal(v1);
         vec3 n2 = computeNormal(v2);
 
-        // fallback if any normal is degenerate
         if (length(n0) < 1e-6) n0 = fn;
         if (length(n1) < 1e-6) n1 = fn;
         if (length(n2) < 1e-6) n2 = fn;
@@ -287,16 +238,14 @@ void main() {
             if (t == 2u) { cellFlags |= 1u; break; }
         }
 
-        // Pick a representative material for this cell (first corner considered "inside")
         uint cellMaterial = 0u;
         for (int ci = 0; ci < 8; ++ci) {
-            if (d[ci] >= -EPS) { // matches your caseIndex test
+            if (d[ci] >= -EPS) {
                 cellMaterial = voxels[voxelIndex(clampVoxel(corners[ci]))].material;
                 break;
             }
         }
 
-        // Pack: bit0 = emissive; bits1..6 = material (0..63)
         uint packedFlags = (cellFlags & 1u) | ((cellMaterial & 63u) << 1);
 
         // ----------------------------

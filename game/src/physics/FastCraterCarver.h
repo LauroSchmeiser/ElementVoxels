@@ -38,13 +38,12 @@ namespace gl3 {
                              c.z * CHUNK_SIZE * VOXEL_SIZE);
         }
 
-        // Old-style crater: density -= depth * falloff (identical to your createCraterAtPosition “core”)
         static void carveCrater(
                 MultiGridChunkManager* mgr,
                 const glm::vec3& center,
                 float radius,
-                float maxDepth,          // this is your maxCraterDepth
-                float densityThreshold,  // e.g. -0.5f
+                float maxDepth,
+                float densityThreshold,
                 std::vector<ChunkCoord>* outTouchedChunks = nullptr,
                 bool autoCreateChunks = false
         ) {
@@ -76,12 +75,10 @@ namespace gl3 {
                         const glm::vec3 cmin = chunkMinWorld(cc);
                         const glm::vec3 cmax = cmin + glm::vec3(CHUNK_SIZE * VOXEL_SIZE);
 
-                        // Chunk-level early reject
                         if (squaredDistanceToAABB(center, cmin, cmax) > radiusSq) {
                             continue;
                         }
 
-                        // Local voxel bounds in this chunk (tight)
                         glm::vec3 localCenterF = (center - cmin) / VOXEL_SIZE;
                         float rVox = radius / VOXEL_SIZE;
 
@@ -114,16 +111,15 @@ namespace gl3 {
                                     if (distSq > radiusSq) continue;
 
                                     Voxel& v = chunk->voxels[vx][vy][vz];
-                                    if (v.density < densityThreshold) continue; // already air-ish
+                                    if (v.density < densityThreshold) continue;
 
                                     float dist = std::sqrt(distSq);
                                     float t = dist / radius;
-                                    float craterShape = (1.0f - t*t); // same as your old
+                                    float craterShape = (1.0f - t*t);
                                     float densityReduction = maxDepth * craterShape;
 
                                     float newDensity = v.density - densityReduction;
 
-                                    // preserve your “don’t go too negative for very solid” tweak if you want:
                                     if (v.density > 2.0f) newDensity = std::max(newDensity, 0.1f);
 
                                     v.density = newDensity;
@@ -145,4 +141,4 @@ namespace gl3 {
         }
     };
 
-} // namespace gl3
+}

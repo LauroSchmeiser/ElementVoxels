@@ -1,8 +1,8 @@
 #version 330 core
 out vec4 FragColor;
 
-in vec3 TexCoords;              // direction for this cubemap texel
-uniform float bakeTime;         // you can fix this at 0, or vary if rebaking
+in vec3 TexCoords;
+uniform float bakeTime;
 uniform sampler2D noiseTexture;
 
 
@@ -14,16 +14,13 @@ float noise(vec2 p) {
     return texture(noiseTexture, p).r;
 }
 
-// 3D noise using texture
 float noise3D(vec3 p) {
-    // Sample different slices of the 2D noise texture for 3D effect
     float xy = texture(noiseTexture, p.xy * 0.2 + p.z * 0.1).r;
     float yz = texture(noiseTexture, p.yz * 0.2 + p.x * 0.1).g;
     float xz = texture(noiseTexture, p.xz * 0.2 + p.y * 0.1).b;
     return (xy + yz + xz) / 3.0;
 }
 
-// Smooth 3D noise
 float smoothNoise3D(vec3 p) {
     vec3 i = floor(p);
     vec3 f = fract(p);
@@ -38,13 +35,11 @@ float smoothNoise3D(vec3 p) {
     float g = noise3D(i + vec3(0,1,1));
     float h = noise3D(i + vec3(1,1,1));
 
-    // Trilinear interpolation
     float mixed1 = mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
     float mixed2 = mix(mix(e, f_, f.x), mix(g, h, f.x), f.y);
     return mix(mixed1, mixed2, f.z);
 }
 
-// Fractal Brownian Motion for 3D
 float fbm3D(vec3 p, int octaves) {
     float value = 0.0;
     float amplitude = 3.5;
@@ -65,7 +60,6 @@ void main() {
     vec3 dir = normalize(TexCoords);
     float slowTime = bakeTime * 0.15;
 
-    // === NEBULA ONLY (from your shader) ===
     vec3 p1 = dir * 2.0 + vec3(slowTime * 0.3, 0.0, 0.0);
     vec3 p2 = dir * 1.5 + vec3(0.0, slowTime * 0.2, slowTime * 0.1);
     vec3 p3 = dir * 3.0 + vec3(slowTime * -0.1, slowTime * 0.15, 0.0);
@@ -104,7 +98,6 @@ void main() {
 
     vec3 finalColor = nebulaColor * 3.5;
 
-    // keep it HDR-ish in bake, or clamp depending on your pipeline
   //  finalColor = max(finalColor, vec3(0.0));
 
     FragColor = vec4(finalColor, 1.0);

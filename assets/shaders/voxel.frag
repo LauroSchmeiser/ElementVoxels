@@ -1,8 +1,3 @@
-// Fix: your repo almost certainly already has a function named noise3(...)
-// with a DIFFERENT return type (commonly vec3), so GLSL sees an overload clash.
-//
-// Rename the functions to avoid colliding with existing ones.
-
 #version 330 core
 in vec3 fragPos;
 in vec3 vertexColor;
@@ -29,7 +24,7 @@ uniform float uOverlayAlpha;
 uniform float emission;
 uniform vec3 emissionColor;
 
-// Burn
+// Burns
 uniform int   uBurnEnabled;
 uniform float uBurn;
 uniform vec3  uBurnCenter;
@@ -40,15 +35,14 @@ uniform vec3  uBurnEmberColor;
 uniform float uBurnCharStrength;
 
 // --- MATERIALS / TEXTURES ---
-uniform sampler2DArray uAlbedoArray;   // layer = materialId
-uniform float uMatRoughness[64];       // 0..1
-uniform float uMatSpecular[64];        // 0..1 (simple spec strength)
-uniform float uUVScale[64];            // texel density per material (optional but very useful)
+uniform sampler2DArray uAlbedoArray;
+uniform float uMatRoughness[64];
+uniform float uMatSpecular[64];
+uniform float uUVScale[64];
 
 const float PI = 3.14159265;
 const float MIN_ALBEDO = 0.0;
 
-// ---- renamed: burnHash / burnNoise ----
 float burnHash13(vec3 p) {
     p = fract(p * 0.1031);
     p += dot(p, p.yzx + 33.33);
@@ -80,7 +74,6 @@ float burnNoise3D(vec3 p) {
     return mix(n0, n1, f.z);
 }
 
-// 4x4 Bayer dither
 float burnBayer4(vec2 p) {
     int x = int(mod(p.x, 4.0));
     int y = int(mod(p.y, 4.0));
@@ -98,16 +91,12 @@ float burnBayer4(vec2 p) {
 
 vec3 sampleTriplanarAlbedo(uint mat, vec3 worldPos, vec3 N)
 {
-    // weights from normal
     vec3 w = abs(normalize(N));
-    // sharpen blend so it doesn't look muddy
     w = pow(w, vec3(4.0));
     w /= (w.x + w.y + w.z + 1e-6);
 
     float s = uUVScale[mat];
 
-    // Project onto the 3 planes:
-    // X-facing uses YZ, Y-facing uses XZ, Z-facing uses XY
     vec2 uvX = worldPos.yz * s;
     vec2 uvY = worldPos.xz * s;
     vec2 uvZ = worldPos.xy * s;
@@ -122,21 +111,17 @@ vec3 sampleTriplanarAlbedo(uint mat, vec3 worldPos, vec3 N)
 void main() {
     if ((vFlags & 1u) != 0u) discard;
 
-    // bits1..6 = material id (0..63)
     uint mat = (vFlags >> 1u) & 63u;
     vec3 N = normalize(normal);
 
-    // Sample albedo texture for this material
     float uvScale = uUVScale[mat];
     vec3 texAlbedo = sampleTriplanarAlbedo(mat, fragPos, N);
 
-    // Mix texture with voxel/vertex tint (your "color mixed in" requirement)
-    // tweak blend: 1.0 = fully tinted, 0.0 = no tint
+
     float tintStrength = 0.65;
     vec3 albedo = mix(texAlbedo, texAlbedo * vertexColor, tintStrength);
     albedo = max(albedo, vec3(MIN_ALBEDO));
 
-    // Lighting (diffuse + simple spec)
     vec3 V = normalize(viewPos - fragPos);
 
     vec3 lightAccum = vec3(0.0);
@@ -145,7 +130,6 @@ void main() {
     float rough = clamp(uMatRoughness[mat], 0.02, 1.0);
     float specStrength = clamp(uMatSpecular[mat], 0.0, 1.0);
 
-    // map roughness -> shininess (cheap Blinn-Phong mapping)
     float shininess = mix(256.0, 8.0, rough);
 
     for (int i = 0; i < numLights; ++i) {

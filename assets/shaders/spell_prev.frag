@@ -19,10 +19,10 @@ uniform vec3  uWallNormal;
 uniform vec3  uWallUp;
 uniform vec3  uWallSize;
 
-// NEW: material availability feedback
-uniform float uFillRatio;       // 0..1+ (we clamp in shader)
-uniform vec3  uLowColor;        // e.g. red-ish
-uniform vec3  uHighColor;       // e.g. green-ish
+// material availability feedback
+uniform float uFillRatio;
+uniform vec3  uLowColor;
+uniform vec3  uHighColor;
 
 // alpha for formation shell
 uniform float uFormationAlpha;
@@ -52,7 +52,6 @@ float formationSdf() {
 }
 
 void main() {
-    // Formation overlay (thin shell around the SDF surface)
     float dForm = formationSdf();
     float shell = 0.6 * uVoxelSize;
     float formMask = 1.0 - smoothstep(shell, shell * 1.8, abs(dForm));
@@ -60,19 +59,18 @@ void main() {
 
     if (a < 0.01) discard;
 
-    // Hologram grid shimmer
+    // Hologram grid
     float gridScale = 2.0 * uVoxelSize;
     vec3 g = abs(fract(vLocalPos / gridScale) - 0.5);
     float gridLine = min(min(g.x, g.y), g.z);
     float grid = 1.0 - smoothstep(0.06, 0.12, gridLine);
 
-    // Availability color blend (red -> green)
+    //  color blend (red -> green)
     float r = clamp(uFillRatio, 0.0, 1.0);
     r = smoothstep(0.0, 1.0, r);
 
     vec3 formationCol = mix(uLowColor, uHighColor, r);
 
-    // Apply shimmer to the tint
     formationCol *= mix(0.75, 1.25, grid);
 
     FragColor = vec4(formationCol, clamp(a, 0.0, 0.85));

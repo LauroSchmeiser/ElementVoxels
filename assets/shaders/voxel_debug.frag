@@ -15,7 +15,6 @@ uniform float lightIntensity[4];
 uniform int debugMode;        // 0=normals color, 1=signed N·L for debugLightIndex, 2=signed sum N·L, 3=normal length
 uniform int debugLightIndex;  // index to use for mode 1
 
-// Helper to map signed dot to color: negative -> red, positive -> green
 vec3 signedDotToColor(float s) {
     float pos = max(s, 0.0);
     float neg = max(-s, 0.0);
@@ -26,7 +25,6 @@ vec3 signedDotToColor(float s) {
 void main() {
     if ((vFlags & 1u) != 0u) discard;
 
-    // normalized (safeguarded) normal
     vec3 N = normal;
     float nlen = length(N);
     if (nlen < 1e-6) {
@@ -42,7 +40,6 @@ void main() {
         return;
     }
 
-    // compute signed N·L(s) (not clamped) to surface-visible differences
     if (debugMode == 1) {
         if (numLights <= 0) {
             FragColor = vec4(0.0, 0.0, 0.0, 1.0);
@@ -50,12 +47,11 @@ void main() {
         }
         int idx = clamp(debugLightIndex, 0, max(0, numLights-1));
         vec3 L = normalize(lightPos[idx] - fragPos);
-        float s = dot(N, L); // signed
+        float s = dot(N, L);
         vec3 col = signedDotToColor(s);
-        // also modulate brightness by distance-based attenuation (optional, for clarity)
         float d2 = dot(lightPos[idx] - fragPos, lightPos[idx] - fragPos);
         float atten = 1.0 / (d2 + 1.0);
-        col *= (0.2 + 0.8 * atten); // keep some base contrast
+        col *= (0.2 + 0.8 * atten);
         FragColor = vec4(col, 1.0);
         return;
     }
@@ -65,7 +61,6 @@ void main() {
             FragColor = vec4(0.0, 0.0, 0.0, 1.0);
             return;
         }
-        // sum signed N·L across lights (weighted by intensity)
         float sum = 0.0;
         float totW = 0.0;
         for (int i = 0; i < numLights; ++i) {
@@ -78,10 +73,8 @@ void main() {
             totW += w;
         }
         float avg = (totW > 0.0) ? (sum / totW) : sum;
-        // clamp to [-1,1] then map to color
         avg = clamp(avg, -1.0, 1.0);
         vec3 col = signedDotToColor(avg);
-        // boost contrast for visualization
         col = pow(col, vec3(0.6));
         FragColor = vec4(col, 1.0);
         return;
@@ -99,6 +92,5 @@ void main() {
         FragColor=vec4(fragPos.x,fragPos.y,fragPos.z,1.0);
         return;
     }
-    // fallback: show normalized normal
     FragColor = vec4(N * 0.5 + 0.5, 1.0);
 }

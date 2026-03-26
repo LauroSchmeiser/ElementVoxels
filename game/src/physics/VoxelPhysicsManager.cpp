@@ -284,8 +284,6 @@ namespace gl3 {
             glm::vec3& outNormal,
             float& outPenetration
     ) {
-        // Use the same approach as CharacterController
-
         // For spheres: sample along the surface
         if (body.shapeType == VoxelPhysicsBody::ShapeType::SPHERE) {
             const int numSamples = 26; // More samples for better detection

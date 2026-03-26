@@ -1,9 +1,8 @@
 #version 330 core
 
-// Attribute layout MUST match how you upload the OutVertex SSBO:
-layout(location = 0) in vec3 aPos;      // from OutVertex.pos.xyz
-layout(location = 1) in vec3 aNormal;   // from OutVertex.normal.xyz
-layout(location = 2) in vec3 aColor;    // from OutVertex.color.xyz
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec3 aNormal;
+layout(location = 2) in vec3 aColor;
 layout(location = 3) in vec2 aUV;
 layout(location = 4) in uint aFlags;
 
@@ -17,17 +16,14 @@ uniform mat4 mvp;
 uniform mat4 model;
 
 void main() {
-    // world-space position
     vec4 worldPos = model * vec4(aPos, 1.0);
     fragPos = worldPos.xyz;
 
-    // per-vertex color from SSBO
     vertexColor = aColor;
     vFlags = aFlags;
     vUV = aUV;
 
 
-    // transform normal by normal matrix (model's inverse-transpose)
     mat3 normalMat = transpose(inverse(mat3(model)));
     normal = normalize(normalMat * aNormal);
 

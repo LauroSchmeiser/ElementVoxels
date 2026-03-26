@@ -27,7 +27,6 @@ public:
     }
 
     void update(GLFWwindow* window) {
-        // Update tracked key states each frame
         for (auto& [key, state] : keyStates) {
             bool isPressed = glfwGetKey(window, key) == GLFW_PRESS;
 
@@ -42,10 +41,8 @@ public:
             }
         }
 
-        // Update mouse buttons too
         trackMouseButton(GLFW_MOUSE_BUTTON_RIGHT);
 
-        // Update mouse
         double x, y;
         glfwGetCursorPos(window, &x, &y);
         mouseDelta = glm::vec2(x - lastMousePos.x, y - lastMousePos.y);

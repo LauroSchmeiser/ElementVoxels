@@ -15,7 +15,7 @@ struct VoxelPhysicsBody {
 
     // Properties
     float mass;
-    float radius; // Bounding sphere for broad-phase
+    float radius;
     float restitution = 0.3f;
     float friction = 0.7f;
 

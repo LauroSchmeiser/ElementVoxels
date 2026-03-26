@@ -6,14 +6,12 @@ in vec3 TexCoords;
 uniform float time;
 uniform samplerCube nebulaCube;
 
-// cheap hash
 float hash13(vec3 p) {
     p = fract(p * 0.1031);
     p += dot(p, p.yzx + 33.33);
     return fract((p.x + p.y) * p.z);
 }
 
-// rotate around Y (example)
 mat3 rotY(float a) {
     float c = cos(a), s = sin(a);
     return mat3(
@@ -26,26 +24,23 @@ mat3 rotY(float a) {
 void main() {
     vec3 dir = normalize(TexCoords);
 
-    // --- nebula "movement" by rotating lookup direction (cheap) ---
-    float t = time * 0.015;             // slow
+    float t = time * 0.015;
     vec3 dNeb = rotY(t) * dir;
 
     vec3 nebula = texture(nebulaCube, dNeb).rgb;
 
-    // --- twinkling stars (cheap, no textures) ---
-    // Use a high-frequency grid in direction space (good enough for skybox)
+    // --- twinkling stars ---
     vec3 starP = dir * 75.0;
     vec3 cell = floor(starP);
     vec3 f = fract(starP) - 0.5;
 
     float r = hash13(cell);
     // star density:
-    float starMask = step(r, 0.015);   // ~1.5% of cells become stars
+    float starMask = step(r, 0.015);
 
     float dist = length(f)*2;
-    float star = smoothstep(0.25, 0.0, dist); // soft star blob
+    float star = smoothstep(0.25, 0.0, dist);
 
-    // twinkle
     float tw = 0.6 + 0.4 * sin(time * 3.0 + r * 50.0);
 
     vec3 starCol = mix(vec3(0.8,0.9,1.0), vec3(1.0,0.9,0.8), hash13(cell + 7.13));
@@ -53,7 +48,6 @@ void main() {
 
     vec3 color = nebula + stars;
 
-    // optional tone map / gamma depending on your pipeline
     color = pow(color, vec3(1.0/0.25));
     color= color/(color+1.0);
 

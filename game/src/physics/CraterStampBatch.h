@@ -9,13 +9,12 @@
 
 namespace gl3 {
 
-// Batch crater “subtractive stamps” for many centers.
-// Uses a simple spatial hash so each voxel only checks nearby stamps.
+
     struct CraterStampBatch {
         struct Stamp {
             glm::vec3 center;
-            float radius;     // world units
-            float depth;      // max density reduction
+            float radius;
+            float depth;
         };
 
         struct CellKey {
@@ -24,7 +23,6 @@ namespace gl3 {
         };
         struct CellKeyHash {
             size_t operator()(const CellKey& k) const noexcept {
-                // cheap mix
                 return (size_t)((k.x * 73856093) ^ (k.y * 19349663) ^ (k.z * 83492791));
             }
         };
@@ -46,10 +44,9 @@ namespace gl3 {
         {
             if (!mgr || stamps.empty()) return;
 
-            // Choose a grid cell size ~ typical stamp radius. Use max radius for safety.
             float maxR = stamps[0].radius;
             for (auto& s : stamps) maxR = std::max(maxR, s.radius);
-            const float cellSize = std::max(maxR, VOXEL_SIZE); // avoid too tiny
+            const float cellSize = std::max(maxR, VOXEL_SIZE);
 
             robin_hood::unordered_map<CellKey, std::vector<int>, CellKeyHash> grid;
             grid.reserve(stamps.size() * 2);
@@ -66,7 +63,6 @@ namespace gl3 {
                 grid[cellOf(stamps[i].center)].push_back(i);
             }
 
-            // Compute chunk bounds touched by all stamps
             glm::vec3 minP = stamps[0].center - glm::vec3(stamps[0].radius);
             glm::vec3 maxP = stamps[0].center + glm::vec3(stamps[0].radius);
             for (auto& s : stamps) {
@@ -91,7 +87,6 @@ namespace gl3 {
                         glm::vec3 cmin = chunkMinWorld(cc);
                         bool touched = false;
 
-                        // Iterate all voxels in the chunk (could also clip, but CHUNK_SIZE=16 so this is 17^3=4913 worst)
                         for (int vx = 0; vx <= CHUNK_SIZE; ++vx) {
                             float wx = cmin.x + vx * VOXEL_SIZE;
 
@@ -103,9 +98,8 @@ namespace gl3 {
                                     glm::vec3 p(wx,wy,wz);
 
                                     Voxel& v = chunk->voxels[vx][vy][vz];
-                                    if (v.density < densityThreshold) continue; // already air-ish
+                                    if (v.density < densityThreshold) continue;
 
-                                    // Look up nearby stamps only
                                     CellKey ck = cellOf(p);
                                     float totalReduction = 0.0f;
 
@@ -124,7 +118,7 @@ namespace gl3 {
 
                                                     float dist = std::sqrt(distSq);
                                                     float t = dist / s.radius;
-                                                    float craterShape = (1.0f - t*t); // match your old
+                                                    float craterShape = (1.0f - t*t);
                                                     totalReduction = std::max(totalReduction, s.depth * craterShape);
                                                 }
                                             }
@@ -135,7 +129,7 @@ namespace gl3 {
                                         float newD = v.density - totalReduction;
                                         if (v.density > 2.0f) newD = std::max(newD, 0.1f);
                                         v.density = newD;
-                                        v.type = (newD < densityThreshold) ? 0 : v.type; // keep type if still solid
+                                        v.type = (newD < densityThreshold) ? 0 : v.type;
                                         touched = true;
                                     }
                                 }
@@ -152,4 +146,4 @@ namespace gl3 {
         }
     };
 
-} // namespace gl3
+}

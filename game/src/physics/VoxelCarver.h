@@ -21,7 +21,6 @@
 
 namespace gl3 {
 
-// Unified crater/formation carving using SDF with chunk AABB early rejection + voxel-sphere clipping.
     class VoxelCarver {
     public:
         struct CarveResult {
@@ -40,14 +39,14 @@ namespace gl3 {
         };
 
         struct CarveParams {
-            float radius;                 // effect radius (world units)
-            float strength = 1.0f;        // carving strength
-            uint8_t targetType = 1;       // voxel type to set when solid
-            glm::vec3 color{1.0f};        // voxel color
-            uint64_t material = 0;        // material id
-            bool autoCreate = true;       // create missing chunks
-            bool additive = false;        // additive (union) vs subtractive
-            float densityThreshold = -0.5f; // air threshold (matches your other code)
+            float radius;
+            float strength = 1.0f;
+            uint8_t targetType = 1;
+            glm::vec3 color{1.0f};
+            uint64_t material = 0;
+            bool autoCreate = true;
+            bool additive = false;
+            float densityThreshold = -0.5f;
         };
 
         static CarveResult carveSDF(
@@ -62,7 +61,7 @@ namespace gl3 {
             CarveResult result;
             if (!chunkManager) return result;
 
-            // Calculate affected chunk range (same math style as Game::worldToChunk)
+            // Calculate affected chunk range
             const int minCX = worldToChunk(center.x - params.radius);
             const int maxCX = worldToChunk(center.x + params.radius);
             const int minCY = worldToChunk(center.y - params.radius);
@@ -80,7 +79,6 @@ namespace gl3 {
                     for (int cz = minCZ; cz <= maxCZ; ++cz) {
                         ChunkCoord coord{cx, cy, cz};
 
-                        // Chunk AABB in world units (match Game::getChunkMin/getChunkMax behavior)
                         glm::vec3 chunkMin = getChunkMin(coord);
                         glm::vec3 chunkMax = chunkMin + glm::vec3(CHUNK_SIZE * VOXEL_SIZE);
 
@@ -111,16 +109,13 @@ namespace gl3 {
         }
 
     private:
-        // ---- Glue helpers to match your existing coordinate system ----
 
         static int worldToChunk(float worldPos) {
-            // Same as Game::worldToChunk
             const float chunkWorldSize = CHUNK_SIZE * gl3::VOXEL_SIZE;
             return (int)std::floor(worldPos / chunkWorldSize);
         }
 
         static glm::vec3 getChunkMin(const ChunkCoord& coord) {
-            // Same as Game::getChunkMin
             return glm::vec3(
                     coord.x * CHUNK_SIZE * gl3::VOXEL_SIZE,
                     coord.y * CHUNK_SIZE * gl3::VOXEL_SIZE,
@@ -128,7 +123,6 @@ namespace gl3 {
             );
         }
 
-        // Fast AABB squared distance
         static float squaredDistanceToAABB(const glm::vec3& point,
                                            const glm::vec3& bmin,
                                            const glm::vec3& bmax) {
@@ -139,7 +133,6 @@ namespace gl3 {
         }
 
         static size_t estimateVoxelCount(float radius) {
-            // radius is world-units
             const float sphereVolume = (4.0f / 3.0f) * glm::pi<float>() * radius * radius * radius;
             const float voxelVolume = VOXEL_SIZE * VOXEL_SIZE * VOXEL_SIZE;
             return (size_t)(sphereVolume / voxelVolume * 1.5f);
@@ -158,7 +151,6 @@ namespace gl3 {
             const float voxelSize = VOXEL_SIZE;
             const float radiusSq = params.radius * params.radius;
 
-            // center in chunk-local voxel coordinates (float)
             const glm::vec3 localCenter = (center - chunkMin) / voxelSize;
             const float radiusVox = params.radius / voxelSize;
 
@@ -190,7 +182,6 @@ namespace gl3 {
 
                         Voxel& voxel = chunk->voxels[vx][vy][vz];
 
-                        // Skip already-air in subtractive mode (same idea as your code)
                         if (!params.additive && voxel.density < params.densityThreshold) {
                             continue;
                         }
@@ -198,13 +189,6 @@ namespace gl3 {
                         const glm::vec3 worldPos(worldX, worldY, worldZ);
                         const float sdfValue = sdf(worldPos);
 
-                        // IMPORTANT: your SDF conventions in Game.cpp are "positive inside"
-                        // - For additive union, you want max(existing, sdf)
-                        // - For subtractive carve, you typically want to *reduce* density where sdf indicates "inside crater"
-                        //
-                        // Here we assume sdfValue is a "density delta" style for subtractive:
-                        // craterSDF in your Game.cpp returns negative values (because it returns -depth*falloff).
-                        // So subtractive should be: density += sdfValue * strength (since sdfValue is negative).
                         float newDensity = voxel.density;
                         if (params.additive) {
                             newDensity = glm::max(voxel.density, sdfValue * params.strength);
@@ -238,7 +222,6 @@ namespace gl3 {
             TRACY_CPU_ZONE("VoxelCarver::applyVoxelUpdates");
             if (!chunkManager) return;
 
-            // Use your existing ChunkCoordHash (same one used elsewhere in Game.cpp)
             robin_hood::unordered_flat_map<ChunkCoord, bool, ChunkCoordHash> chunkDirty;
             chunkDirty.reserve(updates.size() / 64 + 16);
 
@@ -282,4 +265,4 @@ namespace gl3 {
         }
     };
 
-} // namespace gl3
+}

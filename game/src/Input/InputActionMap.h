@@ -4,7 +4,7 @@
 
 struct InputAction {
     std::string name;
-    std::vector<int> keys;  // Multiple bindings for same action
+    std::vector<int> keys;
 
     // State tracking
     bool isPressed = false;      // Currently pressed (including hold)
@@ -15,41 +15,37 @@ struct InputAction {
     float value = 0.0f;          // For analog input
 
     void update(const InputManager& input, float deltaTime = 0.0f) {
-        // Reset frame-specific states
         wasJustPressed = false;
         wasJustReleased = false;
 
         bool previousPressed = isPressed;
         isPressed = false;
 
-        // Check all bound keys
+
         for (int key : keys) {
             if (input.isKeyPressed(key)) {
                 isPressed = true;
 
                 if (input.isKeyJustPressed(key)) {
                     wasJustPressed = true;
-                    isHeld = false;  // Reset hold state on new press
+                    isHeld = false;
                     holdTime = 0.0f;
                 }
 
-                value = 1.0f;  // You could modify this for analog input
+                value = 1.0f;
                 break;
             }
         }
 
-        // Handle hold state
         if (isPressed) {
             if (!wasJustPressed) {
-                isHeld = true;  // Key is being held (not just pressed this frame)
-                holdTime += deltaTime;  // Accumulate hold time
+                isHeld = true;
+                holdTime += deltaTime;
             }
         } else {
-            // Key is not pressed
             isHeld = false;
             holdTime = 0.0f;
 
-            // Check if it was just released
             if (previousPressed && !isPressed) {
                 wasJustReleased = true;
             }
