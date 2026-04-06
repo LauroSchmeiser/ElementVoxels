@@ -15,7 +15,8 @@
 #include "scenes/GameplayScene.h"
 #include "scenes/LoadingScene.h"
 #include "scenes/GameOverScene.h"
-#include <imgui.h>;
+#include <imgui.h>
+#include "entities/EnemyManager.h"
 
 #ifndef TRACY_GPU_ENABLED
 #define TRACY_CPU_ZONE(nameStr) ZoneScopedN(nameStr)
@@ -189,6 +190,7 @@ namespace gl3 {
             std::cerr << "Failed to create metaballSplatShader: " << e.what() << std::endl;
         }
 
+
         //Sound Setup
         audio.init();
         audio.setGlobalVolume(0.1f);
@@ -323,7 +325,7 @@ namespace gl3 {
                        const glm::vec3& hitPos,
                        const glm::vec3& hitNormal,
                        float impactSpeed) {
-                    onBodyBodyCollision(bodyA, bodyB, hitPos, hitNormal, impactSpeed);
+                    onBodyBodyCollision(bodyA, bodyB, hitPos, hitNormal, impactSpeed*impactSpeed);
                 }
         );
         // body-world collision callback
@@ -336,6 +338,20 @@ namespace gl3 {
                                      hitPos, hitNormal, impactSpeed);
                 }
         );
+
+        enemyManager = std::make_unique<EnemyManager>();
+        enemyManager->init(voxelPhysics.get(), this);
+
+        static EnemyArchetype basic;
+        basic.name = "Basic";
+        basic.maxHP = 1.0f;
+        basic.moveSpeed = 6.0f;
+        basic.shapeType = VoxelPhysicsBody::ShapeType::SPHERE;
+        basic.mass = 50.0f;
+        basic.radius = 2.5f * VOXEL_SIZE;
+        basic.cooldownsSec = { 2.0f, 0.0f, 0.0f };
+
+        enemyManager->spawn(basic, cameraPos + getCameraFront() * (35.0f * VOXEL_SIZE));
     }
 
     void Game::updateGameplayFrame() {
@@ -345,6 +361,9 @@ namespace gl3 {
 
         glfwPollEvents();
         update();
+        if (enemyManager) {
+            enemyManager->update(deltaTime, cameraPos /* player pos */);
+        }
         updatePhysics();
         updateChunkBurns(deltaTime);
     }
@@ -363,6 +382,7 @@ namespace gl3 {
         renderChunks();
         renderAnimatedVoxels();
         renderPhysicsFormations();
+        renderEnemies();
         renderSpellPreview();
 
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -1451,7 +1471,7 @@ namespace gl3 {
     void Game::updateSpells(float dt) {
         TRACY_CPU_ZONE("Game::updateSpells");
 
-        const float kSlowSpeedThreshold = 300.10f * VOXEL_SIZE;
+        const float kSlowSpeedThreshold = 1.10f * VOXEL_SIZE;
         const float kSlowTimeToBurn     = 0.75f;
         const float kBurnDuration       = 3.0f;
 
@@ -1650,7 +1670,7 @@ namespace gl3 {
 
     bool Game::isSpellTooSmall(const gl3::SpellEffect& s) {
         float r = s.formationParams.getBoundingRadius();
-        return (r < 1.25f * gl3::VOXEL_SIZE);
+        return (r < (0.05f * gl3::VOXEL_SIZE));
     }
 
     bool Game:: isSpellTooSlow(const gl3::SpellEffect& s, float speedThreshold) {
@@ -2359,7 +2379,7 @@ namespace gl3 {
                                      const std::vector<glm::vec3>& vertices,
                                      const std::vector<glm::vec3>& normals,
                                      const std::vector<glm::vec3>& colors) {
-        if (vertices.empty()) return;
+        /*if (vertices.empty()) return;
 
         // Store for potential recreation
         spell.physicsMesh.vertices = vertices;
@@ -2427,7 +2447,52 @@ namespace gl3 {
         glBindVertexArray(0);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-        spell.physicsMesh.isValid = true;
+        spell.physicsMesh.isValid = true;*/
+        createPhysicsMeshData(spell.physicsMesh, vertices, normals, colors);
+    }
+
+    void Game::createPhysicsMeshData(gl3::PhysicsMeshData& out,
+                                     const std::vector<glm::vec3>& vertices,
+                                     const std::vector<glm::vec3>& normals,
+                                     const std::vector<glm::vec3>& colors)
+    {
+        if (vertices.empty()) return;
+
+        // cleanup old
+        if (out.vao) { glDeleteVertexArrays(1, &out.vao); out.vao = 0; }
+        if (out.vbo) { glDeleteBuffers(1, &out.vbo); out.vbo = 0; }
+
+        out.vertices = vertices;
+        out.normals  = normals;
+        out.colors   = colors;
+        out.vertexCount = vertices.size();
+        out.isValid = true;
+
+        glGenVertexArrays(1, &out.vao);
+        glGenBuffers(1, &out.vbo);
+
+        glBindVertexArray(out.vao);
+        glBindBuffer(GL_ARRAY_BUFFER, out.vbo);
+
+        std::vector<float> interleaved;
+        interleaved.reserve(vertices.size() * 9);
+
+        for (size_t i=0;i<vertices.size();++i) {
+            const glm::vec3 p = vertices[i];
+            const glm::vec3 n = (i < normals.size()) ? normals[i] : glm::vec3(0,1,0);
+            const glm::vec3 c = (i < colors.size())  ? colors[i]  : glm::vec3(1,0,1);
+
+            interleaved.insert(interleaved.end(), {p.x,p.y,p.z, n.x,n.y,n.z, c.x,c.y,c.z});
+        }
+
+        glBufferData(GL_ARRAY_BUFFER, interleaved.size()*sizeof(float), interleaved.data(), GL_STATIC_DRAW);
+
+        glEnableVertexAttribArray(0); glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,9*sizeof(float),(void*)0);
+        glEnableVertexAttribArray(1); glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,9*sizeof(float),(void*)(3*sizeof(float)));
+        glEnableVertexAttribArray(2); glVertexAttribPointer(2,3,GL_FLOAT,GL_FALSE,9*sizeof(float),(void*)(6*sizeof(float)));
+
+        glBindVertexArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
 
 
@@ -2697,10 +2762,10 @@ namespace gl3 {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, ssboTriangles);
 
         //5 particle ssbo
-        glGenBuffers(1, &particleSSBO);
+      //  glGenBuffers(1, &particleSSBO);
 
         //6 fieldbits ssbo
-        glGenBuffers(1, &fieldBitsSSBO);
+     //   glGenBuffers(1, &fieldBitsSSBO);
 
     }
 
@@ -2986,15 +3051,62 @@ namespace gl3 {
         }
     }
 
-    void Game::onPlayerBodyCollision(gl3::VoxelPhysicsBody *body, const glm::vec3 &hitPos, const glm::vec3 &hitNormal,
-                                     float playerSpeed) {
-        float hitSpeed=glm::sqrt(body->velocity.x*body->velocity.x+body->velocity.y*body->velocity.y+body->velocity.z*body->velocity.z)/400;
-        setPlayerHealth(getPlayerHealth()-(glm::sqrt(body->mass*hitSpeed)));
-        body->velocity=glm::vec3(body->velocity.x/VOXEL_SIZE,body->velocity.y/VOXEL_SIZE,body->velocity.z/VOXEL_SIZE);
+    void Game::onPlayerBodyCollision(gl3::VoxelPhysicsBody* body,
+                                     const glm::vec3& hitPos,
+                                     const glm::vec3& hitNormal,
+                                     float playerSpeed)
+    {
+        if (!body) return;
+
+        // "Player position": you currently use cameraPos as the player-ish position in several places.
+        // If you have a better one (characterController->getCameraPosition() or player body position),
+        // use that instead.
+        const glm::vec3 playerPos = cameraPos;
+
+        const float velLen = glm::length(body->velocity);
+        if (velLen < 0.001f) return; // too slow => ignore
+
+        const glm::vec3 velDir = body->velocity / velLen;
+
+        glm::vec3 toPlayer = playerPos - hitPos;
+        const float toPlayerLen = glm::length(toPlayer);
+        if (toPlayerLen < 0.001f) return;
+
+        const glm::vec3 toPlayerDir = toPlayer / toPlayerLen;
+
+        // +1 = moving directly toward player, 0 = sideways, -1 = moving away
+        const float approach = glm::dot(velDir, toPlayerDir);
+
+        // Tune this: 0.5 means within ~60 degrees of directly toward player
+        constexpr float kApproachThreshold = 0.5f;
+
+        if (approach < kApproachThreshold) {
+            // Still do your velocity scaling if you want, or just return.
+            // I'd return to avoid "scraping" damage.
+            return;
+        }
+
+        // Optional: scale damage by approach so grazing hits do less
+        const float approach01 = glm::clamp((approach - kApproachThreshold) / (1.0f - kApproachThreshold), 0.0f, 1.0f);
+
+        float hitSpeed = velLen / 400.0f;
+
+        // Your original damage
+        float dmg = glm::sqrt(body->mass * hitSpeed);
+
+        // Apply approach scaling (comment out if you want full damage once threshold passes)
+        dmg *= approach01;
+
+        setPlayerHealth(getPlayerHealth() - dmg);
+
+        // Keep your existing velocity scaling (note: this changes units; make sure you really want it)
+        body->velocity = body->velocity / VOXEL_SIZE;
     }
 
     void Game::onBodyBodyCollision(gl3::VoxelPhysicsBody *bodyA, gl3::VoxelPhysicsBody *bodyB, const glm::vec3 &hitPos,
                                    const glm::vec3 &hitNormal, float impactSpeed) {
+            enemyManager->applyDamageSphere(bodyA->id,hitPos,bodyA->radius,impactSpeed);
+            enemyManager->applyDamageSphere(bodyB->id,hitPos,bodyA->radius,impactSpeed);
 
     }
 
@@ -3627,6 +3739,7 @@ namespace gl3 {
             for (int cx = camCX - renderRadius; cx <= camCX + renderRadius; ++cx) {
                 for (int cy = camCY - renderRadius; cy <= camCY + renderRadius; ++cy) {
                     for (int cz = camCZ - renderRadius; cz <= camCZ + renderRadius; ++cz) {
+
                         totalChecked++;
                         ChunkCoord coord{cx, cy, cz};
                         /*if (!isChunkVisible(coord)) {
@@ -3641,6 +3754,8 @@ namespace gl3 {
                         if (chunk->gpuCache.vertexCount == 0 || !chunk->gpuCache.isValid) {
                             continue;
                         }
+                        TRACY_CPU_ZONE("renderChunks::Chunk");
+
 
                         glm::vec3 chunkMin = getChunkMin(chunk->coord);
                         glm::vec3 chunkCenter = chunkMin + glm::vec3(CHUNK_SIZE * 0.5f) * VOXEL_SIZE;
@@ -4012,6 +4127,34 @@ namespace gl3 {
         }
     }
 
+    void Game::renderEnemies() {
+        if (!enemyManager) return;
+
+        voxelShader->use();
+
+        float aspect = (windowHeight == 0) ? (float)windowWidth : (float)windowWidth / (float)windowHeight;
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
+        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), glm::vec3(0,1,0));
+        glm::mat4 pv = projection * view;
+
+        for (auto& e : enemyManager->all()) {
+            if (!e.renderMesh.isValid || e.renderMesh.vertexCount == 0) continue;
+
+            glm::vec3 localCenter =
+                    0.5f * (glm::vec3(e.volume.dims) - glm::vec3(1.0f)) * e.volume.voxelSize;
+
+            glm::mat4 model = glm::translate(glm::mat4(1.0f), e.inst.position - localCenter);
+            // later: model *= glm::mat4_cast(e.inst.rotation);
+
+            voxelShader->setMatrix("model", model);
+            voxelShader->setMatrix("mvp", pv * model);
+
+            glBindVertexArray(e.renderMesh.vao);
+            glDrawArrays(GL_TRIANGLES, 0, (GLsizei)e.renderMesh.vertexCount);
+            glBindVertexArray(0);
+        }
+    }
+
     void Game::renderSpellPreview() {
         TRACY_CPU_ZONE("Game::renderSpellPreview");
         TRACY_GPU_ZONE("SpellPreview");
@@ -4266,7 +4409,7 @@ namespace gl3 {
             // Store vertex count into the chunk cache
             chunk->gpuCache.vertexCount = producedVertexCount;
 
-            // Optional debug read: map the triangle SSBO for the first N vertices (safe-read)
+           /* // Optional debug read: map the triangle SSBO for the first N vertices (safe-read)
             if (producedVertexCount > 0) {
                 glBindBuffer(GL_SHADER_STORAGE_BUFFER, chunk->gpuCache.triangleSSBO);
                 size_t readCount = std::min<unsigned int>(producedVertexCount, 6u);
@@ -4277,7 +4420,7 @@ namespace gl3 {
                     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
                 }
                 glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-            }
+            }*/
         }
 
         {
@@ -4966,4 +5109,117 @@ namespace gl3 {
 
         glBindVertexArray(0);
     }
+
+    void Game::spawnEnemyLaunchSphere(const glm::vec3& start,
+                                      const glm::vec3& target,
+                                      float radiusWorld,
+                                      float speedWorld,
+                                      glm::vec3 color)
+    {
+        if (!voxelPhysics) return;
+
+        // Create a SpellEffect as a projectile container (reuses your render + cleanup paths)
+        SpellEffect s;
+        s.type = SpellEffect::Type::CONSTRUCT;
+        s.center = start;
+        s.formationParams = FormationParams::Sphere(start, radiusWorld);
+        s.formationColor = color;
+        s.geometryCreated = true;
+
+        s.isPhysicsEnabled = true;
+        s.creationTime = 0.0f;
+        s.lifetime = 8.0f; // projectile lifetime
+
+        glm::vec3 dir = target - start;
+        if (glm::length(dir) < 0.001f) dir = glm::vec3(0,0,-1);
+        dir = glm::normalize(dir);
+        s.initialVelocity = dir * speedWorld;
+
+        // Build sphere mesh from cache (same as your createPhysicsBodyForSpell sphere path)
+        int key = static_cast<int>(std::round(radiusWorld / VOXEL_SIZE));
+        auto it = sphereMeshCache.find(key);
+        if (it == sphereMeshCache.end()) it = sphereMeshCache.begin();
+
+        const SphereMesh& baseMesh = it->second;
+
+        std::vector<glm::vec3> verts;
+        std::vector<glm::vec3> norms;
+        std::vector<glm::vec3> cols;
+
+        float scale = radiusWorld / baseMesh.radius;
+        verts.reserve(baseMesh.indices.size());
+        norms.reserve(baseMesh.indices.size());
+        cols.reserve(baseMesh.indices.size());
+
+        for (uint32_t idx : baseMesh.indices) {
+            verts.push_back(baseMesh.vertices[idx] * scale);
+            norms.push_back(baseMesh.normals[idx]);
+            cols.push_back(color);
+        }
+
+        float mass = 25.0f;
+
+        s.physicsBody = voxelPhysics->createBody(
+                start, mass, VoxelPhysicsBody::ShapeType::SPHERE, glm::vec3(radiusWorld)
+        );
+        s.physicsBodyId = s.physicsBody ? s.physicsBody->id : 0;
+
+        if (!s.physicsBody) return;
+
+        s.physicsBody->userData = &activeSpells;    // not used, but avoid null if you later inspect
+        s.physicsBody->velocity = s.initialVelocity;
+        s.physicsBody->lifetime = s.lifetime;
+
+        createPhysicsMeshData(s.physicsMesh, verts, norms, cols);
+        s.physicsBody->renderMesh = &s.physicsMesh;
+
+        // IMPORTANT: userData in your voxel collision callback assumes SpellEffect*
+        // so if you want collisions for this projectile, set:
+        s.physicsBody->userData = nullptr; // safest for now (no crater)
+        // OR: s.physicsBody->userData = &activeSpells.back(); but pointer invalid if deque reallocates.
+        // Better: later introduce a projectile list with stable storage.
+
+        activeSpells.push_back(std::move(s));
+    }
+
+    void Game::buildSphereMeshData(gl3::PhysicsMeshData& outMesh,
+                                   float radiusWorld,
+                                   const glm::vec3& color)
+    {
+        if (sphereMeshCache.empty()) return;
+
+        int key = static_cast<int>(std::round(radiusWorld / VOXEL_SIZE));
+        auto it = sphereMeshCache.find(key);
+        if (it == sphereMeshCache.end()) {
+            // nearest fallback
+            it = sphereMeshCache.begin();
+            int bestKey = it->first;
+            for (auto& [k, _] : sphereMeshCache) {
+                if (std::abs(k - key) < std::abs(bestKey - key)) bestKey = k;
+            }
+            it = sphereMeshCache.find(bestKey);
+        }
+
+        const SphereMesh& base = it->second;
+
+        std::vector<glm::vec3> verts;
+        std::vector<glm::vec3> norms;
+        std::vector<glm::vec3> cols;
+
+        float scale = radiusWorld / base.radius;
+
+        verts.reserve(base.indices.size());
+        norms.reserve(base.indices.size());
+        cols.reserve(base.indices.size());
+
+        for (uint32_t idx : base.indices) {
+            verts.push_back(base.vertices[idx] * scale);
+            norms.push_back(base.normals[idx]);
+            cols.push_back(color);
+        }
+
+        // uses the generic helper you added earlier:
+        createPhysicsMeshData(outMesh, verts, norms, cols);
+    }
+
 }

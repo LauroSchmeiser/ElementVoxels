@@ -31,10 +31,12 @@
 #include "../../extern/stb_image.h"
 #include "SceneManager.h"
 #include "ui/ImGuiLayer.h"
+#include "entities/EnemyManager.h"
 
 namespace gl3 {
     enum class SceneId : uint8_t;
     class SceneManager;
+    class EnemyManager;
 
     class Game {
     public:
@@ -54,6 +56,15 @@ namespace gl3 {
         gl3::ImGuiLayer& imgui() { return imguiLayer; }
 
         gl3::ImGuiLayer imguiLayer;
+
+        void createPhysicsMeshData(gl3::PhysicsMeshData& out,
+                                   const std::vector<glm::vec3>& vertices,
+                                   const std::vector<glm::vec3>& normals,
+                                   const std::vector<glm::vec3>& colors);
+
+        void buildSphereMeshData(PhysicsMeshData& outMesh,
+                                 float radiusWorld,
+                                 const glm::vec3& color);
 
     private:
         ////basics (private):
@@ -324,6 +335,7 @@ namespace gl3 {
                                          const std::vector<glm::vec3>& vertices,
                                          const std::vector<glm::vec3>& normals,
                                          const std::vector<glm::vec3>& colors);
+
         void removeFormationVoxels(const SpellEffect& spell);
 
         int estimateAvailableVoxels(const glm::vec3& center, float radius, uint64_t targetMaterial, int maxNeeded);
@@ -426,6 +438,7 @@ namespace gl3 {
         void renderChunks();
         void renderAnimatedVoxels();
         void renderPhysicsFormations();
+        void renderEnemies();
         void renderSpellPreview();
 
         //marching cubes Shader:
@@ -506,7 +519,7 @@ namespace gl3 {
         const int DIM = CHUNK_SIZE+2; //Chunk Size with a bit off padding for marching cubes
         size_t voxelCount = DIM * DIM * DIM; //How many voxels can be in one Chunk
         static constexpr int ChunkCount = 70; //Total size of the Game World
-        static constexpr int RenderingRange = 15; //Range around Camera that is rendered
+        static constexpr int RenderingRange = 10; //Range around Camera that is rendered
 
         //Marching-cubes Variables
         size_t maxVerts = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5 * 3; //Max amount of vertices marching cubes can create
@@ -633,6 +646,13 @@ namespace gl3 {
         void setPaused(bool p);
         void togglePaused();
         void renderGameplayUI();
+
+        void spawnEnemyLaunchSphere(const glm::vec3& start,
+                                    const glm::vec3& target,
+                                    float radiusWorld,
+                                    float speedWorld,
+                                    glm::vec3 color);
+
     private:
         glm::vec2 getMouseDelta();
         glm::dvec2 previousMousePos = glm::dvec2(0.0, 0.0);
@@ -640,8 +660,11 @@ namespace gl3 {
         float playerMaxHealth = 100.0f;
         float playerHealth    = 100.0f;
 
+        std::unique_ptr<EnemyManager> enemyManager;
+
         bool paused = false;
         int activeSpellMat=0;
+
 
     };
 }

@@ -4,7 +4,6 @@
 #include "rendering//MultiGridChunkManager.h"
 #include "physics/VoxelPhysicsManager.h"
 
-
 namespace gl3 {
 
     struct CharacterSettings {
