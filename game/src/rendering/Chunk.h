@@ -9,6 +9,7 @@ namespace gl3 {
     struct Chunk {
         // Core voxel data
         Voxel voxels[CHUNK_SIZE + 1][CHUNK_SIZE + 1][CHUNK_SIZE + 1];
+
         // Lighting data
         std::vector<VoxelLight> emissiveLights;
         bool lightingDirty = true;
@@ -16,6 +17,7 @@ namespace gl3 {
         // Mesh data
         ChunkCoord coord;
         bool meshDirty = true;
+        uint32_t gpuSlot = 0;
 
         struct BurnState {
             bool active = false;
@@ -39,6 +41,10 @@ namespace gl3 {
             bool isValid = false;
             uint64_t lastLightUpdateFrame = 15;
             std::vector<VoxelLight*> nearbyLights; // Pointers to other chunks' lights
+            GLuint counterReadbackBuffer = 0;
+            GLsync counterFence = 0;
+            uint32_t pendingVertexCount = 0;
+            bool hasPendingCount = false;
         } gpuCache;
 
         // Helper methods

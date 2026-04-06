@@ -1,77 +1,58 @@
 #version 430
-
 layout (local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
 
 struct Voxel {
-    float density;
-    float pad0;
-    float pad1;
-    float pad2;
+    float density; float pad0; float pad1; float pad2;
     vec4 color;
-    uint type;
-    uint pad4;
-    uint pad5;
-    uint pad6;
+    uint type; uint pad4; uint pad5; uint pad6;
     uint material;
 };
 
-layout(std430, binding = 0) readonly buffer Voxels {
-    Voxel voxels[]; // size = CHUNK_SIZE^3
-};
-
-
-layout(std430, binding = 1) readonly buffer EdgeTableSSBO {
-    int edgeTable[256];
-};
-
-layout(std430, binding = 2) readonly buffer TriTableSSBO {
-    int flattenedTriTable[256*16];
-};
-
-
-// Atomic counter for allocating vertices
-layout(std430, binding = 3) buffer Counter {
-    uint vertexCounter;
-};
-
-// Output triangle buffer
 struct OutVertex {
-    vec4 pos;    // xyz: position, w: unused
-    vec4 normal; // xyz: normal
-    vec4 color;  // rgb: color, a: unused
+    vec4 pos;
+    vec4 normal;
+    vec4 color;
     vec2 uv;
     vec2 padUV;
     uvec4 flags;
 };
-layout(std430, binding = 4) buffer Triangles {
-    OutVertex verts[]; // sized to max vertices = numCells * 5 * 3
+
+struct DrawArraysIndirectCommand {
+    uint count;
+    uint instanceCount;
+    uint first;
+    uint baseInstance;
 };
 
+layout(std430, binding = 0) readonly buffer Voxels { Voxel voxels[]; };
+layout(std430, binding = 1) readonly buffer EdgeTableSSBO { int edgeTable[256]; };
+layout(std430, binding = 2) readonly buffer TriTableSSBO { int flattenedTriTable[256*16]; };
+
+layout(std430, binding = 3) buffer Counter { uint vertexCounter; };
+
+// GLOBAL vertex buffer
+layout(std430, binding = 4) buffer Triangles { OutVertex verts[]; };
+
+// indirect commands buffer
+layout(std430, binding = 5) buffer Indirect { DrawArraysIndirectCommand cmds[]; };
 
 uniform ivec3 voxelGridDim;
 uniform vec3 gridOrigin;
 uniform float voxelSize;
 
+uniform uint uChunkSlot;
+uniform uint uChunkMaxVerts;
+
 int voxelIndex(ivec3 p) {
     return p.x + p.y * voxelGridDim.x + p.z * voxelGridDim.x * voxelGridDim.y;
 }
+ivec3 clampVoxel(ivec3 p) { return clamp(p, ivec3(0), voxelGridDim - ivec3(1)); }
+float sampleDensity(ivec3 p) { return voxels[voxelIndex(clampVoxel(p))].density; }
+vec3 sampleColor(ivec3 p) { return voxels[voxelIndex(clampVoxel(p))].color.xyz; }
 
-ivec3 clampVoxel(ivec3 p) {
-    return clamp(p, ivec3(0), voxelGridDim - ivec3(1));
-}
+vec2 computePlanarUV(vec3 worldPos) { return worldPos.xz * 0.1; }
 
-float sampleDensity(ivec3 p) {
-    return voxels[voxelIndex(clampVoxel(p))].density;
-}
-
-vec3 sampleColor(ivec3 p) {
-    return voxels[voxelIndex(clampVoxel(p))].color.xyz;
-}
-
-vec2 computePlanarUV(vec3 worldPos) {
-    float scale = 0.1;
-    return worldPos.xz * scale;
-}
+vec3 voxelWorldPos(ivec3 v) { return gridOrigin + vec3(v) * voxelSize; }
 
 vec3 vertexInterpolate(vec3 p1, vec3 p2, float d1, float d2) {
     float denom = (d1 - d2);
@@ -79,9 +60,10 @@ vec3 vertexInterpolate(vec3 p1, vec3 p2, float d1, float d2) {
     return mix(p1, p2, clamp(t, 0.0, 1.0));
 }
 
+// (keep your trilinear + computeNormal exactly if you want; omitted here for brevity)
+// --- paste your sampleDensityTrilinear + computeNormal from your current shader ---
 float sampleDensityTrilinear(vec3 idxF) {
     vec3 p = clamp(idxF, vec3(0.0), vec3(voxelGridDim) - vec3(1.001));
-
     ivec3 i0 = ivec3(floor(p));
     ivec3 i1 = min(i0 + ivec3(1), voxelGridDim - ivec3(1));
     vec3 f = fract(p);
@@ -105,40 +87,22 @@ float sampleDensityTrilinear(vec3 idxF) {
 
     return mix(d0, d1, f.z);
 }
-
 vec3 computeNormal(vec3 worldPos) {
     vec3 idxF = (worldPos - gridOrigin) / voxelSize;
-
     idxF = clamp(idxF, vec3(1.0), vec3(voxelGridDim) - vec3(2.0));
-
     const float h = 0.5;
-
     float dx = sampleDensityTrilinear(idxF + vec3(h,0,0)) - sampleDensityTrilinear(idxF - vec3(h,0,0));
     float dy = sampleDensityTrilinear(idxF + vec3(0,h,0)) - sampleDensityTrilinear(idxF - vec3(0,h,0));
     float dz = sampleDensityTrilinear(idxF + vec3(0,0,h)) - sampleDensityTrilinear(idxF - vec3(0,0,h));
-
     vec3 g = vec3(dx, dy, dz);
     float len = length(g);
-
     return (len > 1e-8) ? (-g / len) : vec3(0,1,0);
 }
 
-int triTableOffset(int caseIndex, int j) {
-    return caseIndex * 16 + j;
-}
-
-vec3 voxelWorldPos(ivec3 v) {
-    return gridOrigin + vec3(v) * voxelSize;
-}
-
 void main() {
-
     ivec3 cell = ivec3(gl_GlobalInvocationID);
     ivec3 cellsDim = voxelGridDim - ivec3(1);
-
-    if (any(greaterThanEqual(cell, cellsDim))) {
-        return;
-    }
+    if (any(greaterThanEqual(cell, cellsDim))) return;
 
     ivec3 p0 = cell;
     ivec3 p1 = cell + ivec3(1,0,0);
@@ -150,19 +114,13 @@ void main() {
     ivec3 p7 = cell + ivec3(0,1,1);
 
     float d[8];
-    vec3 c[8];
+    vec3  c[8];
     ivec3 corners[8] = ivec3[](p0,p1,p2,p3,p4,p5,p6,p7);
-
-    for (int i=0;i<8;i++) {
-        d[i] = sampleDensity(corners[i]);
-        c[i] = sampleColor(corners[i]);
-    }
+    for (int i=0;i<8;i++){ d[i]=sampleDensity(corners[i]); c[i]=sampleColor(corners[i]); }
 
     const float EPS = 1e-6;
     int caseIndex = 0;
-    for (int i=0;i<8;i++) {
-        if (d[i] >= -EPS) caseIndex |= (1 << i);
-    }
+    for (int i=0;i<8;i++) if (d[i] >= -EPS) caseIndex |= (1 << i);
 
     int e = edgeTable[caseIndex];
     if (e == 0) return;
@@ -176,23 +134,24 @@ void main() {
     const int edgeToCornerA[12] = int[](0,1,2,3,4,5,6,7,0,1,2,3);
     const int edgeToCornerB[12] = int[](1,2,3,0,5,6,7,4,4,5,6,7);
 
-    for (int ei = 0; ei < 12; ++ei) {
+    for (int ei=0; ei<12; ++ei) {
         if ((e & (1 << ei)) != 0) {
-            int a = edgeToCornerA[ei];
-            int b = edgeToCornerB[ei];
-            edgeVertex[ei] = vertexInterpolate(pos[a], pos[b], d[a], d[b]);
-            float denom = (d[a] - d[b]);
-            float t = denom == 0.0 ? 0.5 : (d[a] / denom);
-            edgeColor[ei] = mix(c[a], c[b], clamp(t, 0.0, 1.0));
+            int a=edgeToCornerA[ei], b=edgeToCornerB[ei];
+            edgeVertex[ei]=vertexInterpolate(pos[a], pos[b], d[a], d[b]);
+            float denom=(d[a]-d[b]);
+            float t = denom==0.0 ? 0.5 : (d[a]/denom);
+            edgeColor[ei]=mix(c[a], c[b], clamp(t,0.0,1.0));
         }
     }
 
-    int base = caseIndex * 16;
-    for (int tri = 0; tri < 16; tri += 3) {
-        int i0 = flattenedTriTable[base + tri + 0];
+    uint baseVert = uChunkSlot * uChunkMaxVerts;
+
+    int triBase = caseIndex * 16;
+    for (int tri=0; tri<16; tri+=3) {
+        int i0 = flattenedTriTable[triBase + tri + 0];
         if (i0 == -1) break;
-        int i1 = flattenedTriTable[base + tri + 1];
-        int i2 = flattenedTriTable[base + tri + 2];
+        int i1 = flattenedTriTable[triBase + tri + 1];
+        int i2 = flattenedTriTable[triBase + tri + 2];
 
         vec3 v0 = edgeVertex[i0];
         vec3 v1 = edgeVertex[i1];
@@ -204,71 +163,56 @@ void main() {
 
         vec3 fn = cross(v1 - v0, v2 - v0);
         float fnLen = length(fn);
-        if (fnLen > 1e-9) {
-            fn = normalize(fn);
-        } else {
-            fn = vec3(0.0, 1.0, 0.0);
-        }
+        fn = (fnLen > 1e-9) ? normalize(fn) : vec3(0,1,0);
 
         vec3 g0 = computeNormal(v0);
-
-        if (dot(fn, g0) < 0.0) {
-            vec3 tmpV = v1; v1 = v2; v2 = tmpV;
-            vec3 tmpC = col1; col1 = col2; col2 = tmpC;
-
+        if (dot(fn,g0) < 0.0) {
+            vec3 tv=v1; v1=v2; v2=tv;
+            vec3 tc=col1; col1=col2; col2=tc;
             fn = -fn;
         }
 
-        vec3 n0 = computeNormal(v0);
-        vec3 n1 = computeNormal(v1);
-        vec3 n2 = computeNormal(v2);
+        vec3 n0=computeNormal(v0), n1=computeNormal(v1), n2=computeNormal(v2);
+        if (length(n0) < 1e-6) n0=fn;
+        if (length(n1) < 1e-6) n1=fn;
+        if (length(n2) < 1e-6) n2=fn;
 
-        if (length(n0) < 1e-6) n0 = fn;
-        if (length(n1) < 1e-6) n1 = fn;
-        if (length(n2) < 1e-6) n2 = fn;
+        uint localIdx = atomicAdd(vertexCounter, 3u);
+        if (localIdx + 2u >= uChunkMaxVerts) return;
 
-        uint idx = atomicAdd(vertexCounter, 3u);
+        uint idx = baseVert + localIdx;
 
-        // ----------------------------
-        // Flags packing (emissive + material)
-        // ----------------------------
         uint cellFlags = 0u;
-        for (int ci = 0; ci < 8; ++ci) {
+        for (int ci=0; ci<8; ++ci) {
             uint t = voxels[voxelIndex(clampVoxel(corners[ci]))].type;
             if (t == 2u) { cellFlags |= 1u; break; }
         }
 
         uint cellMaterial = 0u;
-        for (int ci = 0; ci < 8; ++ci) {
+        for (int ci=0; ci<8; ++ci) {
             if (d[ci] >= -EPS) {
                 cellMaterial = voxels[voxelIndex(clampVoxel(corners[ci]))].material;
                 break;
             }
         }
-
         uint packedFlags = (cellFlags & 1u) | ((cellMaterial & 63u) << 1);
 
-        // ----------------------------
-        // Write vertices
-        // ----------------------------
-        verts[idx + 0].pos    = vec4(v0, 1.0);
-        verts[idx + 0].normal = vec4(n0, 0.0);
-        verts[idx + 0].color  = vec4(col0, 1.0);
-        verts[idx + 0].flags  = uvec4(packedFlags, 0u, 0u, 0u);
-        verts[idx + 0].uv = computePlanarUV(v0);
+        verts[idx+0].pos=vec4(v0,1); verts[idx+0].normal=vec4(n0,0); verts[idx+0].color=vec4(col0,1);
+        verts[idx+0].uv=computePlanarUV(v0); verts[idx+0].flags=uvec4(packedFlags,0,0,0);
 
-        verts[idx + 1].pos    = vec4(v1, 1.0);
-        verts[idx + 1].normal = vec4(n1, 0.0);
-        verts[idx + 1].color  = vec4(col1, 1.0);
-        verts[idx + 1].flags  = uvec4(packedFlags, 0u, 0u, 0u);
-        verts[idx + 1].uv = computePlanarUV(v1);
+        verts[idx+1].pos=vec4(v1,1); verts[idx+1].normal=vec4(n1,0); verts[idx+1].color=vec4(col1,1);
+        verts[idx+1].uv=computePlanarUV(v1); verts[idx+1].flags=uvec4(packedFlags,0,0,0);
 
-        verts[idx + 2].pos    = vec4(v2, 1.0);
-        verts[idx + 2].normal = vec4(n2, 0.0);
-        verts[idx + 2].color  = vec4(col2, 1.0);
-        verts[idx + 2].flags  = uvec4(packedFlags, 0u, 0u, 0u);
-        verts[idx + 2].uv = computePlanarUV(v2);
-
+        verts[idx+2].pos=vec4(v2,1); verts[idx+2].normal=vec4(n2,0); verts[idx+2].color=vec4(col2,1);
+        verts[idx+2].uv=computePlanarUV(v2); verts[idx+2].flags=uvec4(packedFlags,0,0,0);
     }
 
+    if (all(equal(gl_GlobalInvocationID, uvec3(0,0,0)))) {
+        memoryBarrierBuffer();
+
+        cmds[uChunkSlot].count         = vertexCounter;
+        cmds[uChunkSlot].instanceCount = 1u;
+        cmds[uChunkSlot].first         = baseVert;
+        cmds[uChunkSlot].baseInstance  = uChunkSlot;
+    }
 }

@@ -2,8 +2,6 @@
 #include <cstddef>
 #include <cstdint>
 
-// std430-friendly voxel struct: matches GLSL
-// struct Voxel { float density; vec4 color; };
 struct alignas(16) CpuVoxelStd430 {
     float density;   // offset 0
     float pad0;      // offset 4
@@ -18,8 +16,6 @@ struct alignas(16) CpuVoxelStd430 {
 static_assert(sizeof(CpuVoxelStd430) == 64, "CpuVoxelStd430 must be 64 bytes");
 static_assert(alignof(CpuVoxelStd430) == 16, "CpuVoxelStd430 must be 16-byte aligned");
 
-// std430-friendly OutVertex struct: matches GLSL
-// struct OutVertex { vec4 pos; vec4 normal; vec4 color; };
 struct alignas(16) OutVertexStd430 {
     float pos[4];    // offset 0..15
     float normal[4]; // offset 16..31
@@ -31,7 +27,31 @@ struct alignas(16) OutVertexStd430 {
 static_assert(sizeof(OutVertexStd430) == 80, "OutVertexStd430 must be 80 bytes");
 static_assert(alignof(OutVertexStd430) == 16, "OutVertexStd430 must be 16-byte aligned");
 
-// Offsets used by glVertexAttribPointer
 static_assert(offsetof(OutVertexStd430, pos) == 0, "pos offset must be 0");
 static_assert(offsetof(OutVertexStd430, normal) == 16, "normal offset must be 16");
 static_assert(offsetof(OutVertexStd430, color) == 32, "color offset must be 32");
+
+struct DrawArraysIndirectCommand {
+    uint32_t count;
+    uint32_t instanceCount;
+    uint32_t first;
+    uint32_t baseInstance;
+};
+
+
+inline size_t chunkMaxVertices(int DIM) {
+    const int cellsPerAxis = DIM - 1;
+    return size_t(cellsPerAxis) * cellsPerAxis * cellsPerAxis * 5u * 3u;
+}
+struct alignas(16) VoxelLightGpu {
+    glm::vec4 posIntensity; // xyz=pos, w=intensity
+    glm::vec4 color;        // xyz=color, w=unused
+};
+static_assert(sizeof(VoxelLightGpu) == 32);
+
+struct alignas(16) ChunkLightIndexGpu {
+    uint32_t count;
+    uint32_t indices[4];
+    uint32_t pad[3];
+};
+static_assert(sizeof(ChunkLightIndexGpu) == 32);

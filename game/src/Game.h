@@ -519,16 +519,25 @@ namespace gl3 {
         const int DIM = CHUNK_SIZE+2; //Chunk Size with a bit off padding for marching cubes
         size_t voxelCount = DIM * DIM * DIM; //How many voxels can be in one Chunk
         static constexpr int ChunkCount = 70; //Total size of the Game World
-        static constexpr int RenderingRange = 10; //Range around Camera that is rendered
+        static constexpr int RenderingRange = 15; //Range around Camera that is rendered
 
         //Marching-cubes Variables
         size_t maxVerts = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5 * 3; //Max amount of vertices marching cubes can create
-        const int MAX_CHUNKS_PER_FRAME = 5;
+        const int MAX_CHUNKS_PER_FRAME = 8;
         //std::vector<Chunk> dirtyChunks;
         //SSBOs for marching cubes:
         GLuint ssboVoxels = 0, ssboEdgeTable = 0, ssboTriTable = 0,
         ssboCounter = 0, ssboTriangles = 0, particleSSBO = 0, fieldBitsSSBO = 0;
 
+        GLuint globalChunkVertexBuffer = 0;   // SSBO for verts, also used as ARRAY_BUFFER
+        GLuint chunkIndirectBuffer = 0;       // GL_DRAW_INDIRECT_BUFFER
+        GLuint globalChunkVAO = 0;
+
+        size_t CHUNK_MAX_VERTS = 0;           // computed once from DIM
+        int MAX_CHUNKS_GPU = 0;               // capacity (>= number of chunks you may render)
+
+        GLuint ssboLights = 0;         // binding = 10
+        GLuint ssboChunkLightIdx = 0;  // binding = 11
 
         //vEffects
         SunBillboard sunBillboards;
@@ -554,6 +563,9 @@ namespace gl3 {
         GLuint materialAlbedoArrayTexId = 0;
         void fillMaterialTable();
 
+        std::array<float, 64> rough{};
+        std::array<float, 64> spec{};
+        std::array<float, 64> uvScale{};
 
         ////Input
         std::unique_ptr<CharacterController> characterController;
@@ -666,5 +678,16 @@ namespace gl3 {
         int activeSpellMat=0;
 
 
+        void setupChunkBatchBuffers(int maxChunksGpu);
+
+        bool tryResolveChunkVertexCount(Chunk *chunk);
+
+        void setupLightSSBOs();
+
+        uint32_t lightIndexFromPtr(const VoxelLight *ptr) const;
+
+        void uploadMergedLightsToGPU();
+
+        void buildAndUploadChunkLightIndexBuffer(int camCX, int camCY, int camCZ, int renderRadius);
     };
 }

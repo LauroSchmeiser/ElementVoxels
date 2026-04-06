@@ -288,6 +288,12 @@ namespace gl3 {
         materials.params[7].roughness = 1.0f;
         materials.params[7].specular  = 0.05f;
         materials.params[7].uvScale   = 0.05f;
+
+        for (int i = 0; i < 64; ++i) {
+            rough[i] = materials.params[i].roughness;
+            spec[i]  = materials.params[i].specular;
+            uvScale[i] = materials.params[i].uvScale;
+        }
     }
 
     void Game::generateAssets()
@@ -479,6 +485,8 @@ namespace gl3 {
             case PreloadStage::Boot_SSBOs:
                 preloadStageName = "Setting up GPU buffers...";
                 setupSSBOsAndTables();
+                setupChunkBatchBuffers(350);
+                setupLightSSBOs();
                 preloadStage = PreloadStage::Boot_Materials;
                 return 0.30f;
 
@@ -2755,11 +2763,11 @@ namespace gl3 {
         glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(unsigned int), &zero, GL_DYNAMIC_DRAW);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, ssboCounter);
 
-        // 4: triangles SSBO (output)
+      /*  // 4: triangles SSBO (output)
         glGenBuffers(1, &ssboTriangles);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboTriangles);
         glBufferData(GL_SHADER_STORAGE_BUFFER, maxVerts * sizeof(OutVertex), nullptr, GL_DYNAMIC_DRAW);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, ssboTriangles);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, ssboTriangles);*/
 
         //5 particle ssbo
       //  glGenBuffers(1, &particleSSBO);
@@ -3375,6 +3383,78 @@ namespace gl3 {
         return ((cx & 0xFFF) << 20) | ((cy & 0xFFF) << 8) | (cz & 0xFF);
     }
 
+    void Game::setupLightSSBOs()
+    {
+        glGenBuffers(1, &ssboLights);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboLights);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, 4096 * sizeof(VoxelLightGpu), nullptr, GL_DYNAMIC_DRAW); // capacity
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+        glGenBuffers(1, &ssboChunkLightIdx);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboChunkLightIdx);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, MAX_CHUNKS_GPU * sizeof(ChunkLightIndexGpu), nullptr, GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
+
+    inline uint32_t Game::lightIndexFromPtr(const VoxelLight* ptr) const {
+        const VoxelLight* base = mergedEmissiveLightPool.data();
+        return (uint32_t)(ptr - base);
+    }
+
+    void Game::uploadMergedLightsToGPU()
+    {
+        std::vector<VoxelLightGpu> gpu;
+        gpu.resize(mergedEmissiveLightPool.size());
+
+        for (size_t i = 0; i < mergedEmissiveLightPool.size(); ++i) {
+            const auto& L = mergedEmissiveLightPool[i];
+            gpu[i].posIntensity = glm::vec4(L.pos, L.intensity);
+            gpu[i].color        = glm::vec4(L.color, 0.0f);
+        }
+
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboLights);
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, gpu.size() * sizeof(VoxelLightGpu), gpu.data());
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
+
+    void Game::buildAndUploadChunkLightIndexBuffer(int camCX, int camCY, int camCZ, int renderRadius)
+    {
+        std::vector<ChunkLightIndexGpu> chunkIdx(MAX_CHUNKS_GPU);
+        for (auto& e : chunkIdx) {
+            e.count = 0;
+            for (int i = 0; i < 4; ++i) e.indices[i] = 0;
+        }
+
+        for (int cx = camCX - renderRadius; cx <= camCX + renderRadius; ++cx) {
+            for (int cy = camCY - renderRadius; cy <= camCY + renderRadius; ++cy) {
+                for (int cz = camCZ - renderRadius; cz <= camCZ + renderRadius; ++cz) {
+                    Chunk* chunk = chunkManager->getChunk({cx,cy,cz});
+                    if (!chunk) continue;
+                    if (!chunk->gpuCache.isValid) continue;
+
+                    // ensure nearbyLights is up to date
+                    if (frameCounter - chunk->gpuCache.lastLightUpdateFrame > LIGHT_UPDATE_INTERVAL ||
+                        chunk->gpuCache.nearbyLights.empty()) {
+                        updateChunkLights(chunk);
+                    }
+
+                    auto& dst = chunkIdx[chunk->gpuSlot];
+                    int num = std::min((int)chunk->gpuCache.nearbyLights.size(), MAX_LIGHTS);
+                    dst.count = (uint32_t)num;
+
+                    for (int i = 0; i < num; ++i) {
+                        const VoxelLight* L = chunk->gpuCache.nearbyLights[i];
+                        dst.indices[i] = lightIndexFromPtr(L);
+                    }
+                }
+            }
+        }
+
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboChunkLightIdx);
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, chunkIdx.size() * sizeof(ChunkLightIndexGpu), chunkIdx.data());
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
+
 
 ////----Input Code------------------------------------------------------------------------------------------------------------------------------
 
@@ -3580,195 +3660,62 @@ namespace gl3 {
         glDepthMask(depthMask);
     }
 
-    void Game:: renderChunks() {
+    void Game::renderChunks()
+    {
         TRACY_CPU_ZONE("Game::renderChunks");
         TRACY_GPU_ZONE("Chunks (total)");
+
         int built = 0;
         int lighted = 0;
-        int culledChunks=0;
 
-        std::cout<<"\nFrame:"<<(frameCounter-29)<<"\n";
-        if (DebugMode2) {
-            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-        }
-        else {
-            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-        }
-        float aspect = (windowHeight == 0) ? (float) windowWidth / 1.0f : (float) windowWidth / (float) windowHeight;
+        glPolygonMode(GL_FRONT_AND_BACK, DebugMode2 ? GL_LINE : GL_FILL);
+
+        float aspect = (windowHeight == 0) ? (float)windowWidth : (float)windowWidth / (float)windowHeight;
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), glm::vec3(0.0f, 1.0f, 0.0f));
         glm::mat4 pv = projection * view;
 
         frameCounter++;
 
-        // Clear per-frame billboards
         emissiveBillboards.clear();
         usedLightIDs.clear();
 
-        // Get camera chunk coordinates
         const int camCX = worldToChunk(cameraPos.x);
         const int camCY = worldToChunk(cameraPos.y);
         const int camCZ = worldToChunk(cameraPos.z);
-        const int totalChunks = (2 * RenderingRange + 1) * (2 * RenderingRange + 1) * (2 * RenderingRange + 1);
-
-        int renderedChunks = 0;
-        int meshRegens = 0;
-        int totalChecked = 0;
-
-
-        // STEP 1: Update global light spatial hash (replaces grid)
-        if (frameCounter % 30 == 0) { // Update every 30 frames
-            TRACY_CPU_ZONE("renderChunks::updateLightSpatialHash");
-            updateLightSpatialHash();
-        }
-
-        // STEP 2: First, generate meshes for dirty chunks
         const int renderRadius = RenderingRange;
 
+        // 1) Update merged lights occasionally (CPU) + upload to GPU
+        if (frameCounter % 30 == 0) {
+            TRACY_CPU_ZONE("renderChunks::updateLightSpatialHash");
+            updateLightSpatialHash();
+
+            uploadMergedLightsToGPU();
+        }
+
+        // 2) Generate meshes / rebuild emissive lights
         {
             TRACY_CPU_ZONE("renderChunks::PrepareMeshesAndLights");
-            //if(DebugMode1) {CpuTimer t8("Generate Meshes");}
-            for (int cx = camCX - renderRadius; cx <= camCX + renderRadius; ++cx) {
-                for (int cy = camCY - renderRadius; cy <= camCY + renderRadius; ++cy) {
-                    for (int cz = camCZ - renderRadius; cz <= camCZ + renderRadius; ++cz) {
-                        totalChecked++;
-                        ChunkCoord coord{cx, cy, cz};
-                        /*if (!isChunkVisible(coord)) {
-                            culledChunks++;
-                            continue;
-                        }*/
-                        Chunk *chunk = chunkManager->getChunk(coord);
 
+            for (int cx = camCX - renderRadius; cx <= camCX + renderRadius; ++cx)
+                for (int cy = camCY - renderRadius; cy <= camCY + renderRadius; ++cy)
+                    for (int cz = camCZ - renderRadius; cz <= camCZ + renderRadius; ++cz)
+                    {
+                        Chunk* chunk = chunkManager->getChunk({cx,cy,cz});
                         if (!chunk) continue;
-                        //if (!hasSolidVoxels(*chunk)) continue;
 
-                        // Regenerate mesh if dirty
-                        if (built < MAX_CHUNKS_PER_FRAME && chunk->meshDirty ||
-                            built < MAX_CHUNKS_PER_FRAME && !chunk->gpuCache.isValid) {
+                        if (built < MAX_CHUNKS_PER_FRAME && (chunk->meshDirty || !chunk->gpuCache.isValid)) {
                             built++;
-                            TRACY_CPU_ZONE("renderChunks::generateChunkMesh");
                             generateChunkMesh(chunk);
-                            meshRegens++;
                         }
 
-                        // Rebuild lighting if dirty
                         if (lighted < MAX_CHUNKS_PER_FRAME && chunk->lightingDirty) {
                             lighted++;
-                            TRACY_CPU_ZONE("renderChunks::rebuildChunkLights");
-                            rebuildChunkLights(coord);
+                            rebuildChunkLights(chunk->coord);
                             chunk->lightingDirty = false;
                         }
 
-                    }
-                }
-            }
-        }
-        if(DebugMode1) {std::cout << "Mesh generation: culled " << culledChunks << " of " << totalChecked
-                                  << " chunks (" << (100.0f * culledChunks / totalChecked) << "% culled)\n";}
-        culledChunks = 0;
-        totalChecked = 0;
-        {
-            TRACY_CPU_ZONE("renderChunks::DrawVisibleChunks");
-            TRACY_GPU_ZONE("Chunks::Draw");
-            // STEP 3: Now RENDER all visible chunks
-            voxelShader->use();  // Activate RENDER shader
-
-            if (actions["CastSphere"].isHeld)
-            {
-                float maxDist = 250.0f;
-                RayCastResult hit = rayCastFromCamera(maxDist);
-
-                glm::vec3 center = hit.hit ? hit.hitPosition : (cameraPos + getCameraFront() * 35.0f);
-
-                // ---- Spell params (match your cast code) ----
-                float formationRadius = 2.0f * VOXEL_SIZE;     // your castSpellSphere uses 4*VOXEL_SIZE
-                float pullRadius      = formationRadius * 15.5f; // your searchRadius behavior
-
-                voxelShader->setInt("uOverlayEnabled", 1);
-                voxelShader->setVec3("uOverlayCenter", center);
-                voxelShader->setFloat("uOverlayRadius", pullRadius);
-                voxelShader->setUInt("uOverlayMaterial", (uint32_t)0); // 0..63
-                voxelShader->setVec3("uOverlayColor", glm::vec3(0.25f, 1.0f, 0.35f));
-                voxelShader->setFloat("uOverlayAlpha", 0.25f);
-            } else
-            {
-                voxelShader->setInt("uOverlayEnabled", 0);
-            }
-            // Set common uniforms that don't change per chunk
-
-            voxelShader->setMatrix("model", glm::mat4(1.0f));
-            voxelShader->setMatrix("mvp", pv);
-            voxelShader->setVec3("viewPos", cameraPos);
-            voxelShader->setVec3("ambientColor", glm::vec3(0.002f));
-
-            // texture unit 0
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D_ARRAY, materialAlbedoArrayTexId);
-            voxelShader->setInt("uAlbedoArray", 0);
-
-            std::array<float, 64> rough{};
-            std::array<float, 64> spec{};
-            std::array<float, 64> uvScale{};
-            for (int i = 0; i < 64; ++i) {
-                rough[i] = materials.params[i].roughness;
-                spec[i]  = materials.params[i].specular;
-                uvScale[i] = materials.params[i].uvScale;
-            }
-
-            voxelShader->setFloatArray("uMatRoughness", rough.data(), 64);
-            voxelShader->setFloatArray("uMatSpecular",  spec.data(), 64);
-            voxelShader->setFloatArray("uUVScale",      uvScale.data(), 64);
-
-            voxelShader->setInt("uBurnEnabled", 0);
-            voxelShader->setFloat("uBurn", 0.0f);
-            voxelShader->setVec3("uBurnCenter", glm::vec3(0.0f));
-            voxelShader->setFloat("uBurnRadius", 0.0f);
-            voxelShader->setFloat("uBurnNoiseScale", 0.35f);
-            voxelShader->setFloat("uBurnEdgeWidth", 0.12f);
-            voxelShader->setVec3("uBurnEmberColor", glm::vec3(2.5f, 0.9f, 0.2f));
-            voxelShader->setFloat("uBurnCharStrength", 0.85f);
-
-// or show signed N·L for the strongest light (index 0)
-            if (DebugMode1) {
-                voxelShader->setInt("debugMode", activeDebugMode % 5);
-            } else {
-                voxelShader->setFloat("emission", 0.0f);
-            }
-
-
-            for (int cx = camCX - renderRadius; cx <= camCX + renderRadius; ++cx) {
-                for (int cy = camCY - renderRadius; cy <= camCY + renderRadius; ++cy) {
-                    for (int cz = camCZ - renderRadius; cz <= camCZ + renderRadius; ++cz) {
-
-                        totalChecked++;
-                        ChunkCoord coord{cx, cy, cz};
-                        /*if (!isChunkVisible(coord)) {
-                            culledChunks++;
-                            continue;
-                        }*/
-                        Chunk *chunk = chunkManager->getChunk(coord);
-                        if (!chunk) continue;
-                        //if(!hasSolidVoxels(*chunk)) continue;
-
-                        // Skip if no geometry
-                        if (chunk->gpuCache.vertexCount == 0 || !chunk->gpuCache.isValid) {
-                            continue;
-                        }
-                        TRACY_CPU_ZONE("renderChunks::Chunk");
-
-
-                        glm::vec3 chunkMin = getChunkMin(chunk->coord);
-                        glm::vec3 chunkCenter = chunkMin + glm::vec3(CHUNK_SIZE * 0.5f) * VOXEL_SIZE;
-
-                        // Update lights for this chunk (check if outdated)
-                        if (frameCounter - chunk->gpuCache.lastLightUpdateFrame > LIGHT_UPDATE_INTERVAL ||
-                            chunk->gpuCache.nearbyLights.empty()) {
-                            TRACY_CPU_ZONE("renderChunks::updateChunkLights");
-                            updateChunkLights(chunk);
-                        }
-
-                        // Collect billboards from emissive chunks
-                        for (const auto &light: chunk->emissiveLights) {
+                        for (const auto& light : chunk->emissiveLights) {
                             if (usedLightIDs.insert(light.id).second) {
                                 SunInstance inst;
                                 inst.position = light.pos;
@@ -3777,74 +3724,77 @@ namespace gl3 {
                                 emissiveBillboards.push_back(inst);
                             }
                         }
-
-                        //std::cout<<(chunk->gpuCache.nearbyLights.size())<<"\n";
-
-                        // Set per-chunk uniforms (lights)
-                        /*if((chunk->gpuCache.nearbyLights.size()>0)) {
-                            std::cout << "lights exist for this chunk: "<< chunk->gpuCache.nearbyLights.size() << "\n";
-                        }*/
-
-                        int numLights = std::min((int) chunk->gpuCache.nearbyLights.size(), MAX_LIGHTS);
-                        voxelShader->setInt("numLights", numLights);
-                        for (int i = 0; i < numLights; ++i) {
-                            const VoxelLight *light = chunk->gpuCache.nearbyLights[i];
-                            voxelShader->setVec3("lightPos[" + std::to_string(i) + "]", light->pos);
-                            voxelShader->setVec3("lightColor[" + std::to_string(i) + "]", light->color);
-                            voxelShader->setFloat("lightIntensity[" + std::to_string(i) + "]", light->intensity);
-                        }
-
-                        // For remaining light slots, set them to zero
-                        for (int i = numLights; i < MAX_LIGHTS; ++i) {
-                            voxelShader->setVec3("lightPos[" + std::to_string(i) + "]", glm::vec3(0.0f));
-                            voxelShader->setVec3("lightColor[" + std::to_string(i) + "]", glm::vec3(0.0f));
-                            voxelShader->setFloat("lightIntensity[" + std::to_string(i) + "]", 0.0f);
-                        }
-
-                        if (chunk->burn.active) {
-                            float u = burn01(chunk->burn.t, chunk->burn.duration);
-                            voxelShader->setInt("uBurnEnabled", 1);
-                            voxelShader->setFloat("uBurn", u);
-                            voxelShader->setVec3("uBurnCenter", chunk->burn.center);
-                            voxelShader->setFloat("uBurnRadius", chunk->burn.radius);
-                            voxelShader->setFloat("uBurnNoiseScale", chunk->burn.noiseScale);
-                            voxelShader->setFloat("uBurnEdgeWidth", chunk->burn.edgeWidth);
-                            voxelShader->setVec3("uBurnEmberColor", glm::vec3(2.5f, 0.9f, 0.2f));
-                            voxelShader->setFloat("uBurnCharStrength", 0.85f);
-                        } else {
-                            voxelShader->setInt("uBurnEnabled", 0);
-                        }
-
-                        // Draw from chunk's VAO
-                        glBindVertexArray(chunk->gpuCache.vao);
-                        glDrawArrays(GL_TRIANGLES, 0, chunk->gpuCache.vertexCount);
-                        glBindVertexArray(0);
-
-                        renderedChunks++;
                     }
-                }
+        }
+
+        // 3) per-chunk light index buffer
+        {
+            TRACY_CPU_ZONE("renderChunks::buildAndUploadChunkLightIndexBuffer");
+            buildAndUploadChunkLightIndexBuffer(camCX, camCY, camCZ, renderRadius);
+        }
+
+        // 4) Draw
+        {
+            TRACY_CPU_ZONE("renderChunks::DrawBatched");
+            TRACY_GPU_ZONE("Chunks::DrawBatched");
+
+            voxelShader->use();
+
+            // overlay uniforms unchanged
+            if (actions["CastSphere"].isHeld) {
+                float maxDist = 250.0f;
+                RayCastResult hit = rayCastFromCamera(maxDist);
+                glm::vec3 center = hit.hit ? hit.hitPosition : (cameraPos + getCameraFront() * 35.0f);
+
+                float formationRadius = 2.0f * VOXEL_SIZE;
+                float pullRadius = formationRadius * 15.5f;
+
+                voxelShader->setInt("uOverlayEnabled", 1);
+                voxelShader->setVec3("uOverlayCenter", center);
+                voxelShader->setFloat("uOverlayRadius", pullRadius);
+                voxelShader->setUInt("uOverlayMaterial", (uint32_t)0);
+                voxelShader->setVec3("uOverlayColor", glm::vec3(0.25f, 1.0f, 0.35f));
+                voxelShader->setFloat("uOverlayAlpha", 0.25f);
+            } else {
+                voxelShader->setInt("uOverlayEnabled", 0);
             }
+
+            voxelShader->setMatrix("model", glm::mat4(1.0f));
+            voxelShader->setMatrix("mvp", pv);
+            voxelShader->setVec3("viewPos", cameraPos);
+            voxelShader->setVec3("ambientColor", glm::vec3(0.002f));
+
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D_ARRAY, materialAlbedoArrayTexId);
+            voxelShader->setInt("uAlbedoArray", 0);
+
+            voxelShader->setFloatArray("uMatRoughness", rough.data(), 64);
+            voxelShader->setFloatArray("uMatSpecular",  spec.data(), 64);
+            voxelShader->setFloatArray("uUVScale",      uvScale.data(), 64);
+
+            if (DebugMode1) voxelShader->setInt("debugMode", activeDebugMode % 5);
+            else voxelShader->setFloat("emission", 0.0f);
+
+            // Bind SSBOs used by voxel.frag
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 10, ssboLights);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 11, ssboChunkLightIdx);
+
+            // One VAO, one indirect buffer, one call
+            glBindVertexArray(globalChunkVAO);
+            glBindBuffer(GL_DRAW_INDIRECT_BUFFER, chunkIndirectBuffer);
+
+            // Simplest: draw all slots. Slots with count=0 draw nothing.
+            glMultiDrawArraysIndirect(GL_TRIANGLES, (void*)0, MAX_CHUNKS_GPU, (GLsizei)sizeof(DrawArraysIndirectCommand));
+
+            glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+            glBindVertexArray(0);
         }
 
-        if(DebugMode1) {
-            std::cout << "Lighting/Rendering: culled " << culledChunks << " of " << totalChecked
-                      << " chunks (" << (100.0f * culledChunks / totalChecked) << "% culled)\n";
-
-            // Also add frustum culling statistics
-            std::cout << "Frustum culling effectiveness: "
-                      << (100.0f * (totalChunks - totalChecked + culledChunks) / totalChunks)
-                      << "% of chunks were culled\n";
-        }
-        // Render billboards
+        // 5) Billboards unchanged
         if (!emissiveBillboards.empty() && !DebugMode1) {
-            TRACY_CPU_ZONE("renderChunks::SunBillboards");
-            TRACY_GPU_ZONE("SunBillboards");
-            sunBillboards.render(emissiveBillboards, view, projection, (float) glfwGetTime());
+            sunBillboards.render(emissiveBillboards, view, projection, (float)glfwGetTime());
         }
-
-        //std::cout << "Rendered " << renderedChunks << " chunks (Regenerated: " << meshRegens << ")\n";
     }
-
 
     void Game::renderAnimatedVoxels() {
         TRACY_CPU_ZONE("Game::renderAnimatedVoxels");
@@ -4293,50 +4243,30 @@ namespace gl3 {
 
 //------Marching Cubes-Code---------------------------------------------------------------------------------------------------------------------
 
-    void Game::generateChunkMesh(Chunk *chunk) {
+    void Game::generateChunkMesh(Chunk* chunk)
+    {
         if (!chunk) return;
 
-        // if chunk is terminal-cleared, ensure it stays empty
         if (chunk->isCleared) {
-            chunk->gpuCache.vertexCount = 0;
+            DrawArraysIndirectCommand cmd{};
+            cmd.count = 0;
+            cmd.instanceCount = 1;
+            cmd.first = chunk->gpuSlot * (uint32_t)CHUNK_MAX_VERTS;
+            cmd.baseInstance = chunk->gpuSlot;
+
+            glBindBuffer(GL_DRAW_INDIRECT_BUFFER, chunkIndirectBuffer);
+            glBufferSubData(GL_DRAW_INDIRECT_BUFFER,
+                            chunk->gpuSlot * sizeof(DrawArraysIndirectCommand),
+                            sizeof(DrawArraysIndirectCommand),
+                            &cmd);
+            glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+
             chunk->gpuCache.isValid = true;
             chunk->meshDirty = false;
             return;
         }
-        auto hasAnySolid = [&](){
-            for (int x=0; x<=CHUNK_SIZE; ++x)
-                for (int y=0; y<=CHUNK_SIZE; ++y)
-                    for (int z=0; z<=CHUNK_SIZE; ++z)
-                        if (chunk->voxels[x][y][z].type != 0) return true;
-            return false;
-        };
 
-        if (!hasAnySolid()) {
-            chunk->gpuCache.vertexCount = 0;
-            chunk->gpuCache.isValid = true;
-            chunk->meshDirty = false;
-            return;
-        }
-        TRACY_CPU_ZONE("Game::generateChunkMesh");
-        TRACY_GPU_ZONE("MarchingCubes::ChunkMesh");
-
-        // Clean up old GPU resources if they exist
-
-        {
-            TRACY_CPU_ZONE("generateChunkMesh::CleanupOldGPU");
-            if (chunk->gpuCache.vao != 0) {
-                glDeleteVertexArrays(1, &chunk->gpuCache.vao);
-                glDeleteBuffers(1, &chunk->gpuCache.vbo);
-                chunk->gpuCache.vao = 0;
-                chunk->gpuCache.vbo = 0;
-            }
-
-            if (chunk->gpuCache.triangleSSBO != 0) {
-                glDeleteBuffers(1, &chunk->gpuCache.triangleSSBO);
-                chunk->gpuCache.triangleSSBO = 0;
-            }
-
-        }
+        // TODO: optional CPU early-out: if no solid, also set cmd.count=0 as above and return.
 
         glm::vec3 chunkOrigin(
                 chunk->coord.x * CHUNK_SIZE * gl3::VOXEL_SIZE,
@@ -4344,134 +4274,80 @@ namespace gl3 {
                 chunk->coord.z * CHUNK_SIZE * gl3::VOXEL_SIZE
         );
 
-        {
-            TRACY_CPU_ZONE("generateChunkMesh::ComputePhase");
-            TRACY_GPU_ZONE("MarchingCubes::Dispatch");
+        marchingCubesShader->use();
 
-            marchingCubesShader->use();
+        uploadVoxelChunk(*chunk, nullptr);
 
-            {
-                TRACY_CPU_ZONE("generateChunkMesh::uploadVoxelChunk");
-                uploadVoxelChunk(*chunk, nullptr);
-            }
+        resetAtomicCounter();
+        setComputeUniforms(chunkOrigin, *marchingCubesShader);
 
-            {
-                TRACY_CPU_ZONE("generateChunkMesh::reset+uniforms");
-                resetAtomicCounter();
-                setComputeUniforms(chunkOrigin, *marchingCubesShader);
-            }
+        marchingCubesShader->setUInt("uChunkSlot", chunk->gpuSlot);
+        marchingCubesShader->setUInt("uChunkMaxVerts", (uint32_t)CHUNK_MAX_VERTS);
 
-            // Determine cells per axis and buffer sizes using DIM
-            const int cellsPerAxis = DIM - 1; // marching cubes operates on (voxelGridDim - 1) cells
-            const size_t maxVertices =
-                    size_t(cellsPerAxis) * cellsPerAxis * cellsPerAxis * 5 * 3; // conservative upper bound
-            const size_t triangleBufferSize = maxVertices * sizeof(OutVertexStd430);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssboVoxels);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ssboEdgeTable);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, ssboTriTable);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, ssboCounter);
 
-            {
-                TRACY_CPU_ZONE("generateChunkMesh::AllocateTriangleSSBO");
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, globalChunkVertexBuffer);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, chunkIndirectBuffer);
 
-                // Create per-chunk triangle SSBO
-                glGenBuffers(1, &chunk->gpuCache.triangleSSBO);
-                glBindBuffer(GL_SHADER_STORAGE_BUFFER, chunk->gpuCache.triangleSSBO);
-                glBufferData(GL_SHADER_STORAGE_BUFFER, triangleBufferSize, nullptr, GL_DYNAMIC_DRAW);
+        int cellsPerAxis = DIM - 1;
+        int groups = (cellsPerAxis + 7) / 8;
+        glDispatchCompute(groups, groups, groups);
 
-                // Bind SSBOs for compute shader (voxel SSBO already filled)
-                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssboVoxels);
-                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ssboEdgeTable);
-                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, ssboTriTable);
-                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, ssboCounter);
-                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, chunk->gpuCache.triangleSSBO);
+        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT |
+                        GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT |
+                        GL_COMMAND_BARRIER_BIT);
 
-            }
+        // readback vertexCounter (4 bytes)
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
+        uint32_t produced = 0;
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(uint32_t), &produced);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
-            // Dispatch compute work: groups based on number of cells (DIM-1)
-            int groups = (cellsPerAxis + 7) / 8;
-            glDispatchCompute(groups, groups, groups);
+        // update indirect command for this chunk slot
+        DrawArraysIndirectCommand cmd{};
+        cmd.count = produced;
+        cmd.instanceCount = 1;
+        cmd.first = chunk->gpuSlot * (uint32_t)CHUNK_MAX_VERTS;
+        cmd.baseInstance = chunk->gpuSlot;
 
-            // Ensure compute writes are visible to subsequent operations
-            glMemoryBarrier(
-                    GL_SHADER_STORAGE_BARRIER_BIT | GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT | GL_BUFFER_UPDATE_BARRIER_BIT);
-
-        }
-
-        {
-            TRACY_CPU_ZONE("generateChunkMesh::ReadbackCounter");
-            // Read vertex count from the atomic counter SSBO (counter stores vertex count)
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
-            unsigned int producedVertexCount = 0;
-            void *counterPtr = glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY);
-            if (counterPtr) {
-                producedVertexCount = *static_cast<unsigned int *>(counterPtr);
-                glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
-            }
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-
-            // Store vertex count into the chunk cache
-            chunk->gpuCache.vertexCount = producedVertexCount;
-
-           /* // Optional debug read: map the triangle SSBO for the first N vertices (safe-read)
-            if (producedVertexCount > 0) {
-                glBindBuffer(GL_SHADER_STORAGE_BUFFER, chunk->gpuCache.triangleSSBO);
-                size_t readCount = std::min<unsigned int>(producedVertexCount, 6u);
-                void *vertMap = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, readCount * sizeof(OutVertex),
-                                                 GL_MAP_READ_BIT);
-                if (vertMap) {
-                    // could inspect some values while debugging
-                    glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
-                }
-                glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-            }*/
-        }
-
-        {
-            // PHASE 2: Create VAO that reads directly from the triangle SSBO.
-            TRACY_CPU_ZONE("generateChunkMesh::CreateVAO");
-
-            // We set attribute sizes to 3 to match the vertex shader's vec3 inputs.
-            glGenVertexArrays(1, &chunk->gpuCache.vao);
-            glGenBuffers(1, &chunk->gpuCache.vbo); // vbo remains unused but created for cleanup parity
-
-            glBindVertexArray(chunk->gpuCache.vao);
-
-            // Use the triangle SSBO as the ARRAY_BUFFER for vertex fetch
-            glBindBuffer(GL_ARRAY_BUFFER, chunk->gpuCache.triangleSSBO);
-
-            constexpr GLsizei stride = sizeof(OutVertexStd430);
-            const void *posOffset = (void *) offsetof(OutVertexStd430, pos);
-            const void *normalOffset = (void *) offsetof(OutVertexStd430, normal);
-            const void *colorOffset = (void *) offsetof(OutVertexStd430, color);
-            const void *uvOffset = (void *)offsetof(OutVertexStd430, uv);
-
-            const void *flagsOffset = (void *) offsetof(OutVertexStd430, flags);
-
-            // aPos (vec3 in shader) <- OutVertex.pos (vec4 in buffer, we read first 3 components)
-            glEnableVertexAttribArray(0);
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, posOffset);
-
-            // aNormal (vec3) <- OutVertex.normal
-            glEnableVertexAttribArray(1);
-            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, normalOffset);
-
-            // aColor (vec3) <- OutVertex.color
-            glEnableVertexAttribArray(2);
-            glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, stride, colorOffset);
-
-            //glEnableVertexAttribArray(3);
-            //glVertexAttribIPointer(3, 1, GL_UNSIGNED_INT, stride, flagsOffset);
-            glEnableVertexAttribArray(3);
-            glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, stride, uvOffset);
-
-            glEnableVertexAttribArray(4);
-            glVertexAttribIPointer(4, 1, GL_UNSIGNED_INT, sizeof(OutVertexStd430),
-                                   (void*)offsetof(OutVertexStd430, flags));
-
-            // Unbind VAO/ARRAY_BUFFER
-            glBindVertexArray(0);
-            glBindBuffer(GL_ARRAY_BUFFER, 0);
-        }
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, chunkIndirectBuffer);
+        glBufferSubData(GL_DRAW_INDIRECT_BUFFER,
+                        chunk->gpuSlot * sizeof(DrawArraysIndirectCommand),
+                        sizeof(DrawArraysIndirectCommand),
+                        &cmd);
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
 
         chunk->gpuCache.isValid = true;
         chunk->meshDirty = false;
+    }
+
+    bool Game::tryResolveChunkVertexCount(Chunk* chunk)
+    {
+        if (!chunk->gpuCache.hasPendingCount || !chunk->gpuCache.counterFence)
+            return false;
+
+        // Non-blocking poll:
+        GLenum res = glClientWaitSync(chunk->gpuCache.counterFence, 0, 0);
+        if (res == GL_TIMEOUT_EXPIRED)
+            return false;
+
+        // Fence signaled (or already signaled). Read the 4 bytes.
+        glDeleteSync(chunk->gpuCache.counterFence);
+        chunk->gpuCache.counterFence = 0;
+        chunk->gpuCache.hasPendingCount = false;
+
+        glBindBuffer(GL_COPY_READ_BUFFER, chunk->gpuCache.counterReadbackBuffer);
+        void* ptr = glMapBufferRange(GL_COPY_READ_BUFFER, 0, sizeof(uint32_t), GL_MAP_READ_BIT);
+        if (ptr) {
+            chunk->gpuCache.vertexCount = *reinterpret_cast<uint32_t*>(ptr);
+            glUnmapBuffer(GL_COPY_READ_BUFFER);
+        }
+        glBindBuffer(GL_COPY_READ_BUFFER, 0);
+
+        return true;
     }
 
 
@@ -4482,12 +4358,9 @@ namespace gl3 {
         std::vector<CpuVoxelStd430> voxels;
         voxels.resize(total);
 
-        // We need to include a 1-voxel border from neighbors
-        // Let's assume DIM = CHUNK_SIZE + 2 (one extra voxel on each side)
-        for (int x = -1; x <= CHUNK_SIZE; ++x) {  // -1 to CHUNK_SIZE inclusive
+        for (int x = -1; x <= CHUNK_SIZE; ++x) {
             for (int y = -1; y <= CHUNK_SIZE; ++y) {
                 for (int z = -1; z <= CHUNK_SIZE; ++z) {
-                    // Map to SSBO index (0..localDIM-1)
                     int idxX = x + 1;
                     int idxY = y + 1;
                     int idxZ = z + 1;
@@ -4584,6 +4457,59 @@ namespace gl3 {
         computeShader.setIVec3("voxelGridDim", glm::ivec3(DIM, DIM, DIM));
     }
 
+    void Game::setupChunkBatchBuffers(int maxChunksGpu)
+    {
+        MAX_CHUNKS_GPU = maxChunksGpu;
+        CHUNK_MAX_VERTS = chunkMaxVertices(DIM);
+
+        // 1) Global vertex buffer: MAX_CHUNKS * CHUNK_MAX_VERTS vertices
+        glGenBuffers(1, &globalChunkVertexBuffer);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, globalChunkVertexBuffer);
+        glBufferData(GL_SHADER_STORAGE_BUFFER,
+                     MAX_CHUNKS_GPU * CHUNK_MAX_VERTS * sizeof(OutVertexStd430),
+                     nullptr,
+                     GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+        // 2) Indirect command buffer: one command per chunk slot
+        glGenBuffers(1, &chunkIndirectBuffer);
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, chunkIndirectBuffer);
+
+        std::vector<DrawArraysIndirectCommand> cmds(MAX_CHUNKS_GPU);
+        for (int i = 0; i < MAX_CHUNKS_GPU; ++i) {
+            cmds[i].count = 0;
+            cmds[i].instanceCount = 1;
+            cmds[i].first = uint32_t(i * CHUNK_MAX_VERTS);
+            cmds[i].baseInstance = uint32_t(i); // chunk slot id
+        }
+
+        glBufferData(GL_DRAW_INDIRECT_BUFFER,
+                     cmds.size() * sizeof(DrawArraysIndirectCommand),
+                     cmds.data(),
+                     GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+
+        // 3) One VAO that reads from the global vertex buffer
+        glGenVertexArrays(1, &globalChunkVAO);
+        glBindVertexArray(globalChunkVAO);
+
+        glBindBuffer(GL_ARRAY_BUFFER, globalChunkVertexBuffer);
+
+        constexpr GLsizei stride = sizeof(OutVertexStd430);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void*)offsetof(OutVertexStd430, pos));
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void*)offsetof(OutVertexStd430, normal));
+        glEnableVertexAttribArray(2);
+        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, stride, (void*)offsetof(OutVertexStd430, color));
+        glEnableVertexAttribArray(3);
+        glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, stride, (void*)offsetof(OutVertexStd430, uv));
+        glEnableVertexAttribArray(4);
+        glVertexAttribIPointer(4, 1, GL_UNSIGNED_INT, stride, (void*)offsetof(OutVertexStd430, flags));
+
+        glBindVertexArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
 ////----Helper Functions------------------------------------------------------------------------------------------------------------------------
     Game::RayCastResult Game::rayCastFromCamera(float maxDistance) {
         RayCastResult result;

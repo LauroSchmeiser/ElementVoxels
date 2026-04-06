@@ -1,9 +1,11 @@
 #pragma once
 
 #include <vector>
-#include <bitset>
 #include <functional>
 #include <unordered_map>
+#include <memory>
+#include <stdexcept>
+
 #include "VoxelStructures.h"
 #include "Chunk.h"
 #include "..\robin_hood.h"
@@ -11,196 +13,264 @@
 namespace gl3 {
 
     enum class VoxelCategory : uint8_t {
-        STATIC = 0,    // Regular terrain - rarely changes
-        DYNAMIC = 1,   // Physics objects - moderate changes
-        EMISSIVE = 2,     // Fluids - frequent updates
-        FLUID = 3,  // Light sources
-        INTERACTIVE = 4 // Player-modified
+        STATIC = 0,
+        DYNAMIC = 1,
+        EMISSIVE = 2,
+        FLUID = 3,
+        INTERACTIVE = 4
     };
 
     class MultiGridChunkManager {
     private:
-        static constexpr int DENSE_GRID_SIZE = 32; // Define it here too
-
-        // Separate grids based on update frequency
+        // ----------------------------
+        // Category grid (iteration + lookup)
+        // ----------------------------
         struct CategoryGrid {
-            // Using a simple map for now, you can optimize later
             robin_hood::unordered_map<ChunkCoord, Chunk*, ChunkCoordHash> chunkMap;
-            std::vector<ChunkCoord> activeList;   // For iteration
-            std::vector<Chunk*> chunkPointers;    // For fast iteration
+            std::vector<Chunk*> chunkPointers; // dense iteration list
 
-            void addChunk(const ChunkCoord& coord, Chunk* chunk) {
-                chunkMap[coord] = chunk;
-                activeList.push_back(coord);
-                chunkPointers.push_back(chunk);
+            bool contains(const ChunkCoord& coord) const {
+                return chunkMap.find(coord) != chunkMap.end();
             }
 
-            Chunk* getChunk(const ChunkCoord& coord) {
+            Chunk* getChunk(const ChunkCoord& coord) const {
                 auto it = chunkMap.find(coord);
                 return (it != chunkMap.end()) ? it->second : nullptr;
             }
 
+            void addChunk(const ChunkCoord& coord, Chunk* chunk) {
+                // Prevent duplicate insertion (critical for correct iteration)
+                if (contains(coord)) return;
+
+                chunkMap[coord] = chunk;
+                chunkPointers.push_back(chunk);
+            }
+
+            void removeChunk(const ChunkCoord& coord) {
+                auto it = chunkMap.find(coord);
+                if (it == chunkMap.end()) return;
+
+                Chunk* ptr = it->second;
+                chunkMap.erase(it);
+
+                // swap-remove from chunkPointers
+                for (size_t i = 0; i < chunkPointers.size(); ++i) {
+                    if (chunkPointers[i] == ptr) {
+                        chunkPointers[i] = chunkPointers.back();
+                        chunkPointers.pop_back();
+                        break;
+                    }
+                }
+            }
+
             void clear() {
                 chunkMap.clear();
-                activeList.clear();
                 chunkPointers.clear();
             }
         };
 
         CategoryGrid staticGrid;
         CategoryGrid dynamicGrid;
-        CategoryGrid fluidGrid;
         CategoryGrid emissiveGrid;
+        CategoryGrid fluidGrid;
         CategoryGrid interactiveGrid;
 
         // Master storage for all chunks
         robin_hood::unordered_map<ChunkCoord, std::unique_ptr<Chunk>, ChunkCoordHash> allChunks;
 
-    public:
+        // Track which category each chunk is currently in (so we can remove correctly)
+        robin_hood::unordered_map<ChunkCoord, VoxelCategory, ChunkCoordHash> chunkCategory;
 
+        // ----------------------------
+        // GLOBAL GPU slot allocator (the real fix)
+        // ----------------------------
+        uint32_t nextGpuSlot = 0;
+        std::vector<uint32_t> freeGpuSlots;
+        static constexpr uint32_t MAX_CHUNKS_GPU = 350;
+
+
+        static constexpr uint32_t INVALID_SLOT = 0xFFFFFFFFu;
+
+        uint32_t allocateGpuSlot() {
+            if (!freeGpuSlots.empty()) {
+                uint32_t s = freeGpuSlots.back();
+                freeGpuSlots.pop_back();
+                return s;
+            }
+            if (nextGpuSlot >= MAX_CHUNKS_GPU) {
+                throw std::runtime_error("Out of GPU chunk slots (MAX_CHUNKS_GPU)");
+            }
+            return nextGpuSlot++;
+        }
+
+        void freeGpuSlot(uint32_t slot) {
+            if (slot == INVALID_SLOT) return;
+            if (slot < MAX_CHUNKS_GPU) freeGpuSlots.push_back(slot);
+        }
+
+        CategoryGrid& gridFor(VoxelCategory c) {
+            switch (c) {
+                case VoxelCategory::STATIC:       return staticGrid;
+                case VoxelCategory::DYNAMIC:      return dynamicGrid;
+                case VoxelCategory::EMISSIVE:     return emissiveGrid;
+                case VoxelCategory::FLUID:        return fluidGrid;
+                case VoxelCategory::INTERACTIVE:  return interactiveGrid;
+            }
+            return staticGrid; // unreachable, but keeps compiler happy
+        }
+
+        const CategoryGrid& gridFor(VoxelCategory c) const {
+            switch (c) {
+                case VoxelCategory::STATIC:       return staticGrid;
+                case VoxelCategory::DYNAMIC:      return dynamicGrid;
+                case VoxelCategory::EMISSIVE:     return emissiveGrid;
+                case VoxelCategory::FLUID:        return fluidGrid;
+                case VoxelCategory::INTERACTIVE:  return interactiveGrid;
+            }
+            return staticGrid;
+        }
+
+    public:
         void clear() {
             allChunks.clear();
+            chunkCategory.clear();
+
             staticGrid.clear();
             dynamicGrid.clear();
-            fluidGrid.clear();
             emissiveGrid.clear();
+            fluidGrid.clear();
             interactiveGrid.clear();
+
+            nextGpuSlot = 0;
+            freeGpuSlots.clear();
         }
 
-        // Add a chunk with category
+        // Add chunk (create if missing), assign a UNIQUE global gpuSlot, put it in correct grid
         void addChunk(const ChunkCoord& coord, VoxelCategory category) {
-            auto& chunkPtr = allChunks[coord];
-            if (!chunkPtr) {
-                chunkPtr = std::make_unique<Chunk>();
+            // 1) Create if missing
+            auto& uptr = allChunks[coord];
+            if (!uptr) {
+                uptr = std::make_unique<Chunk>();
+                uptr->gpuSlot = INVALID_SLOT; // mark unassigned explicitly
             }
 
-            Chunk* chunk = chunkPtr.get();
+            Chunk* chunk = uptr.get();
 
-            // Remove from any existing category
+            // 2) Remove from old category grid if it existed
             removeChunkFromAllCategories(coord);
 
-            // Add to appropriate category
-            switch (category) {
-                case VoxelCategory::STATIC: staticGrid.addChunk(coord, chunk); break;
-                case VoxelCategory::DYNAMIC: dynamicGrid.addChunk(coord, chunk); break;
-                case VoxelCategory::FLUID: fluidGrid.addChunk(coord, chunk); break;
-                case VoxelCategory::EMISSIVE: emissiveGrid.addChunk(coord, chunk); break;
-                case VoxelCategory::INTERACTIVE: interactiveGrid.addChunk(coord, chunk); break;
+            // 3) Ensure global unique gpuSlot assigned ONCE
+            if (chunk->gpuSlot == INVALID_SLOT) {
+                chunk->gpuSlot = allocateGpuSlot();
             }
+
+            // 4) Mark dirty on add (as you had)
+            chunk->gpuCache.isValid = false;
+            chunk->meshDirty = true;
+
+            // 5) Insert into new grid
+            gridFor(category).addChunk(coord, chunk);
+            chunkCategory[coord] = category;
         }
 
-        // Get chunk with category hint
-        Chunk* getChunkWithCategory(const ChunkCoord& coord, VoxelCategory expected) {
-            // Check appropriate grid first based on category
-            CategoryGrid* grid = nullptr;
-            switch (expected) {
-                case VoxelCategory::FLUID: grid = &fluidGrid; break;
-                case VoxelCategory::DYNAMIC: grid = &dynamicGrid; break;
-                case VoxelCategory::EMISSIVE: grid = &emissiveGrid; break;
-                case VoxelCategory::INTERACTIVE: grid = &interactiveGrid; break;
-                default: grid = &staticGrid; break;
-            }
-
-            Chunk* chunk = grid->getChunk(coord);
-            if (chunk) return chunk;
-
-            // Fallback: check all chunks
+        // Optional: if you ever truly delete a chunk and want to reclaim slot
+        void removeChunk(const ChunkCoord& coord) {
             auto it = allChunks.find(coord);
-            return (it != allChunks.end()) ? it->second.get() : nullptr;
+            if (it == allChunks.end()) return;
+
+            removeChunkFromAllCategories(coord);
+
+            // free GPU slot
+            freeGpuSlot(it->second->gpuSlot);
+
+            // erase storage
+            allChunks.erase(it);
+            chunkCategory.erase(coord);
         }
 
-        // Get any chunk (category-agnostic)
         Chunk* getChunk(const ChunkCoord& coord) {
             auto it = allChunks.find(coord);
             return (it != allChunks.end()) ? it->second.get() : nullptr;
         }
 
-        // Optimized iteration for specific systems
-        void forEachFluidChunk(const std::function<void(Chunk*)>& callback) {
-            for (Chunk* chunk : fluidGrid.chunkPointers) {
-                callback(chunk);
-            }
+        Chunk* getChunkWithCategory(const ChunkCoord& coord, VoxelCategory expected) {
+            // fast path: expected grid
+            if (Chunk* c = gridFor(expected).getChunk(coord)) return c;
+
+            // fallback: any
+            return getChunk(coord);
         }
 
-        void forEachDynamicChunk(const std::function<void(Chunk*)>& callback) {
-            for (Chunk* chunk : dynamicGrid.chunkPointers) {
-                callback(chunk);
-            }
-        }
-
+        // Iteration APIs (restored)
         void forEachChunk(const std::function<void(Chunk*)>& callback) {
-            for (Chunk* chunk : staticGrid.chunkPointers) {
-                callback(chunk);
-            }
-            for (Chunk* chunk : emissiveGrid.chunkPointers) {
-                callback(chunk);
-            }
-            for (Chunk* chunk : dynamicGrid.chunkPointers) {
-                callback(chunk);
-            }
-            for (Chunk* chunk : fluidGrid.chunkPointers) {
-                callback(chunk);
-            }
-            for (Chunk* chunk : interactiveGrid.chunkPointers) {
-                callback(chunk);
-            }
+            for (Chunk* c : staticGrid.chunkPointers) callback(c);
+            for (Chunk* c : emissiveGrid.chunkPointers) callback(c);
+            for (Chunk* c : dynamicGrid.chunkPointers) callback(c);
+            for (Chunk* c : fluidGrid.chunkPointers) callback(c);
+            for (Chunk* c : interactiveGrid.chunkPointers) callback(c);
         }
 
         void forEachEmissiveChunk(const std::function<void(Chunk*)>& callback) {
-            for (Chunk* chunk : emissiveGrid.chunkPointers) {
-                callback(chunk);
-            }
+            for (Chunk* c : emissiveGrid.chunkPointers) callback(c);
         }
 
-        // Change category of a chunk
-        void changeCategory(const ChunkCoord& coord, VoxelCategory newCategory) {
-            addChunk(coord, newCategory);
+        void forEachFluidChunk(const std::function<void(Chunk*)>& callback) {
+            for (Chunk* c : fluidGrid.chunkPointers) callback(c);
+        }
+
+        void forEachDynamicChunk(const std::function<void(Chunk*)>& callback) {
+            for (Chunk* c : dynamicGrid.chunkPointers) callback(c);
         }
 
         // Get all chunk coordinates that exist
         std::vector<ChunkCoord> getAllChunkCoords() const {
             std::vector<ChunkCoord> coords;
             coords.reserve(allChunks.size());
-            for (const auto& pair : allChunks) {
-                coords.push_back(pair.first);
-            }
+            for (const auto& kv : allChunks) coords.push_back(kv.first);
             return coords;
         }
 
-        // Get all chunks within a radius of a point
+        // Get all chunks within a radius of a point (restored)
         std::vector<std::pair<ChunkCoord, Chunk*>> getChunksInRadius(
-                const glm::vec3& center, float radius) {
-
+                const glm::vec3& center, float radius)
+        {
             std::vector<std::pair<ChunkCoord, Chunk*>> result;
 
-            // Calculate chunk bounds
-            int minCX = (int)std::floor((center.x - radius) / (CHUNK_SIZE * VOXEL_SIZE));
-            int maxCX = (int)std::floor((center.x + radius) / (CHUNK_SIZE * VOXEL_SIZE));
-            int minCY = (int)std::floor((center.y - radius) / (CHUNK_SIZE * VOXEL_SIZE));
-            int maxCY = (int)std::floor((center.y + radius) / (CHUNK_SIZE * VOXEL_SIZE));
-            int minCZ = (int)std::floor((center.z - radius) / (CHUNK_SIZE * VOXEL_SIZE));
-            int maxCZ = (int)std::floor((center.z + radius) / (CHUNK_SIZE * VOXEL_SIZE));
+            const float chunkWorld = (float)CHUNK_SIZE * (float)VOXEL_SIZE;
 
-            for (int cx = minCX; cx <= maxCX; ++cx) {
-                for (int cy = minCY; cy <= maxCY; ++cy) {
+            int minCX = (int)std::floor((center.x - radius) / chunkWorld);
+            int maxCX = (int)std::floor((center.x + radius) / chunkWorld);
+            int minCY = (int)std::floor((center.y - radius) / chunkWorld);
+            int maxCY = (int)std::floor((center.y + radius) / chunkWorld);
+            int minCZ = (int)std::floor((center.z - radius) / chunkWorld);
+            int maxCZ = (int)std::floor((center.z + radius) / chunkWorld);
+
+            for (int cx = minCX; cx <= maxCX; ++cx)
+                for (int cy = minCY; cy <= maxCY; ++cy)
                     for (int cz = minCZ; cz <= maxCZ; ++cz) {
-                        ChunkCoord coord{cx, cy, cz};
-                        if (Chunk* chunk = getChunk(coord)) {
-                            result.emplace_back(coord, chunk);
+                        ChunkCoord cc{cx, cy, cz};
+                        if (Chunk* c = const_cast<MultiGridChunkManager*>(this)->getChunk(cc)) {
+                            result.emplace_back(cc, c);
                         }
                     }
-                }
-            }
 
             return result;
         }
 
+        // Change category (restored)
+        void changeCategory(const ChunkCoord& coord, VoxelCategory newCategory) {
+            addChunk(coord, newCategory);
+        }
+
     private:
         void removeChunkFromAllCategories(const ChunkCoord& coord) {
-            // In a real implementation, you'd need to track which category each chunk is in
-            // For simplicity, we'll just clear and rebuild lists when changing categories
-            // This is OK if category changes are infrequent
+            auto itCat = chunkCategory.find(coord);
+            if (itCat == chunkCategory.end()) return;
 
+            VoxelCategory old = itCat->second;
+            gridFor(old).removeChunk(coord);
+            chunkCategory.erase(itCat);
         }
     };
-}
+
+} // namespace gl3

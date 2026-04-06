@@ -1,16 +1,35 @@
-#version 330 core
+#version 430 core
+
+struct VoxelLightGpu {
+    vec4 posIntensity; // xyz pos, w intensity
+    vec4 color;        // xyz color, w unused
+};
+
+const uint MAX_LIGHTS = 4u;
+
+struct ChunkLightIndexGpu {
+    uint count;
+    uint indices[4];
+    uint pad[3];
+};
+
+layout(std430, binding = 10) readonly buffer LightsSSBO {
+    VoxelLightGpu lights[];
+};
+
+layout(std430, binding = 11) readonly buffer ChunkIdxSSBO {
+    ChunkLightIndexGpu chunkLights[];
+};
+
 in vec3 fragPos;
 in vec3 vertexColor;
 in vec3 normal;
 in vec2 vUV;
 flat in uint vFlags;
+flat in uint vChunkSlot;
 
 out vec4 FragColor;
 
-uniform int numLights;
-uniform vec3 lightPos[4];
-uniform vec3 lightColor[4];
-uniform float lightIntensity[4];
 uniform vec3 ambientColor;
 uniform vec3 viewPos;
 
@@ -114,9 +133,7 @@ void main() {
     uint mat = (vFlags >> 1u) & 63u;
     vec3 N = normalize(normal);
 
-    float uvScale = uUVScale[mat];
     vec3 texAlbedo = sampleTriplanarAlbedo(mat, fragPos, N);
-
 
     float tintStrength = 0.65;
     vec3 albedo = mix(texAlbedo, texAlbedo * vertexColor, tintStrength);
@@ -129,25 +146,31 @@ void main() {
 
     float rough = clamp(uMatRoughness[mat], 0.02, 1.0);
     float specStrength = clamp(uMatSpecular[mat], 0.0, 1.0);
-
     float shininess = mix(256.0, 8.0, rough);
 
-    for (int i = 0; i < numLights; ++i) {
-        vec3 toLight = lightPos[i] - fragPos;
+    ChunkLightIndexGpu info = chunkLights[vChunkSlot];
+    uint n = min(info.count, MAX_LIGHTS);
+
+    for (uint i = 0u; i < n; ++i) {
+        VoxelLightGpu Lg = lights[info.indices[i]];
+
+        vec3 lightPos = Lg.posIntensity.xyz;
+        float lightIntensity = Lg.posIntensity.w;
+        vec3 lightColor = Lg.color.xyz;
+
+        vec3 toLight = lightPos - fragPos;
         float distSq = dot(toLight, toLight);
         float dist = sqrt(distSq);
         vec3 L = toLight / max(dist, 0.001);
 
         float NdotL = max(dot(N, L), 0.0);
         float attenuation = 7.5 / (distSq + 1.0);
-        float intensity = lightIntensity[i] * attenuation;
+        float intensity = lightIntensity * attenuation;
 
-        vec3 radiance = lightColor[i] * intensity;
+        vec3 radiance = lightColor * intensity;
 
-        // Lambert diffuse
         lightAccum += radiance * NdotL;
 
-        // Blinn-Phong spec
         vec3 H = normalize(L + V);
         float NdotH = max(dot(N, H), 0.0);
         float spec = pow(NdotH, shininess) * specStrength * step(0.0, NdotL);
@@ -197,8 +220,6 @@ void main() {
         float a = clamp(uOverlayAlpha * mask * m, 0.0, 1.0);
         color = mix(color, uOverlayColor, a);
     }
-    //color= color*2.75;
-   // color = pow(color, vec3(1.0/0.5));
 
     FragColor = vec4(color, 1.0);
 }
