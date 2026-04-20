@@ -1,34 +1,34 @@
 #pragma once
 
 #include <glm/glm.hpp>
-#include "rendering//MultiGridChunkManager.h"
 #include "physics/VoxelPhysicsManager.h"
+#include "rendering/FixedGridChunkManager.h"
 
 namespace gl3 {
 
     struct CharacterSettings {
         // Movement
-        float walkSpeed = 40.0f;
-        float sprintSpeed = 80.0f;
+        float walkSpeed = 50.0f;
+        float sprintSpeed = 150.0f;
         float crouchSpeed = 20.5f;
-        float acceleration = 50.0f;
+        float acceleration = 5.0f;
         float friction = 6.0f;
         float airFriction = 0.2f;
         float airControl = 0.3f;
 
         // Jumping
         float jumpForce = 55.0f;
-        float gravity = 25.0f;
-        float terminalVelocity = 50.0f;
-        float coyoteTimeDuration = 1.5f;
-        float jumpBufferDuration = 0.1f;
+        float gravity = 50.0f;
+        float terminalVelocity = 750.0f;
+        float coyoteTimeDuration = 3.5f;
+        float jumpBufferDuration = 0.75f;
 
         // Crouching
         float crouchHeightMultiplier = 0.5f;
 
         // NEW: Air slam settings
         float airSlamGravityMultiplier = 1.75f;    // How much faster you fall during slam
-        float fallingGravityMultiplier = 1.5f;    // Normal falling gravity multiplier
+        float fallingGravityMultiplier = 1.0f;    // Normal falling gravity multiplier
         float airSlamInitialVelocity = 10.0f;     // Initial downward velocity when starting slam
         float airSlamDuration = 2.0f;             // How long slam effect lasts
         float airSlamImpactThreshold = 15.0f;     // Velocity threshold for impact effects
@@ -59,7 +59,7 @@ namespace gl3 {
         float currentHeight;
         float defaultHeight;
 
-        MultiGridChunkManager* chunkManager;
+        FixedGridChunkManager* chunkManager;
         VoxelPhysicsManager* physicsManager;
 
         CharacterState state;
@@ -88,7 +88,7 @@ namespace gl3 {
         void updateAirSlam(float deltaTime);
 
     public:
-        CharacterController(MultiGridChunkManager* chunkMgr, VoxelPhysicsManager *physicsMgr,
+        CharacterController(FixedGridChunkManager *chunkMgr, VoxelPhysicsManager *physicsMgr,
                             float height = 2.0f,
                             float radius = 0.5f);
 

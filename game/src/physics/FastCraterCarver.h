@@ -5,7 +5,6 @@
 #include <cmath>
 #include <vector>
 #include "rendering/VoxelStructures.h"
-#include "rendering/MultiGridChunkManager.h"
 #include "rendering/Chunk.h"
 
 namespace gl3 {
@@ -39,7 +38,7 @@ namespace gl3 {
         }
 
         static void carveCrater(
-                MultiGridChunkManager* mgr,
+                FixedGridChunkManager* mgr,
                 const glm::vec3& center,
                 float radius,
                 float maxDepth,
@@ -65,11 +64,6 @@ namespace gl3 {
                         ChunkCoord cc{cx,cy,cz};
 
                         Chunk* chunk = mgr->getChunk(cc);
-                        if (!chunk && autoCreateChunks) {
-                            mgr->addChunk(cc, VoxelCategory::DYNAMIC);
-                            chunk = mgr->getChunk(cc);
-                            if (chunk) { chunk->coord = cc; chunk->clear(); }
-                        }
                         if (!chunk) continue;
 
                         const glm::vec3 cmin = chunkMinWorld(cc);

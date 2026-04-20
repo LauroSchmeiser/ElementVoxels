@@ -16,9 +16,12 @@ out vec3 fragPos;
 out vec3 vertexColor;
 out vec3 normal;
 out vec2 vUV;
+out vec3 localPos;
+out float localScale;
 
 uniform mat4 mvp;
 uniform mat4 model;
+uniform float scale;
 
 uint getBaseInstance()
 {
@@ -30,6 +33,14 @@ uint getBaseInstance()
 }
 
 void main() {
+    if(scale<=0.0)
+    {
+        localScale=1.0;
+    }
+    else
+    {
+        localScale=scale;
+    }
     vChunkSlot = getBaseInstance();
 
     vec4 worldPos = model * vec4(aPos, 1.0);
@@ -41,6 +52,6 @@ void main() {
 
     mat3 normalMat = transpose(inverse(mat3(model)));
     normal = normalize(normalMat * aNormal);
-
-    gl_Position = mvp * worldPos;
+    localPos = aPos;
+    gl_Position = gl_Position = mvp * vec4(aPos, 1.0);;
 }

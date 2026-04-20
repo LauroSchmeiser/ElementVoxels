@@ -25,6 +25,8 @@ in vec3 fragPos;
 in vec3 vertexColor;
 in vec3 normal;
 in vec2 vUV;
+in vec3 localPos;
+in float localScale;
 flat in uint vFlags;
 flat in uint vChunkSlot;
 
@@ -53,7 +55,7 @@ uniform float uBurnEdgeWidth;
 uniform vec3  uBurnEmberColor;
 uniform float uBurnCharStrength;
 
-// --- MATERIALS / TEXTURES ---
+// Materials/Textures
 uniform sampler2DArray uAlbedoArray;
 uniform float uMatRoughness[64];
 uniform float uMatSpecular[64];
@@ -133,7 +135,7 @@ void main() {
     uint mat = (vFlags >> 1u) & 63u;
     vec3 N = normalize(normal);
 
-    vec3 texAlbedo = sampleTriplanarAlbedo(mat, fragPos, N);
+    vec3 texAlbedo = sampleTriplanarAlbedo(mat, localPos/localScale, N);
 
     float tintStrength = 0.65;
     vec3 albedo = mix(texAlbedo, texAlbedo * vertexColor, tintStrength);

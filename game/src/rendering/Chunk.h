@@ -1,14 +1,17 @@
-// In Chunk.h
 #pragma once
 #undef NEAR
 #undef FAR
 #include <vector>
 #include <glad/glad.h>
+#include "VoxelStructures.h"
 
 namespace gl3 {
     struct Chunk {
-        // Core voxel data
+        // Voxel Data
         Voxel voxels[CHUNK_SIZE + 1][CHUNK_SIZE + 1][CHUNK_SIZE + 1];
+
+        bool hasEmissive = false;
+        bool inEmissiveList = false;
 
         // Lighting data
         std::vector<VoxelLight> emissiveLights;
@@ -24,7 +27,7 @@ namespace gl3 {
             float t = 0.0f;           // seconds since burn start
             float duration = 1.25f;   // seconds to fully disappear
             glm::vec3 center = glm::vec3(0.0f);
-            float radius = 0.0f;      // 0 => disable distance term; else spherical propagation
+            float radius = 0.01f;
             float noiseScale = 0.35f;
             float edgeWidth = 0.12f;
             float slowAccum=0.0f;
@@ -32,7 +35,6 @@ namespace gl3 {
         BurnState burn;
 
         bool isCleared = false;
-        // GPU CACHE - stored with the chunk!
         struct GPUCache {
             GLuint vao = 0;
             GLuint vbo = 0;
@@ -40,20 +42,19 @@ namespace gl3 {
             uint32_t vertexCount = 0;
             bool isValid = false;
             uint64_t lastLightUpdateFrame = 15;
-            std::vector<VoxelLight*> nearbyLights; // Pointers to other chunks' lights
+            std::vector<VoxelLight*> nearbyLights;
             GLuint counterReadbackBuffer = 0;
             GLsync counterFence = 0;
             uint32_t pendingVertexCount = 0;
             bool hasPendingCount = false;
         } gpuCache;
 
-        // Helper methods
         void clear() {
             for (int x = 0; x < CHUNK_SIZE + 1; ++x) {
                 for (int y = 0; y < CHUNK_SIZE + 1; ++y) {
                     for (int z = 0; z < CHUNK_SIZE + 1; ++z) {
                         voxels[x][y][z].type = 0;
-                        voxels[x][y][z].density = -1000.0f;
+                        voxels[x][y][z].density = -10.0f;
                         voxels[x][y][z].color = glm::vec3(0.0f);
                     }
                 }

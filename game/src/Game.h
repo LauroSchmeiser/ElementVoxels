@@ -17,7 +17,7 @@
 #include "rendering/VoxelStructures.h"
 #include "rendering/Chunk.h"
 #include "../robin_hood.h"
-#include "rendering/MultiGridChunkManager.h"
+#include "rendering/FixedGridChunkManager.h"
 #include "Input/InputActionMap.h"
 #include "CharacterController.h"
 #include "physics/VoxelPhysicsManager.h"
@@ -32,6 +32,9 @@
 #include "SceneManager.h"
 #include "ui/ImGuiLayer.h"
 #include "entities/EnemyManager.h"
+#include "physics/DestructibleObject.h"
+#include "spells/SpellEffect.h"
+#include "rendering/GpuStructsStd430.h"
 
 namespace gl3 {
     enum class SceneId : uint8_t;
@@ -72,7 +75,7 @@ namespace gl3 {
 
         ////Chunk Management:
         //std::unique_ptr<ChunkManager> chunkManager = std::make_unique<ChunkManager>(); // other manager (old)
-        std::unique_ptr<MultiGridChunkManager> chunkManager = std::make_unique<MultiGridChunkManager>();
+        std::unique_ptr<FixedGridChunkManager> chunkManager = std::make_unique<FixedGridChunkManager>(WORLD_RADIUS_CHUNKS);
 
         bool hasSolidVoxels(const gl3::Chunk &chunk);
 
@@ -518,8 +521,7 @@ namespace gl3 {
         // World-Variables:
         const int DIM = CHUNK_SIZE+2; //Chunk Size with a bit off padding for marching cubes
         size_t voxelCount = DIM * DIM * DIM; //How many voxels can be in one Chunk
-        static constexpr int ChunkCount = 70; //Total size of the Game World
-        static constexpr int RenderingRange = 15; //Range around Camera that is rendered
+        static constexpr int RenderingRange = 25; //Range around Camera that is rendered
 
         //Marching-cubes Variables
         size_t maxVerts = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5 * 3; //Max amount of vertices marching cubes can create
@@ -689,5 +691,11 @@ namespace gl3 {
         void uploadMergedLightsToGPU();
 
         void buildAndUploadChunkLightIndexBuffer(int camCX, int camCY, int camCZ, int renderRadius);
+
+        void initSpellDestructibleVolume(SpellEffect &spell);
+
+        void rebuildDestructibleMeshIfNeeded(gl3::DestructibleObject &d);
+        std::vector<DrawArraysIndirectCommand> visibleDrawCmds;
+        std::vector<uint32_t> visibleSlots;
     };
 }

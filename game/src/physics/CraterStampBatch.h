@@ -4,11 +4,13 @@
 #include <algorithm>
 #include <glm/glm.hpp>
 #include "../rendering/VoxelStructures.h"
-#include "../rendering/MultiGridChunkManager.h"
+#include "../rendering/FixedGridChunkManager.h"
+
 #include "../robin_hood.h"
 
 namespace gl3 {
 
+    class FixedGridChunkManager;
 
     struct CraterStampBatch {
         struct Stamp {
@@ -38,7 +40,7 @@ namespace gl3 {
                              c.z * CHUNK_SIZE * VOXEL_SIZE);
         }
 
-        static void apply(MultiGridChunkManager* mgr,
+        static void apply(FixedGridChunkManager* mgr,
                           const std::vector<Stamp>& stamps,
                           float densityThreshold = -0.5f)
         {

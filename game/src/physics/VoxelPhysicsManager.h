@@ -1,7 +1,6 @@
-// VoxelPhysicsManager.h
 #pragma once
 #include "VoxelPhysicsBody.h"
-#include "../rendering/MultiGridChunkManager.h"
+#include "../rendering/FixedGridChunkManager.h"
 #include <vector>
 #include <functional>
 #include <deque>
@@ -28,7 +27,7 @@ namespace gl3 {
         )>;
 
 
-        VoxelPhysicsManager(MultiGridChunkManager* chunkMgr)
+        VoxelPhysicsManager(FixedGridChunkManager* chunkMgr)
                 : chunkManager(chunkMgr) {
                 gravity = glm::vec3(0, -3.81f, 0);
         }
@@ -51,7 +50,7 @@ namespace gl3 {
         VoxelPhysicsBody* getBodyById(uint64_t id) const;
 
     private:
-        MultiGridChunkManager* chunkManager;
+        FixedGridChunkManager* chunkManager;
         std::vector<std::unique_ptr<VoxelPhysicsBody>> bodies;
         VoxelCollisionCallback voxelCollisionCallback;
         BodyBodyCollisionCallback bodyBodyCollisionCallback;
@@ -97,5 +96,8 @@ namespace gl3 {
                 glm::vec3& outNormal,
                 float& outPenetration
         );
+
+        bool sphereIntersectsWorld(const VoxelPhysicsBody &body, const glm::vec3 &center, glm::vec3 &outNormal,
+                                   float &outPenetration);
     };
 }

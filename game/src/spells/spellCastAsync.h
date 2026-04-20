@@ -10,6 +10,7 @@
 
 #include "../rendering/VoxelStructures.h"
 #include "../physics/CraterStampBatch.h"
+#include "SpellEffect.h"
 
 namespace gl3 {
 

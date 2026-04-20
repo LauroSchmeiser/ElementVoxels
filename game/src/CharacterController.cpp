@@ -2,7 +2,7 @@
 #include "Game.h"
 
 namespace gl3 {
-    CharacterController::CharacterController(MultiGridChunkManager *chunkMgr, VoxelPhysicsManager *physicsMgr,
+    CharacterController::CharacterController(FixedGridChunkManager *chunkMgr, VoxelPhysicsManager *physicsMgr,
                                              float height, float radius)
             : height(height), radius(radius), currentHeight(height), defaultHeight(height),
               chunkManager(chunkMgr), physicsManager(physicsMgr) {
@@ -24,7 +24,7 @@ namespace gl3 {
         return glm::length(p - outClosest);
     }
 
-    static float getDensityAtWorld(MultiGridChunkManager *chunkManager, const glm::vec3 &worldPos) {
+    static float getDensityAtWorld(FixedGridChunkManager *chunkManager, const glm::vec3 &worldPos) {
         if (!chunkManager) return -10000.0f;
 
         const float chunkWorldSize = CHUNK_SIZE * VOXEL_SIZE;
@@ -56,7 +56,7 @@ namespace gl3 {
     }
 
     // Trilinear sample of the density field at arbitrary world position.
-    static float sampleDensityAtWorld(MultiGridChunkManager *chunkManager, const glm::vec3 &worldPos) {
+    static float sampleDensityAtWorld(FixedGridChunkManager *chunkManager, const glm::vec3 &worldPos) {
         if (!chunkManager) return -10000.0f;
 
         const float chunkWorldSize = CHUNK_SIZE * VOXEL_SIZE;
@@ -106,7 +106,7 @@ namespace gl3 {
         return lerp(c0, c1, fz);
     }
 
-    static glm::vec3 sampleNormalAtWorld(MultiGridChunkManager *chunkManager, const glm::vec3 &worldPos) {
+    static glm::vec3 sampleNormalAtWorld(FixedGridChunkManager *chunkManager, const glm::vec3 &worldPos) {
         const float e = VOXEL_SIZE * 0.5f;
         float dx = sampleDensityAtWorld(chunkManager, worldPos + glm::vec3(e, 0, 0)) -
                    sampleDensityAtWorld(chunkManager, worldPos - glm::vec3(e, 0, 0));
@@ -379,10 +379,8 @@ namespace gl3 {
             // Cancel upward velocity and apply strong downward force
             if (state.velocity.y > 0) {
                 state.velocity.y = 0;
+                state.velocity.y = -settings.airSlamInitialVelocity;
             }
-
-            // Apply initial slam velocity
-            state.velocity.y = -settings.airSlamInitialVelocity;
 
             // Start slam timer
             state.airSlamTimer = settings.airSlamDuration;

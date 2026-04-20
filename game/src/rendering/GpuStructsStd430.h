@@ -41,8 +41,10 @@ struct DrawArraysIndirectCommand {
 
 inline size_t chunkMaxVertices(int DIM) {
     const int cellsPerAxis = DIM - 1;
-    return size_t(cellsPerAxis) * cellsPerAxis * cellsPerAxis * 5u * 3u;
+    const size_t conservativeMax = size_t(cellsPerAxis) * cellsPerAxis * cellsPerAxis * 15;
+    return conservativeMax / 2;
 }
+
 struct alignas(16) VoxelLightGpu {
     glm::vec4 posIntensity; // xyz=pos, w=intensity
     glm::vec4 color;        // xyz=color, w=unused

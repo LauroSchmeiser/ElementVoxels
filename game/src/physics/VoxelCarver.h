@@ -12,7 +12,6 @@
 
 #include "../robin_hood.h"
 #include "../rendering/Chunk.h"
-#include "../rendering/MultiGridChunkManager.h"
 #include "../rendering/VoxelStructures.h"
 
 #include <tracy/Tracy.hpp>
@@ -50,7 +49,7 @@ namespace gl3 {
         };
 
         static CarveResult carveSDF(
-                gl3::MultiGridChunkManager* chunkManager,
+                gl3::FixedGridChunkManager* chunkManager,
                 const glm::vec3& center,
                 const std::function<float(const glm::vec3&)>& sdf,
                 const CarveParams& params
@@ -61,7 +60,6 @@ namespace gl3 {
             CarveResult result;
             if (!chunkManager) return result;
 
-            // Calculate affected chunk range
             const int minCX = worldToChunk(center.x - params.radius);
             const int maxCX = worldToChunk(center.x + params.radius);
             const int minCY = worldToChunk(center.y - params.radius);
@@ -82,7 +80,6 @@ namespace gl3 {
                         glm::vec3 chunkMin = getChunkMin(coord);
                         glm::vec3 chunkMax = chunkMin + glm::vec3(CHUNK_SIZE * VOXEL_SIZE);
 
-                        // Quick reject if the sphere doesn't touch the chunk AABB
                         const float chunkDistSq = squaredDistanceToAABB(center, chunkMin, chunkMax);
                         if (chunkDistSq > radiusSq) continue;
 
@@ -215,7 +212,7 @@ namespace gl3 {
         }
 
         static void applyVoxelUpdates(
-                MultiGridChunkManager* chunkManager,
+                FixedGridChunkManager* chunkManager,
                 const std::vector<VoxelUpdate>& updates,
                 std::vector<ChunkCoord>& modifiedChunks
         ) {
@@ -248,19 +245,12 @@ namespace gl3 {
         }
 
         static Chunk* ensureChunkExists(
-                MultiGridChunkManager* chunkManager,
+                FixedGridChunkManager* chunkManager,
                 const ChunkCoord& coord,
                 bool autoCreate
         ) {
             Chunk* chunk = chunkManager->getChunk(coord);
-            if (!chunk && autoCreate) {
-                chunkManager->addChunk(coord, VoxelCategory::DYNAMIC);
-                chunk = chunkManager->getChunk(coord);
-                if (chunk) {
-                    chunk->coord = coord;
-                    chunk->clear();
-                }
-            }
+            if (!chunk) return nullptr;
             return chunk;
         }
     };

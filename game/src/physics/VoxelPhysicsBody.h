@@ -21,11 +21,11 @@ struct VoxelPhysicsBody {
 
     // Collision shape (simplified)
     enum class ShapeType { SPHERE, CAPSULE, BOX } shapeType;
-    glm::vec3 shapeExtents; // radius for sphere, halfExtents for box
+    glm::vec3 shapeExtents;
 
     // Lifecycle
     bool active = true;
-    float lifetime = -1.0f; // -1 = infinite
+    float lifetime = -1.0f;
 
     // Rendering link
     PhysicsMeshData* renderMesh = nullptr;
@@ -33,5 +33,7 @@ struct VoxelPhysicsBody {
     // User data
     void* userData = nullptr;
     uint64_t id = 0;
+
+    uint32_t material=0;
 };
 }
