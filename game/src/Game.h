@@ -484,7 +484,7 @@ namespace gl3 {
         // After building chunk-local lights we create a small merged pool to avoid seams.
         // Merged pool holds stable VoxelLight objects we point to from flatEmissiveLightList.
         std::vector<gl3::VoxelLight> mergedEmissiveLightPool;
-        static constexpr int LIGHT_UPDATE_INTERVAL = 15; // Update lights every 15 frames
+        static constexpr int LIGHT_UPDATE_INTERVAL = 60; // Update lights every 15 frames
         robin_hood::unordered_set<uint32_t> usedLightIDs;
 
         //std::unique_ptr<SpellPhysicsManager> spellPhysics;

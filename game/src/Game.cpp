@@ -3441,6 +3441,36 @@ namespace gl3 {
 
     void Game::buildAndUploadChunkLightIndexBuffer(int camCX, int camCY, int camCZ, int renderRadius)
     {
+        static int lastUpdateFrame = -1;
+        static int lastCamCX = camCX, lastCamCY = camCY, lastCamCZ = camCZ;
+        static int lastRenderRadius = renderRadius;
+
+        const int UPDATE_INTERVAL = 60;
+        const int CAM_MOVE_THRESHOLD = 5;
+
+        bool needsUpdate = false;
+
+        if (frameCounter - lastUpdateFrame >= UPDATE_INTERVAL) {
+            needsUpdate = true;
+        }
+
+        if (std::abs(camCX - lastCamCX) >= CAM_MOVE_THRESHOLD ||
+            std::abs(camCY - lastCamCY) >= CAM_MOVE_THRESHOLD ||
+            std::abs(camCZ - lastCamCZ) >= CAM_MOVE_THRESHOLD ||
+            renderRadius != lastRenderRadius) {
+            needsUpdate = true;
+        }
+
+        if (!needsUpdate) {
+            return; // Skip update this frame
+        }
+
+        lastUpdateFrame = frameCounter;
+        lastCamCX = camCX;
+        lastCamCY = camCY;
+        lastCamCZ = camCZ;
+        lastRenderRadius = renderRadius;
+
         std::vector<ChunkLightIndexGpu> chunkIdx(MAX_CHUNKS_GPU);
         for (auto& e : chunkIdx) {
             e.count = 0;
@@ -3454,7 +3484,6 @@ namespace gl3 {
                     if (!chunk) continue;
                     if (!chunk->gpuCache.isValid) continue;
 
-                    // ensure nearbyLights is up to date
                     if (frameCounter - chunk->gpuCache.lastLightUpdateFrame > LIGHT_UPDATE_INTERVAL ||
                         chunk->gpuCache.nearbyLights.empty()) {
                         updateChunkLights(chunk);
@@ -3714,7 +3743,7 @@ namespace gl3 {
         }
 
         // Update merged lights occasionally (CPU) + upload to GPU
-        if (frameCounter % 120 == 0) {
+        if (frameCounter % 240 == 0) {
             TRACY_CPU_ZONE("renderChunks::updateLightSpatialHash");
             updateLightSpatialHash();
             uploadMergedLightsToGPU();
@@ -4351,15 +4380,6 @@ namespace gl3 {
         glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(uint32_t), &produced);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
-        if (produced == 0) {
-            std::cout << "[MC] produced=0 for chunk "
-                      << chunk->coord.x << "," << chunk->coord.y << "," << chunk->coord.z
-                      << " density(0,0,0)=" << chunk->voxels[0][0][0].density
-                      << " density(8,8,8)=" << chunk->voxels[8][8][8].density
-                      << "\n";
-        }
-
-        // update indirect command for this chunk slot
         DrawArraysIndirectCommand cmd{};
         cmd.count = produced;
         chunk->gpuCache.vertexCount = produced;
@@ -4515,7 +4535,7 @@ namespace gl3 {
         MAX_CHUNKS_GPU = maxChunksGpu;
         CHUNK_MAX_VERTS = (DIM - 1) * (DIM - 1) * (DIM - 1) * 5 * 3;
 
-        const int MAX_VERTS_PER_CHUNK = 10000;
+        const int MAX_VERTS_PER_CHUNK = 6000;
         CHUNK_MAX_VERTS = std::min(
                 (int)chunkMaxVertices(DIM),
                 MAX_VERTS_PER_CHUNK
