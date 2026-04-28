@@ -21,18 +21,15 @@ namespace gl3 {
 
         // stats
         float maxHP = 100.0f;
-        float moveSpeed = 10.0f; // world units/sec (match your scale)
+        float moveSpeed = 25.0f;
 
-        // physics/collision proxy (reuses your body shapes)
         VoxelPhysicsBody::ShapeType shapeType = VoxelPhysicsBody::ShapeType::CAPSULE;
-        glm::vec3 shapeExtents = glm::vec3(1.0f); // interpret like your physics does
+        glm::vec3 shapeExtents = glm::vec3(1.0f);
         float mass = 10.0f;
 
-        // voxel volume resolution (for destructible mesh)
         glm::ivec3 voxelDims = {24, 32, 24}; // local grid
-        float voxelSize = VOXEL_SIZE;        // keep consistent with world if you want
+        float voxelSize = VOXEL_SIZE;
 
-        // up to 3 spells
         std::array<EnemySpellId, 3> spells { EnemySpellId::FIREBALL, EnemySpellId::NONE, EnemySpellId::NONE };
         std::array<float, 3> cooldownsSec { 1.5f, 4.0f, 8.0f };
 
@@ -55,17 +52,16 @@ namespace gl3 {
         std::array<float, 3> cdRemaining {0,0,0};
 
         // collision/physics handle
-        VoxelPhysicsBody* body = nullptr;  // owned by your VoxelPhysicsManager
+        VoxelPhysicsBody* body = nullptr;
         uint64_t bodyId = 0;
 
         // destructible geometry flags
-        bool meshDirty = true;     // rebuild render mesh from local voxels
-        bool voxelsDirty = true;   // local voxel edits happened
+        bool meshDirty = true;
+        bool voxelsDirty = true;
 
-        // pointer back to archetype (or store index)
         const EnemyArchetype* type = nullptr;
 
-        float baseRadius = 2.5f * VOXEL_SIZE; // initial visual/physics radius
+        float baseRadius = 2.5f * VOXEL_SIZE;
         float currentRadius = 2.5f * VOXEL_SIZE;
 
         bool pendingRemoval = false;

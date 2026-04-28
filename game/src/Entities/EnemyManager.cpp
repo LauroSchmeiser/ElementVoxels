@@ -6,8 +6,9 @@
 
 namespace gl3 {
 
-    void EnemyManager::init(VoxelPhysicsManager* physics, Game* g) {
+    void EnemyManager::init(VoxelPhysicsManager* physics,FixedGridChunkManager* chunkManager, Game* g) {
         physicsMgr = physics;
+        chunkMgr=chunkManager;
         game = g;
     }
 
@@ -70,14 +71,15 @@ namespace gl3 {
             if (e.inst.body) e.inst.position = e.inst.body->position;
 
             e.inst.cdRemaining[0]-=0.5f*dt;
-            if (game && e.inst.cdRemaining[0] <= 0.0f) {
-                glm::vec3 dir = glm::normalize(playerPos - e.inst.position);
-                glm::vec3 start = e.inst.position + dir * (e.inst.currentRadius + 1.5f * VOXEL_SIZE);
-                game->spawnEnemyLaunchSphere(start, playerPos,
-                       2.0f * VOXEL_SIZE,
-                       100.0f * VOXEL_SIZE,
-                       glm::vec3(1.0f, 0.2f, 0.2f));
-                e.inst.cdRemaining[0] = e.inst.type->cooldownsSec[0];
+            glm::vec3 dir = glm::normalize(playerPos - e.inst.position);
+            RayCastResult hit= rayCastFromPosition(e.inst.position,dir,500);
+            if (game && e.inst.cdRemaining[0] <= 0.0f&&glm::distance(hit.hitPosition,playerPos)<=10*CHUNK_SIZE*VOXEL_SIZE) {
+                    glm::vec3 start = e.inst.position + dir * (e.inst.currentRadius + 1.0f * VOXEL_SIZE);
+                    game->spawnEnemyLaunchSphere(start, playerPos,
+                                                 5.0f * VOXEL_SIZE,
+                                                 15.0f,
+                                                 glm::vec3(1.0f, 0.2f, 0.2f));
+                    e.inst.cdRemaining[0] = e.inst.type->cooldownsSec[0];
             }
 
             rebuildMeshIfNeeded(e);
@@ -148,6 +150,57 @@ namespace gl3 {
 
         enemies[index] = std::move(enemies.back());
         enemies.pop_back();
+    }
+
+    RayCastResult EnemyManager::rayCastFromPosition(glm::vec3 position, glm::vec3 direction, float maxDistance) {
+        RayCastResult result;
+        result.hit = false;
+
+        glm::vec3 rayDir = direction;
+        glm::vec3 rayOrigin = position;
+
+        float stepSize = 0.25f;
+        float currentDist = 0.0f;
+
+        while (currentDist < maxDistance) {
+            glm::vec3 samplePos = rayOrigin + rayDir * currentDist;
+
+            ChunkCoord coord;
+            coord.x = chunkMgr->worldToChunk(samplePos.x);
+            coord.y = chunkMgr->worldToChunk(samplePos.y);
+            coord.z = chunkMgr->worldToChunk(samplePos.z);
+
+            Chunk* chunk = chunkMgr->getChunk(coord);
+            if (chunk) {
+                glm::vec3 chunkMin = chunkMgr->getChunkMin(coord);
+                glm::ivec3 localPos = glm::ivec3(
+                        samplePos.x - chunkMin.x,
+                        samplePos.y - chunkMin.y,
+                        samplePos.z - chunkMin.z
+                );
+
+                if (localPos.x >= 0 && localPos.x <= CHUNK_SIZE &&
+                    localPos.y >= 0 && localPos.y <= CHUNK_SIZE &&
+                    localPos.z >= 0 && localPos.z <= CHUNK_SIZE) {
+
+                    if (chunk->voxels[localPos.x][localPos.y][localPos.z].isSolid()) {
+                        result.hitPosition = samplePos;
+                        result.hitNormal = chunkMgr->calculateNormalAt(chunk, localPos);
+                        result.distance = currentDist;
+                        result.hit = true;
+                        return result;
+                    }
+                }
+            }
+
+            currentDist += stepSize;
+        }
+
+        result.hitPosition = rayOrigin + rayDir * maxDistance;
+        result.hitNormal = -rayDir;
+        result.distance = maxDistance;
+        result.hit = false;
+        return result;
     }
 
 }

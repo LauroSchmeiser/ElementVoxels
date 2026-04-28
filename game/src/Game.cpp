@@ -246,11 +246,8 @@ namespace gl3 {
 
         mats.push_back(gl3::resolveAssetPath("textures/water.png").string());
         mats.push_back(gl3::resolveAssetPath("textures/dirt.jpg").string());
-        //mats.push_back(gl3::resolveAssetPath("textures/water2.jpg").string());
-        mats.push_back(gl3::resolveAssetPath("textures/cobble.jpg").string());
-
-        //mats.push_back(gl3::resolveAssetPath("textures/metal.jpg").string());
-        mats.push_back(gl3::resolveAssetPath("textures/cobble.jpg").string());
+        mats.push_back(gl3::resolveAssetPath("textures/water2.jpg").string());
+        mats.push_back(gl3::resolveAssetPath("textures/metal.jpg").string());
         mats.push_back(gl3::resolveAssetPath("textures/cobble.jpg").string());
 
         //mats.push_back(gl3::resolveAssetPath("textures/gem.jpg").string());
@@ -348,7 +345,7 @@ namespace gl3 {
         );
 
         enemyManager = std::make_unique<EnemyManager>();
-        enemyManager->init(voxelPhysics.get(), this);
+        enemyManager->init(voxelPhysics.get(),chunkManager.get(), this);
 
         static EnemyArchetype basic;
         basic.name = "Basic";
@@ -537,15 +534,36 @@ namespace gl3 {
                 preloadStageName = "Generating world...";
                 generateChunks();
                 preloadStage = PreloadStage::Run_Camera;
-                return 0.92f;
+                return 0.88f;
 
             case PreloadStage::Run_Camera:
                 preloadStageName = "Setting up camera...";
                 setupCamera();
                 static_assert(gl3::CHUNK_SIZE == 16);
                 assert(DIM == gl3::CHUNK_SIZE + 2 && "DIM must be CHUNK_SIZE+2 for padded uploadVoxelChunk");
+                preloadStage = PreloadStage::Run_Lighting;
+                return 0.92f;
+
+            case PreloadStage::Run_Lighting:
+                preloadStageName = "Setting up lighting...";
+                updateLightSpatialHash();
+                uploadMergedLightsToGPU();
+                chunkManager->forEachChunk([&](gl3::Chunk* chunk)
+                {rebuildChunkLights(chunk->coord);
+                    chunk->lightingDirty = false;
+                    for (const auto& light : chunk->emissiveLights) {
+                        if (usedLightIDs.insert(light.id).second) {
+                            SunInstance inst;
+                            inst.position = light.pos;
+                            inst.scale = std::sqrt(light.intensity) * 0.5f;
+                            inst.color = light.color * 1.0f;
+                            emissiveBillboards.push_back(inst);
+                        }
+                    }
+                });
+                buildAndUploadChunkLightIndexBuffer(worldToChunk(cameraPos.x),worldToChunk(cameraPos.y),worldToChunk(cameraPos.z),RenderingRange);
                 preloadStage = PreloadStage::Done;
-                return 0.97f;
+                return 0.92f;
 
             case PreloadStage::Done:
             default:
@@ -853,7 +871,7 @@ namespace gl3 {
         spell.formationParams = baseFormationParams;
 
         std::vector<AnimatedVoxel> visualVoxels;
-        findNearbyVoxelsForVisual(center, radius, targetMaterial,
+        findNearbyVoxelsForVisualNew(center, radius, targetMaterial,
                                   visualVoxels, strength, spell.dominantType);
 
         if (visualVoxels.empty()) {
@@ -879,7 +897,10 @@ namespace gl3 {
 
             v.targetPos = calculateFormationTarget(i, visualVoxels.size(), adjustedFormation);
 
-            v.animationSpeed = 1000/strength;
+            v.animationSpeed = (glm::pow(strength,2)/glm::sqrt(radius))*2;
+            v.animationSpeed=glm::min(v.animationSpeed,20.5f);
+            v.animationSpeed=glm::max(v.animationSpeed,1.5f);
+
             v.isAnimating = true;
             v.hasArrived = false;
         }
@@ -1327,6 +1348,153 @@ namespace gl3 {
                   << " closest voxels (type=" << (int)dominantType << ")\n";
     }
 
+    //optimized version?
+    void Game::findNearbyVoxelsForVisualNew(const glm::vec3& center, float radius,
+                                         uint64_t targetMaterial,
+                                         std::vector<AnimatedVoxel>& results,
+                                         float strength,
+                                         uint8_t& outDominantType) {
+        TRACY_CPU_ZONE("Game::findNearbyVoxelsForVisualNew");
+        const float radiusSq = radius * radius;
+
+        float voxelVolume = VOXEL_SIZE * VOXEL_SIZE * VOXEL_SIZE;
+        int maxVoxels = static_cast<int>((glm::pow(strength,4)) / voxelVolume);
+        maxVoxels = glm::clamp(maxVoxels, 3, 100);
+
+       // const size_t hardCandidateCap = (size_t)maxVoxels * 4;
+        bool stop = false;
+        const float stepSize = radius/(strength * strength);
+
+        std::cout << "[Spell] Targeting " << maxVoxels  << " voxels for formation\n";
+
+        int typeCounts[8] = {0};
+
+        struct VoxelCandidate {
+            glm::vec3 worldPos;
+            glm::vec3 color;
+            ChunkCoord chunkCoord;
+            glm::ivec3 localPos;
+            float distanceSq;
+            Chunk* chunk;
+            uint8_t type;
+        };
+
+        std::vector<VoxelCandidate> candidates;
+        candidates.reserve(maxVoxels);
+
+        for (int i = 0; i <= glm::ceil(radius/stepSize)&&!stop; ++i) {
+            auto chunks = chunkManager->getChunksInRadius(center, i*stepSize);
+            for (const auto& [coord, chunk] : chunks) {
+                if (stop||!chunk || !hasSolidVoxels(*chunk)) continue;
+
+                glm::vec3 chunkMin = getChunkMin(coord);
+                glm::vec3 chunkCenter = chunkMin + glm::vec3(CHUNK_SIZE * 0.5f) * VOXEL_SIZE;
+
+                float distToChunkCenter = glm::distance(chunkCenter, center);
+                float maxChunkDist = std::sqrt(3.0f) * (CHUNK_SIZE * VOXEL_SIZE * 0.5f);
+                if (distToChunkCenter > radius + maxChunkDist) continue;
+
+                int startX = std::max(0, static_cast<int>((center.x - radius - chunkMin.x) / VOXEL_SIZE));
+                int endX = std::min(CHUNK_SIZE, static_cast<int>((center.x + radius - chunkMin.x) / VOXEL_SIZE) + 1);
+                int startY = std::max(0, static_cast<int>((center.y - radius - chunkMin.y) / VOXEL_SIZE));
+                int endY = std::min(CHUNK_SIZE, static_cast<int>((center.y + radius - chunkMin.y) / VOXEL_SIZE) + 1);
+                int startZ = std::max(0, static_cast<int>((center.z - radius - chunkMin.z) / VOXEL_SIZE));
+                int endZ = std::min(CHUNK_SIZE, static_cast<int>((center.z + radius - chunkMin.z) / VOXEL_SIZE) + 1);
+
+                for (int x = startX; x <= endX&&!stop; ++x) {
+                    for (int y = startY; y <= endY&&!stop; ++y) {
+                        for (int z = startZ; z <= endZ&&!stop; ++z) {
+                            if(candidates.size()>=maxVoxels)
+                            {
+                                stop=true;
+                                continue;
+                            }
+                            const Voxel& voxel = chunk->voxels[x][y][z];
+
+                            if (voxel.isSolid() && voxel.material == targetMaterial) {
+                                glm::vec3 worldPos = chunkMin + glm::vec3((float)x, (float)y, (float)z) * VOXEL_SIZE;
+                                glm::vec3 diff = worldPos - center;
+                                float distSq = glm::dot(diff, diff);
+
+                                if (distSq <= radiusSq) {
+                                    glm::vec3 normal = calculateNormalAt(chunk, {x, y, z});
+
+                                    candidates.push_back({
+                                                                 worldPos,
+                                                                 voxel.color,
+                                                                 coord,
+                                                                 {x, y, z},
+                                                                 distSq,
+                                                                 chunk,
+                                                                 voxel.type
+                                                         });
+
+                                    if (voxel.type < 8) typeCounts[voxel.type]++;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+        }
+        /*memset(typeCounts, 0, sizeof(typeCounts));
+        for (const auto& candidate : candidates) {
+            if (candidate.type < 8) typeCounts[candidate.type]++;
+        }*/
+
+        int maxCount = 0;
+        uint8_t dominantType = 1;
+        for (int i = 0; i < 8; ++i) {
+            if (typeCounts[i] > maxCount) {
+                maxCount = typeCounts[i];
+                dominantType = static_cast<uint8_t>(i);
+            }
+        }
+        outDominantType = dominantType;
+
+        results.reserve(candidates.size());
+
+        std::vector<CraterStampBatch::Stamp> stamps;
+        stamps.reserve(candidates.size());
+
+        robin_hood::unordered_set<ChunkCoord, ChunkCoordHash> touchedChunks;
+        touchedChunks.reserve(candidates.size() / 4 + 8);
+
+        for (const auto& candidate : candidates) {
+            AnimatedVoxel animVoxel;
+
+            animVoxel.currentPos = candidate.worldPos;
+            animVoxel.originalVoxelPos = candidate.worldPos;
+            animVoxel.isAnimating = true;
+            animVoxel.animationSpeed = 1000/strength;
+            animVoxel.hasArrived = false;
+
+            animVoxel.color = candidate.color;
+
+            animVoxel.normal = calculateNormalAt(candidate.chunk, candidate.localPos);
+
+            results.push_back(animVoxel);
+
+            CraterStampBatch::Stamp s;
+            s.center = candidate.worldPos;
+            s.radius = 2.0f * gl3::VOXEL_SIZE;
+            s.depth  = 5.5f;
+            stamps.push_back(s);
+
+            touchedChunks.insert(candidate.chunkCoord);
+        }
+
+        CraterStampBatch::apply(chunkManager.get(), stamps, /*densityThreshold=*/-0.5f);
+
+        for (const ChunkCoord& c : touchedChunks) {
+            markChunkModified(c);
+        }
+
+        std::cout << "[Spell] Collected " << results.size() << "/" << maxVoxels
+                  << " closest voxels (type=" << (int)dominantType << ")\n";
+    }
+
     void Game::createSpellFormation(const glm::vec3& center,
                                     const FormationParams& formationParams,
                                     float strength, uint64_t material,
@@ -1469,7 +1637,7 @@ namespace gl3 {
     void Game::updateSpells(float dt) {
         TRACY_CPU_ZONE("Game::updateSpells");
 
-        const float kSlowSpeedThreshold = 1.10f * VOXEL_SIZE;
+        const float kSlowSpeedThreshold = 0.0001f * VOXEL_SIZE;
         const float kSlowTimeToBurn     = 0.75f;
         const float kBurnDuration       = 3.0f;
 
@@ -1882,7 +2050,7 @@ namespace gl3 {
                              uint64_t material, float strength) {
         FormationParams params = FormationParams::Wall(center, normal,
                                                        width, height, thickness);
-        float searchRadius = glm::max(width, height) * VOXEL_SIZE* 15.5f;
+        float searchRadius = glm::max(width, height) * VOXEL_SIZE* 10.5f;
         castSpellWithFormation(center, searchRadius, material, strength, params);
     }
 
@@ -1974,7 +2142,6 @@ namespace gl3 {
                 spell.physicsBody->userData = &spell;
                 spell.physicsBody->velocity = spell.initialVelocity;
 
-                // NEW: build destructible volume + mesh ONCE
                 initSpellDestructibleVolume(spell);
                 rebuildDestructibleMeshIfNeeded(spell.destruct);
 
@@ -2877,7 +3044,7 @@ namespace gl3 {
         std::uniform_real_distribution<float> distPos(-worldMax * 0.9f, worldMax * 0.9f);
         std::uniform_real_distribution<float> distScale(0.5f, 3.0f);
         std::uniform_real_distribution<float> distColor(0.3f, 1.0f);
-        std::uniform_real_distribution<float> distMat(0.0f, 7.9f);
+        std::uniform_real_distribution<float> distMat(0.0f, 3.9f);
 
         std::vector<WorldPlanet> worldPlanets;
 
@@ -2893,8 +3060,8 @@ namespace gl3 {
         p.radius = distScale(rng) * CHUNK_SIZE;
         p.color = glm::vec3(distColor(rng), distColor(rng), distColor(rng));
         p.type = 1; // solid
-       // p.material=(int)distMat(rng);
-        p.material=0;
+        p.material=(int)distMat(rng);
+        //p.material=0;
         worldPlanets.push_back(p);
         cameraPos=p.worldPos+glm::vec3(0,VOXEL_SIZE,0);
         characterController->setPosition(cameraPos);
@@ -2914,7 +3081,7 @@ namespace gl3 {
         std::uniform_real_distribution<float> lavaDistColorG(0.2f, 0.5f);
         std::uniform_real_distribution<float> lavaDistColorB(0.0f, 0.1f);
 
-        int lavaCount = 1 + (rng() % 5);
+        int lavaCount = 3 + (rng() % 3);
         for (int i = 0; i < lavaCount; ++i) {
             WorldPlanet p;
             p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
@@ -3090,19 +3257,16 @@ namespace gl3 {
     {
         if (!body) return;
 
-        // "Player position": you currently use cameraPos as the player-ish position in several places.
-        // If you have a better one (characterController->getCameraPosition() or player body position),
-        // use that instead.
         const glm::vec3 playerPos = cameraPos;
 
         const float velLen = glm::length(body->velocity);
-        if (velLen < 0.001f) return; // too slow => ignore
+        if (velLen < 0.0001f) return; // too slow => ignore
 
         const glm::vec3 velDir = body->velocity / velLen;
 
         glm::vec3 toPlayer = playerPos - hitPos;
         const float toPlayerLen = glm::length(toPlayer);
-        if (toPlayerLen < 0.001f) return;
+        if (toPlayerLen < 0.0001f) return;
 
         const glm::vec3 toPlayerDir = toPlayer / toPlayerLen;
 
@@ -3110,13 +3274,11 @@ namespace gl3 {
         const float approach = glm::dot(velDir, toPlayerDir);
 
         // Tune this: 0.5 means within ~60 degrees of directly toward player
-        constexpr float kApproachThreshold = 0.5f;
+        constexpr float kApproachThreshold = 0.25f;
 
-        if (approach < kApproachThreshold) {
-            // Still do your velocity scaling if you want, or just return.
-            // I'd return to avoid "scraping" damage.
-            return;
-        }
+        //if (approach < kApproachThreshold) {
+          //  return;
+        //}
 
         // Optional: scale damage by approach so grazing hits do less
         const float approach01 = glm::clamp((approach - kApproachThreshold) / (1.0f - kApproachThreshold), 0.0f, 1.0f);
@@ -3127,12 +3289,11 @@ namespace gl3 {
         float dmg = glm::sqrt(body->mass * hitSpeed);
 
         // Apply approach scaling (comment out if you want full damage once threshold passes)
-        dmg *= approach01;
-
+        //dmg *= approach01;
+        dmg = glm::min(dmg,getPlayerMaxHealth()/5);
+        dmg= glm::max(dmg,getPlayerMaxHealth()/10);
         setPlayerHealth(getPlayerHealth() - dmg);
-
-        // Keep your existing velocity scaling (note: this changes units; make sure you really want it)
-        body->velocity = body->velocity / VOXEL_SIZE;
+        body->velocity=-body->velocity*0.75f;
     }
 
     void Game::onBodyBodyCollision(gl3::VoxelPhysicsBody *bodyA, gl3::VoxelPhysicsBody *bodyB, const glm::vec3 &hitPos,
@@ -3598,7 +3759,7 @@ namespace gl3 {
                                     (cameraPos + getCameraFront() * 35.0f);
 
             // Cast spell with physics enabled
-            float spellRadius = 6.0f * VOXEL_SIZE;  // Adjust size
+            float spellRadius = 20.0f * VOXEL_SIZE;  // Adjust size
             float spellStrength = 3.0f;              // Affects velocity
 
             castSpellSphere(spellCenter, spellRadius, activeSpellMat, spellStrength);
@@ -3607,8 +3768,8 @@ namespace gl3 {
         if (actions["CastWall"].wasJustReleased) {
             std::cout << "Wall Spell Triggered" << "\n";
             RayCastResult hit = rayCastFromCamera(250.0f);
-            glm::vec3 spellCenter = hit.hit ? hit.hitPosition+getCameraFront() * 1.0f :
-                                    (cameraPos + getCameraFront() * 20.0f);
+            glm::vec3 spellCenter = hit.hit ? hit.hitPosition+getCameraFront() * 20.5f :
+                                    (cameraPos + getCameraFront() * 40.0f);
 
             // Get camera direction for wall orientation
             glm::vec3 cameraFront = getCameraFront();
@@ -3619,7 +3780,7 @@ namespace gl3 {
             float wallThickness = 3.5f*VOXEL_SIZE; // How thick the wall is
 
             // Cast the wall spell
-            castSpellWall(spellCenter, glm::vec3(0,0,1),
+            castSpellWall(spellCenter, cameraFront,
                           wallWidth, wallHeight, wallThickness,
                           0, 2.0f*VOXEL_SIZE);
         }
@@ -3856,7 +4017,7 @@ namespace gl3 {
             voxelShader->setMatrix("model", glm::mat4(1.0f));
             voxelShader->setMatrix("mvp", pv);
             voxelShader->setVec3("viewPos", cameraPos);
-            voxelShader->setVec3("ambientColor", glm::vec3(0.002f));
+            voxelShader->setVec3("ambientColor", glm::vec3(0.85f));
 
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D_ARRAY, materialAlbedoArrayTexId);
@@ -3917,7 +4078,7 @@ namespace gl3 {
 
         instancedShader.setMatrix("pv", pv);
         instancedShader.setVec3("viewPos", cameraPos);
-        instancedShader.setVec3("ambientColor", glm::vec3(0.02f)); // match your chunk ambient
+        instancedShader.setVec3("ambientColor", glm::vec3(0.2f)); // match your chunk ambient
 
         // Build instance arrays
         std::vector<float> posScaleData; posScaleData.reserve(instanceCount * 4);
@@ -4061,7 +4222,7 @@ namespace gl3 {
         glm::mat4 pv = projection * view;
 
         voxelShader->setVec3("viewPos", cameraPos);
-        voxelShader->setVec3("ambientColor", glm::vec3(0.002f));
+        voxelShader->setVec3("ambientColor", glm::vec3(0.85f));
 
         // texture unit 0
         glActiveTexture(GL_TEXTURE0);
@@ -4201,8 +4362,8 @@ namespace gl3 {
             center = hit.hit ? hit.hitPosition : (cameraPos + getCameraFront() * 35.0f);
         } else
         {
-            center = hit.hit ? hit.hitPosition :
-                     (cameraPos + getCameraFront() * 5.0f);
+            center = hit.hit ? hit.hitPosition+ getCameraFront() * 10.5f :
+                     (cameraPos + getCameraFront() * 10.5f);
         }
 
         // Optional: snap to voxel grid so placement feels stable
@@ -4222,7 +4383,7 @@ namespace gl3 {
         float pullRadius      = formationRadius * 6.5f; // your searchRadius behavior
 
         // Wall params (match your CastWall in update())
-        glm::vec3 wallNormal(0,1,0); // you pass this currently
+        glm::vec3 wallNormal=-getCameraFront();
         glm::vec3 wallUp(0,1,0);
         glm::vec3 wallSize(3.0f*VOXEL_SIZE, 1.75f*VOXEL_SIZE, 0.35f*VOXEL_SIZE);
 
@@ -4535,7 +4696,7 @@ namespace gl3 {
         MAX_CHUNKS_GPU = maxChunksGpu;
         CHUNK_MAX_VERTS = (DIM - 1) * (DIM - 1) * (DIM - 1) * 5 * 3;
 
-        const int MAX_VERTS_PER_CHUNK = 6000;
+        const int MAX_VERTS_PER_CHUNK = 12000;
         CHUNK_MAX_VERTS = std::min(
                 (int)chunkMaxVertices(DIM),
                 MAX_VERTS_PER_CHUNK
@@ -5121,64 +5282,16 @@ namespace gl3 {
                                       float speedWorld,
                                       glm::vec3 color)
     {
-        if (!voxelPhysics) return;
+        float searchRadius = radiusWorld * 2.5f;
 
-        SpellEffect s;
-        s.type = SpellEffect::Type::GRAVITY_WELL;
-        s.center = start;
-        s.formationParams = FormationParams::Sphere(start, radiusWorld);
-        s.formationColor = color;
-        s.geometryCreated = true;
-
-        s.isPhysicsEnabled = true;
-        s.creationTime = 0.0f;
-        s.lifetime = 30.0f;
-
-        glm::vec3 dir = target - start;
-        if (glm::length(dir) < 0.001f) dir = glm::vec3(0,0,-1);
-        dir = glm::normalize(dir);
-        s.initialVelocity = dir * speedWorld;
-
-        int key = static_cast<int>(std::round(radiusWorld / VOXEL_SIZE));
-        auto it = sphereMeshCache.find(key);
-        if (it == sphereMeshCache.end()) it = sphereMeshCache.begin();
-
-        const SphereMesh& baseMesh = it->second;
-
-        std::vector<glm::vec3> verts;
-        std::vector<glm::vec3> norms;
-        std::vector<glm::vec3> cols;
-
-        float scale = radiusWorld / baseMesh.radius;
-        verts.reserve(baseMesh.indices.size());
-        norms.reserve(baseMesh.indices.size());
-        cols.reserve(baseMesh.indices.size());
-
-        for (uint32_t idx : baseMesh.indices) {
-            verts.push_back(baseMesh.vertices[idx] * scale);
-            norms.push_back(baseMesh.normals[idx]);
-            cols.push_back(color);
-        }
-
-        float mass = 25.0f;
-
-        s.physicsBody = voxelPhysics->createBody(
-                start, mass, VoxelPhysicsBody::ShapeType::SPHERE, glm::vec3(radiusWorld)
-        );
-        s.physicsBodyId = s.physicsBody ? s.physicsBody->id : 0;
-
-        if (!s.physicsBody) return;
-
-        s.physicsBody->userData = &activeSpells;    // not used, but avoid null if you later inspect
-        s.physicsBody->velocity = s.initialVelocity;
-        s.physicsBody->lifetime = s.lifetime;
-
-        createPhysicsMeshData(s.physicsMesh, verts, norms, cols);
-        s.physicsBody->renderMesh = &s.physicsMesh;
-
-        s.physicsBody->userData = nullptr;
-
-        activeSpells.push_back(std::move(s));
+        FormationParams params = FormationParams::Sphere(start, radiusWorld);
+        //castSpellWithFormation(center, searchRadius, material, strength, params);
+        SpellCastRequest req = buildSpellCastRequestSnapshot(start, searchRadius, 0, 5, params);
+        req.physicsEnabled = true;
+        req.launchDir = glm::normalize(target-start);
+        req.launchSpeed = speedWorld * VOXEL_SIZE;
+        req.lifetime = 20.0f;
+        spellCastAsync->enqueueOrReplaceQueued(std::move(req));
     }
 
     void Game::buildSphereMeshData(gl3::PhysicsMeshData& outMesh,

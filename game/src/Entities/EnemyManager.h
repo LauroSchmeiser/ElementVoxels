@@ -8,21 +8,26 @@
 
 namespace gl3 {
 
-    struct PhysicsMeshData; // from VoxelStructures.h
+    struct PhysicsMeshData;
 
     struct EnemyRuntime {
         EnemyInstance inst;
         gl3::LocalVoxelVolume volume;
 
-        // You can reuse PhysicsMeshData for rendering (same struct SpellEffect uses) citeturn2search0
         PhysicsMeshData renderMesh;
+    };
+    struct RayCastResult {
+        glm::vec3 hitPosition;
+        glm::vec3 hitNormal;
+        float distance;
+        bool hit;
     };
 
     class VoxelPhysicsManager;
 
     class EnemyManager {
     public:
-        void init(VoxelPhysicsManager* physics, Game* game);
+        void init(VoxelPhysicsManager* physics,FixedGridChunkManager* chunkManager, Game* game);
         EnemyRuntime& spawn(const EnemyArchetype& type, const glm::vec3& pos);
 
         void update(float dt, const glm::vec3& playerPos);
@@ -40,9 +45,12 @@ namespace gl3 {
 
         void ensurePhysicsBody(EnemyRuntime& e);
         void rebuildMeshIfNeeded(EnemyRuntime& e);
+        RayCastResult rayCastFromPosition(glm::vec3 position,  glm::vec3 direction, float maxDistance = 1000.0f);
+
 
     private:
         VoxelPhysicsManager* physicsMgr = nullptr;
+        FixedGridChunkManager* chunkMgr = nullptr;
         std::vector<EnemyRuntime> enemies;
         uint64_t nextId = 1;
     };

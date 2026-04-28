@@ -69,6 +69,8 @@ namespace gl3 {
                                  float radiusWorld,
                                  const glm::vec3& color);
 
+        glm::vec3 getCameraFront() const;
+
     private:
         ////basics (private):
         static void framebuffer_size_callback(GLFWwindow *window, int width, int height);
@@ -427,8 +429,6 @@ namespace gl3 {
         ////Input-Steps
         void update();
 
-        glm::vec3 getCameraFront() const;
-
 
         ////Post-Prod Steps?
 
@@ -624,6 +624,7 @@ namespace gl3 {
             Run_Input,
             Run_World,
             Run_Camera,
+            Run_Lighting,
 
             Done
         };
@@ -697,5 +698,9 @@ namespace gl3 {
         void rebuildDestructibleMeshIfNeeded(gl3::DestructibleObject &d);
         std::vector<DrawArraysIndirectCommand> visibleDrawCmds;
         std::vector<uint32_t> visibleSlots;
+
+        void findNearbyVoxelsForVisualNew(const glm::vec3 &center, float radius, uint64_t targetMaterial,
+                                          std::vector<AnimatedVoxel> &results, float strength,
+                                          uint8_t &outDominantType);
     };
 }

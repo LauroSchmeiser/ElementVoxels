@@ -97,14 +97,14 @@ namespace gl3 {
             double currentTime = glfwGetTime();
             frames++;
 
-            if (currentTime - lastTime >= 1.0) {
+           /* if (currentTime - lastTime >= 1.0) {
                 double fps = frames / (currentTime - lastTime);
                 frames = 0;
                 lastTime = currentTime;
 
                 std::string title = "Voxel Engine | FPS: " + std::to_string((int)fps);
                 glfwSetWindowTitle(game.getWindow(), title.c_str());
-            }
+            }*/
     }
 
 } // namespace gl3

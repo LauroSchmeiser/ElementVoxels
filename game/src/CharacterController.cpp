@@ -8,9 +8,7 @@ namespace gl3 {
               chunkManager(chunkMgr), physicsManager(physicsMgr) {
     }
 
-    // Add helper near top of file (static)
-    static float
-    distancePointSegment(const glm::vec3 &p, const glm::vec3 &a, const glm::vec3 &b, glm::vec3 &outClosest) {
+    static float distancePointSegment(const glm::vec3 &p, const glm::vec3 &a, const glm::vec3 &b, glm::vec3 &outClosest) {
         glm::vec3 ab = b - a;
         float abLenSq = glm::dot(ab, ab);
         if (abLenSq < 1e-8f) {
@@ -22,6 +20,62 @@ namespace gl3 {
         t = glm::clamp(t, 0.0f, 1.0f);
         outClosest = a + t * ab;
         return glm::length(p - outClosest);
+    }
+
+    static float clamp01(float t) { return glm::clamp(t, 0.0f, 1.0f); }
+
+    static float closestPointsSegmentSegment(
+            const glm::vec3& p0, const glm::vec3& p1,
+            const glm::vec3& q0, const glm::vec3& q1,
+            glm::vec3& outP, glm::vec3& outQ
+    ) {
+        const glm::vec3 u = p1 - p0;
+        const glm::vec3 v = q1 - q0;
+        const glm::vec3 w = p0 - q0;
+
+        const float a = glm::dot(u,u); // always >= 0
+        const float b = glm::dot(u,v);
+        const float c = glm::dot(v,v); // always >= 0
+        const float d = glm::dot(u,w);
+        const float e = glm::dot(v,w);
+
+        const float D = a*c - b*b;
+        float sc, sN, sD = D;
+        float tc, tN, tD = D;
+
+        const float EPS = 1e-8f;
+
+        // compute the line parameters of the two closest points
+        if (D < EPS) {
+            // almost parallel
+            sN = 0.0f; sD = 1.0f;
+            tN = e;    tD = c;
+        } else {
+            sN = (b*e - c*d);
+            tN = (a*e - b*d);
+            if (sN < 0.0f) { sN = 0.0f; tN = e; tD = c; }
+            else if (sN > sD) { sN = sD; tN = e + b; tD = c; }
+        }
+
+        if (tN < 0.0f) {
+            tN = 0.0f;
+            if (-d < 0.0f) sN = 0.0f;
+            else if (-d > a) sN = sD;
+            else { sN = -d; sD = a; }
+        } else if (tN > tD) {
+            tN = tD;
+            if ((-d + b) < 0.0f) sN = 0.0f;
+            else if ((-d + b) > a) sN = sD;
+            else { sN = (-d + b); sD = a; }
+        }
+
+        sc = (std::abs(sN) < EPS ? 0.0f : sN / sD);
+        tc = (std::abs(tN) < EPS ? 0.0f : tN / tD);
+
+        outP = p0 + sc * u;
+        outQ = q0 + tc * v;
+
+        return glm::length(outP - outQ);
     }
 
     static float getDensityAtWorld(FixedGridChunkManager *chunkManager, const glm::vec3 &worldPos) {
@@ -255,7 +309,6 @@ namespace gl3 {
                 collided = true;
             }
 
-            // Check physics body collision
             VoxelPhysicsBody *collidingBody = nullptr;
             if (checkPhysicsBodyCollision(state.position, normal, penetration, &collidingBody)) {
                 state.position += normal * (penetration + 0.0001f);
@@ -503,7 +556,6 @@ namespace gl3 {
     ) const {
         if (!physicsManager) return false;
 
-        // --- player capsule ---
         glm::vec3 up(0.0f, 1.0f, 0.0f);
         float halfSegment = glm::max(0.0f, (currentHeight * 0.5f) - radius);
         glm::vec3 p0 = testPosition - up * halfSegment;
@@ -516,21 +568,29 @@ namespace gl3 {
         VoxelPhysicsBody *bestBody = nullptr;
 
         const auto &bodies = physicsManager->getBodies();
-        for (const auto &upBody: bodies) {
+        for (const auto &upBody : bodies) {
             VoxelPhysicsBody *body = upBody.get();
             if (!body || !body->active) continue;
 
-            // Broadphase: capsule vs bounding sphere (works for all shapes)
-            glm::vec3 closest;
-            float dist = distancePointSegment(body->position, p0, p1, closest);
-            float minDist = capR + body->radius;
+            const float sumR = capR + body->radius;
 
-            if (dist < minDist) {
+            glm::vec3 b0 = body->prevPosition;
+            glm::vec3 b1 = body->position;
+
+            if (!std::isfinite(b0.x) || !std::isfinite(b0.y) || !std::isfinite(b0.z)) {
+                b0 = body->position;
+            }
+
+            glm::vec3 cpPlayer, cpBody;
+            float dist = closestPointsSegmentSegment(p0, p1, b0, b1, cpPlayer, cpBody);
+
+            if (dist < sumR) {
                 hitAny = true;
-                float pen = minDist - dist;
+
+                float pen = sumR - dist;
 
                 glm::vec3 n;
-                glm::vec3 dir = closest - body->position;
+                glm::vec3 dir = (cpPlayer - cpBody);
                 float len = glm::length(dir);
                 if (len > 1e-6f) n = dir / len;
                 else n = glm::vec3(0, 1, 0);

@@ -88,7 +88,6 @@ float burnNoise3D(vec3 p) {
     float n10 = mix(n010, n110, f.x);
     float n01 = mix(n001, n101, f.x);
     float n11 = mix(n011, n111, f.x);
-
     float n0 = mix(n00, n10, f.y);
     float n1 = mix(n01, n11, f.y);
 
@@ -178,6 +177,11 @@ void main() {
         float spec = pow(NdotH, shininess) * specStrength * step(0.0, NdotL);
         specAccum += radiance * spec;
     }
+
+   /* if(((lightAccum.x+lightAccum.y+lightAccum.z)/3)<3)
+    {
+        lightAccum=vec3(3.0);
+    }*/
 
     vec3 diffuse = lightAccum * (albedo / PI);
     vec3 ambient = ambientColor * albedo;

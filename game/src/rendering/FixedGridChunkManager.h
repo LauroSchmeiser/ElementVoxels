@@ -17,7 +17,7 @@ namespace gl3 {
     class FixedGridChunkManager {
     public:
         static constexpr uint32_t INVALID_GPU_SLOT = 0xFFFFFFFFu;
-        static constexpr uint32_t MAX_GPU_SLOTS = 1350;
+        static constexpr uint32_t MAX_GPU_SLOTS = 1500;
 
         explicit FixedGridChunkManager(int radiusChunks)
                 : R(radiusChunks),
@@ -126,6 +126,41 @@ namespace gl3 {
             const float chunkWorldSize = CHUNK_SIZE * VOXEL_SIZE;
             return (int)std::floor(worldPos / chunkWorldSize);
         }
+
+        inline glm::vec3 getChunkMin(const ChunkCoord& coord) const {
+            return glm::vec3(coord.x * CHUNK_SIZE * gl3::VOXEL_SIZE,
+                             coord.y * CHUNK_SIZE * gl3::VOXEL_SIZE,
+                             coord.z * CHUNK_SIZE * gl3::VOXEL_SIZE);
+        }
+
+        inline glm::vec3 getChunkMax(const ChunkCoord& coord) const {
+            return glm::vec3((coord.x + 1) * CHUNK_SIZE * gl3::VOXEL_SIZE,
+                             (coord.y + 1) * CHUNK_SIZE * gl3::VOXEL_SIZE,
+                             (coord.z + 1) * CHUNK_SIZE * gl3::VOXEL_SIZE);
+        }
+
+        inline glm::vec3 calculateNormalAt(Chunk* chunk, const glm::ivec3& pos) {
+            // Simple central differences normal calculation
+            if (pos.x <= 0 || pos.x >= CHUNK_SIZE ||
+                pos.y <= 0 || pos.y >= CHUNK_SIZE ||
+                pos.z <= 0 || pos.z >= CHUNK_SIZE) {
+                return glm::vec3(0, 1, 0); // Fallback
+            }
+
+            float dx = chunk->voxels[pos.x+1][pos.y][pos.z].density -
+                       chunk->voxels[pos.x-1][pos.y][pos.z].density;
+            float dy = chunk->voxels[pos.x][pos.y+1][pos.z].density -
+                       chunk->voxels[pos.x][pos.y-1][pos.z].density;
+            float dz = chunk->voxels[pos.x][pos.y][pos.z+1].density -
+                       chunk->voxels[pos.x][pos.y][pos.z-1].density;
+
+            glm::vec3 normal(dx, dy, dz);
+            if (glm::length(normal) > 0.0001f) {
+                return glm::normalize(normal);
+            }
+            return glm::vec3(0, 1, 0);
+        }
+
 
         size_t getActiveSlotCount() const {
             return activeSlots.size();

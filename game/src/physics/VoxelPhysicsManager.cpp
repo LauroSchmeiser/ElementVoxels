@@ -15,6 +15,7 @@ namespace gl3 {
         auto body = std::make_unique<VoxelPhysicsBody>();
         body->id = nextId++;
         body->position = position;
+        body->prevPosition = position;
         body->velocity = glm::vec3(0.0f);
         body->mass = mass;
         body->shapeType = shape;
@@ -420,14 +421,13 @@ namespace gl3 {
                 body->orientation = glm::normalize(body->orientation);
             }
 
-            glm::vec3 startPos = body->position;
+            body->prevPosition = body->position;
             glm::vec3 delta = body->velocity * dt;
             float totalDist = glm::length(delta);
 
             if (totalDist > 1e-6f) {
                 glm::vec3 dir = delta / totalDist;
 
-                glm::vec3 startPos = body->position;
                 glm::vec3 delta    = body->velocity * dt;
                 float totalDist    = glm::length(delta);
 
@@ -444,7 +444,7 @@ namespace gl3 {
 
                     for (int s = 1; s <= steps; ++s) {
                         float t = (float)s / (float)steps;
-                        glm::vec3 p = startPos + delta * t;
+                        glm::vec3 p = body->prevPosition + delta * t;
 
                         glm::vec3 n;
                         float pen;
@@ -464,7 +464,7 @@ namespace gl3 {
                     }
 
                     if (!hit) {
-                        body->position = startPos + delta;
+                        body->position = body->prevPosition + delta;
                     }
                 }
             }
