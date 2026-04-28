@@ -106,22 +106,15 @@ If you run into linking conflicts because GLFW is being provided twice, you have
 - Prefer the **vendored** version and remove/ignore the vcpkg GLFW dependency, or
 - Prefer **vcpkg** and remove/disable the vendored GLFW subdirectory for that configuration
 
-(Keeping one “source of truth” per dependency is usually simplest.)
-
 ---
 
 ## Media
 
-Screenshots / GIFs / videos: **(add here)**  
-Recommended folder: `docs/media/`
-
-- `docs/media/screenshot-01.png`
-- `docs/media/screenshot-02.png`
-- `docs/media/demo.gif`
+[WORK IN PROGRESS]
 
 ---
 
-## Roadmap (example)
+## Roadmap
 
 - [ ] Finish base-gameplay Loop
 - [ ] Add simple enemies for PvE Mode
