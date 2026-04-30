@@ -63,6 +63,7 @@ add_executable(${EXE_FILE}
         src/scenes/LoadingScene.h
         src/scenes/GameOverScene.cpp
         src/scenes/GameOverScene.h
+        src/spells/SpellSystem.cpp
 )
 
 # Link Tracy and enable it

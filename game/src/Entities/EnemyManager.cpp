@@ -125,7 +125,7 @@ namespace gl3 {
         if (!game) return;
 
         gl3::LocalMesh mesh = gl3::buildMeshLocalMC(e.volume);
-        game->createPhysicsMeshData(e.renderMesh, mesh.vertices, mesh.normals, mesh.colors);
+        //game->createPhysicsMeshData(e.renderMesh, mesh.vertices, mesh.normals, mesh.colors);
 
         e.inst.meshDirty = false;
     }

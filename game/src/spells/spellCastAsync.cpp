@@ -119,10 +119,9 @@ namespace gl3 {
 
         const float radiusSq = req.searchRadius * req.searchRadius;
 
-        // Scale with voxel size (copy of your logic)
         float voxelVolume = VOXEL_SIZE * VOXEL_SIZE * VOXEL_SIZE;
-        int maxVoxels = static_cast<int>((req.strength * 70.0f) / voxelVolume);
-        maxVoxels = clampi(maxVoxels, 5, 200);
+        int maxVoxels = static_cast<int>((glm::pow(req.strength,4)) / voxelVolume);
+        maxVoxels = clampi(maxVoxels, 10, 60);
 
         struct Candidate
         {
@@ -241,10 +240,12 @@ namespace gl3 {
                 av.currentPos = c.worldPos;
                 av.originalVoxelPos = c.worldPos;
                 av.color = c.color;
-                av.normal = glm::vec3(0,1,0); // safe default; can recompute on main thread if needed
+                av.normal = glm::vec3(0,1,0);
                 av.isAnimating = true;
                 av.hasArrived = false;
-                av.animationSpeed = req.strength * 1.5f;
+                av.animationSpeed = (glm::pow(req.strength,2)/glm::sqrt(req.baseFormationParams.radius))*2;
+                av.animationSpeed=glm::min(av.animationSpeed,9.5f);
+                av.animationSpeed=glm::max(av.animationSpeed,3.5f);
                 visual.push_back(av);
 
                 avgColor += av.color;
@@ -264,7 +265,6 @@ namespace gl3 {
             const float voxelVolumeWorld = VOXEL_SIZE * VOXEL_SIZE * VOXEL_SIZE;
             float desiredVolumeWorld = (float)visual.size() * voxelVolumeWorld;
 
-            // replicate your adjustFormationForVolume logic (subset)
             const float packingEfficiency = 0.3f;
             constexpr float PI = 3.14159265358979323846f;
             const float minWorldDim = VOXEL_SIZE * 0.15f;
@@ -314,25 +314,37 @@ namespace gl3 {
 
             adjusted.center = req.center;
 
-            // sphere distribution (fallback for now)
-            auto fibonacciSphere = [&](size_t index, size_t total)->glm::vec3 {
-                float goldenAngle = glm::pi<float>() * (3.0f - std::sqrt(5.0f));
-                float y = 1.0f - (float(index) / (float(total) - 1.0f)) * 2.0f;
-                float rAtY = std::sqrt(std::max(0.0f, 1.0f - y*y));
-                float theta = goldenAngle * float(index);
-                float x = std::cos(theta) * rAtY;
-                float z = std::sin(theta) * rAtY;
-                glm::vec3 local(x,y,z);
-                return adjusted.center + local * adjusted.radius;
-            };
-
             for (size_t i = 0; i < visual.size(); ++i)
             {
-                // If you later implement platform/wall/cube distributions here,
-                // switch(adjusted.type) like in Game.cpp.
-                visual[i].targetPos = fibonacciSphere(i, visual.size());
-                visual[i].animationSpeed = req.strength * 7.5f;
-            }
+                switch (adjusted.type)
+                {
+                    case FormationType::SPHERE:
+                        visual[i].targetPos = distSphere(i, visual.size(), adjusted);
+                        break;
+                    case FormationType::PLATFORM:
+                        visual[i].targetPos = distPlatform(i, visual.size(), adjusted);
+                        break;
+                    case FormationType::WALL:
+                        visual[i].targetPos = distWall(i, visual.size(), adjusted);
+                        break;
+                    case FormationType::CUBE:
+                        visual[i].targetPos = distCubeSurface(i, visual.size(), adjusted);
+                        break;
+                    case FormationType::CYLINDER:
+                        visual[i].targetPos = distCylinder(i, visual.size(), adjusted);
+                        break;
+                    case FormationType::PYRAMID:
+                        visual[i].targetPos = distPyramid(i, visual.size(), adjusted);
+                        break;
+                    case FormationType::CUSTOM_SDF:
+                    default:
+                        visual[i].targetPos = distSphere(i, visual.size(), adjusted);
+                        break;
+                }
+
+                visual[i].animationSpeed = (glm::pow(req.strength,2)/glm::sqrt(req.baseFormationParams.radius))*2;
+                visual[i].animationSpeed=glm::min(visual[i].animationSpeed,9.5f);
+                visual[i].animationSpeed=glm::max(visual[i].animationSpeed,3.5f);            }
         }
 
         // -------------------------------
@@ -368,7 +380,6 @@ namespace gl3 {
             spell.formationColor = avgColor;
             spell.formationRadius = adjusted.getBoundingRadius();
 
-            // carry physics snapshot
             spell.isPhysicsEnabled = req.physicsEnabled;
             if (req.physicsEnabled)
             {
@@ -392,5 +403,148 @@ namespace gl3 {
 
         return out;
     }
+     inline float halton(int index, int base)
+    {
+        float f = 1.0f;
+        float r = 0.0f;
+        int i = index;
+        while (i > 0) {
+            f /= (float)base;
+            r += f * (float)(i % base);
+            i /= base;
+        }
+        return r;
+    }
 
-} // namespace gl3
+    glm::mat3 SpellCastAsync::makeBasisFromNormalUp(glm::vec3 normal, glm::vec3 upHint)
+    {
+        if (glm::dot(normal, normal) < 1e-8f) normal = glm::vec3(0,1,0);
+        normal = glm::normalize(normal);
+
+        if (glm::dot(upHint,upHint) < 1e-8f) {
+            upHint = (std::abs(normal.y) > 0.9f) ? glm::vec3(0,0,1) : glm::vec3(0,1,0);
+        } else {
+            upHint = glm::normalize(upHint);
+        }
+
+        glm::vec3 right = glm::cross(normal, upHint);
+        if (glm::dot(right,right) < 1e-8f) {
+            upHint = (std::abs(normal.y) > 0.9f) ? glm::vec3(1,0,0) : glm::vec3(0,1,0);
+            right = glm::cross(normal, upHint);
+        }
+        right = glm::normalize(right);
+
+        glm::vec3 up = glm::normalize(glm::cross(right, normal));
+        return glm::mat3(right, up, normal);
+    }
+
+    glm::vec3 SpellCastAsync::distSphere(size_t index, size_t total, const FormationParams& p)
+    {
+        if (total <= 1) return p.center;
+
+        float goldenAngle = glm::pi<float>() * (3.0f - std::sqrt(5.0f));
+        float t = (float)index / (float)(total - 1);
+        float y = 1.0f - t * 2.0f;
+        float rAtY = std::sqrt(std::max(0.0f, 1.0f - y*y));
+        float theta = goldenAngle * (float)index;
+        float x = std::cos(theta) * rAtY;
+        float z = std::sin(theta) * rAtY;
+        return p.center + glm::vec3(x,y,z) * p.radius;
+    }
+
+    glm::vec3 SpellCastAsync::distPlatform(size_t index, size_t total, const FormationParams& p)
+    {
+        (void)total;
+        float u = halton((int)index + 1, 2) - 0.5f;
+        float v = halton((int)index + 1, 3) - 0.5f;
+
+        glm::vec3 local(u * p.sizeX,
+                        p.sizeY * 0.5f,
+                        v * p.sizeZ);
+
+        glm::mat3 basis = makeBasisFromNormalUp(p.normal, p.up);
+        return p.center + basis * local;
+    }
+
+    glm::vec3 SpellCastAsync::distWall(size_t index, size_t total, const FormationParams& p)
+    {
+        (void)total;
+        float u = halton((int)index + 1, 2) - 0.5f;
+        float v = halton((int)index + 1, 3) - 0.5f;
+
+        glm::vec3 local(u * p.sizeX,
+                        v * p.sizeY,
+                        p.sizeZ * 0.5f);
+
+        glm::mat3 basis = makeBasisFromNormalUp(p.normal, p.up);
+        return p.center + basis * local;
+    }
+
+    glm::vec3 SpellCastAsync::distCubeSurface(size_t index, size_t total, const FormationParams& p)
+    {
+        (void)total;
+        int face = (int)(index % 6);
+        float u = halton((int)index + 1, 2) - 0.5f;
+        float v = halton((int)index + 1, 3) - 0.5f;
+
+        glm::vec3 local(0.0f);
+        switch(face) {
+            case 0: local = glm::vec3( p.sizeX * 0.5f, u * p.sizeY, v * p.sizeZ); break; // +X
+            case 1: local = glm::vec3(-p.sizeX * 0.5f, u * p.sizeY, v * p.sizeZ); break; // -X
+            case 2: local = glm::vec3(u * p.sizeX,  p.sizeY * 0.5f, v * p.sizeZ); break; // +Y
+            case 3: local = glm::vec3(u * p.sizeX, -p.sizeY * 0.5f, v * p.sizeZ); break; // -Y
+            case 4: local = glm::vec3(u * p.sizeX, v * p.sizeY,  p.sizeZ * 0.5f); break; // +Z
+            default:local = glm::vec3(u * p.sizeX, v * p.sizeY, -p.sizeZ * 0.5f); break; // -Z
+        }
+
+        return p.center + local;
+    }
+
+    glm::vec3 SpellCastAsync::distCylinder(size_t index, size_t total, const FormationParams& p)
+    {
+        if (total <= 1) return p.center;
+
+        float t = (float)index / (float)total;
+        float angle = t * glm::two_pi<float>();
+        float h = halton((int)index + 1, 2) - 0.5f;
+
+        glm::vec3 local(std::cos(angle) * p.radius,
+                        h * p.sizeY,
+                        std::sin(angle) * p.radius);
+        return p.center + local;
+    }
+
+    glm::vec3 SpellCastAsync::distPyramid(size_t index, size_t total, const FormationParams& p)
+    {
+        (void)total;
+        int surface = (int)(index % 5);
+
+        if (surface < 4) {
+            float u = halton((int)index + 1, 2);
+            float v = halton((int)index + 1, 3);
+
+            float baseX = (u - 0.5f) * p.sizeX;
+            float baseZ = (v - 0.5f) * p.sizeZ;
+
+            glm::vec3 local(0.0f);
+            switch(surface) {
+                case 0: local = glm::vec3(baseX, 0.0f,  p.sizeZ * 0.5f); break;
+                case 1: local = glm::vec3(baseX, 0.0f, -p.sizeZ * 0.5f); break;
+                case 2: local = glm::vec3( p.sizeX * 0.5f, 0.0f, baseZ); break;
+                case 3: local = glm::vec3(-p.sizeX * 0.5f, 0.0f, baseZ); break;
+            }
+
+            float heightRatio = halton((int)index + 1, 5);
+            local.y = heightRatio * p.sizeY;
+            local.x *= (1.0f - heightRatio);
+            local.z *= (1.0f - heightRatio);
+
+            return p.center + local;
+        } else {
+            float u = halton((int)index + 1, 2) - 0.5f;
+            float v = halton((int)index + 1, 3) - 0.5f;
+            glm::vec3 local(u * p.sizeX, 0.0f, v * p.sizeZ);
+            return p.center + local;
+        }
+    }
+}

@@ -17,7 +17,7 @@ namespace gl3 {
     class FixedGridChunkManager {
     public:
         static constexpr uint32_t INVALID_GPU_SLOT = 0xFFFFFFFFu;
-        static constexpr uint32_t MAX_GPU_SLOTS = 1500;
+        static constexpr uint32_t MAX_GPU_SLOTS = 1350;
 
         explicit FixedGridChunkManager(int radiusChunks)
                 : R(radiusChunks),

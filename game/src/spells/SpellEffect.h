@@ -246,6 +246,7 @@ struct SpellEffect {
     bool physicsInitialized = false;
     float creationTime = 0.0f;
     float lifetime = 50.0f;
+    uint64_t ID;
     PhysicsMeshData physicsMesh;
     DestructibleObject destruct;
 

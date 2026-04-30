@@ -35,6 +35,10 @@
 #include "physics/DestructibleObject.h"
 #include "spells/SpellEffect.h"
 #include "rendering/GpuStructsStd430.h"
+#include "spells/SpellSystem.h"
+#include "MainThreadDispatcher.h"
+#undef NEAR
+#undef FAR
 
 namespace gl3 {
     enum class SceneId : uint8_t;
@@ -59,16 +63,6 @@ namespace gl3 {
         gl3::ImGuiLayer& imgui() { return imguiLayer; }
 
         gl3::ImGuiLayer imguiLayer;
-
-        void createPhysicsMeshData(gl3::PhysicsMeshData& out,
-                                   const std::vector<glm::vec3>& vertices,
-                                   const std::vector<glm::vec3>& normals,
-                                   const std::vector<glm::vec3>& colors);
-
-        void buildSphereMeshData(PhysicsMeshData& outMesh,
-                                 float radiusWorld,
-                                 const glm::vec3& color);
-
         glm::vec3 getCameraFront() const;
 
     private:
@@ -95,7 +89,11 @@ namespace gl3 {
 
         bool isChunkVisible(const ChunkCoord &coord) const;
 
+        MainThreadDispatcher mainDispatcher;
+
+
         ////Structs::
+
         struct Particle {
             glm::vec3 position;
             glm::vec3 velocity;
@@ -228,104 +226,20 @@ namespace gl3 {
 
 
         //// Spell System
-        std::deque<SpellEffect> activeSpells;
-        std::vector<AnimatedVoxel> animatedVoxels;
-
-        std::unique_ptr<SpellCastAsync> spellCastAsync;
+        std::shared_ptr<SpellSystem> spellSystem;
         std::mutex spellApplyMutex;
-
-        void initSpellCastAsync();
-        void shutdownSpellCastAsync();
-        void pumpAsyncSpellResults(); // call once per frame on main thread
-
-        SpellCastRequest buildSpellCastRequestSnapshot(
-                const glm::vec3& center,
-                float searchRadius,
-                uint64_t targetMaterial,
-                float strength,
-                const FormationParams& baseFormationParams
-        );
-
 
         // Stable id logging for animated voxels
         std::unordered_map<uint64_t, size_t> animatedVoxelIndexMap;
         uint64_t nextAnimatedVoxelID = 1;
 
-
-        // Spell system methods
-        void castSpellWithFormation(const glm::vec3& center, float radius,
-                                          uint64_t targetMaterial, float strength,
-                                          const FormationParams& baseFormationParams);
-
-        void adjustFormationForVolume(FormationParams& params, float volume);
-        glm::vec3 calculateFormationTarget(size_t index, size_t total,
-                                                 const FormationParams& params);
-
-        glm::vec3 calculateSphereDistribution(size_t index, size_t total,
-                                                    const FormationParams& params);
-
-        glm::vec3 calculatePlatformDistribution(size_t index, size_t total,
-                                                      const FormationParams& params);
-
-        glm::vec3 calculateWallDistribution(size_t index, size_t total,
-                                                  const FormationParams& params);
-
-        glm::vec3 calculateCubeDistribution(size_t index, size_t total,
-                                                  const FormationParams& params);
-
-        glm::vec3 calculateCylinderDistribution(size_t index, size_t total,
-                                                      const FormationParams& params);
-
-        glm::vec3 calculatePyramidDistribution(size_t index, size_t total,
-                                                     const FormationParams& params);
-
-        float haltonSequence(int index, int base);
-
-        void updateSpells(float deltaTime);
-
-        void cleanupExpiredSpells();
-
-        void findNearbyVoxelsForVisual(const glm::vec3& center, float radius,
-                                             uint64_t targetMaterial,
-                                             std::vector<AnimatedVoxel>& results,
-                                             float strength,
-                                             uint8_t& outDominantType);
-
-        void carveFormationWithSDF(const WorldPlanet& formation, uint64_t material,
-                                         const FormationParams& params);
-
-        void createSpellFormation(const glm::vec3& center,
-                                        const FormationParams& formationParams,
-                                        float strength, uint64_t material,
-                                        const glm::vec3& color, size_t collectedVoxels,
-                                        uint8_t dominantType);
-
-        void createPartialFormation(const SpellEffect& spell, float completionRatio);
-
         void createCraterAtPosition(const glm::vec3& worldPos, float impactFactor, float spellRadius);
 
-        void castSpellSphere(const glm::vec3& center, float radius,
-                                   uint64_t material = 0, float strength = 1.0f);
-        void castSpellPlatform(const glm::vec3& center, const glm::vec3& normal,
-                                     float width, float depth, float thickness = 0.5f,
-                                     uint64_t material = 0, float strength = 1.0f);
-        void castSpellWall(const glm::vec3& center, const glm::vec3& normal,
-                                 float width, float height, float thickness = 0.5f,
-                                 uint64_t material = 0, float strength = 1.0f);
-        void castSpellCube(const glm::vec3& center, const glm::vec3& size,
-                                 uint64_t material = 0, float strength = 1.0f);
-        void castSpellCylinder(const glm::vec3& center, float radius, float height,
-                                     uint64_t material = 0, float strength = 1.0f);
-        void castSpellCustom(const glm::vec3& center, float radius,
-                                   uint64_t material, float strength,
-                                   SDFFunction customSDF, void* userData = nullptr);
-
-        void createPhysicsBodyForSpell(SpellEffect& spell);
-        void destroyPhysicsBodyForSpell(SpellEffect& spell);
-        void onSpellCollision(SpellEffect* spell,
+        void Game::onSpellCollision(gl3::VoxelPhysicsBody* body,
                                     const glm::vec3& hitPos,
                                     const glm::vec3& hitNormal,
                                     float impactSpeed);
+
         void onBodyBodyCollision(gl3::VoxelPhysicsBody* bodyA,
                                  gl3::VoxelPhysicsBody* bodyB,
                                  const glm::vec3& hitPos,
@@ -336,23 +250,12 @@ namespace gl3 {
                                    const glm::vec3& hitNormal,
                                    float playerSpeed);
 
-        void createPhysicsMeshData(SpellEffect& spell,
-                                         const std::vector<glm::vec3>& vertices,
-                                         const std::vector<glm::vec3>& normals,
-                                         const std::vector<glm::vec3>& colors);
-
-        void removeFormationVoxels(const SpellEffect& spell);
-
         int estimateAvailableVoxels(const glm::vec3& center, float radius, uint64_t targetMaterial, int maxNeeded);
 
         static float burn01(float t, float duration);
         void startSpellBurn(gl3::SpellEffect& spell, float radiusWorld, float durationSec);
         void startChunkBurn(gl3::Chunk* chunk, const glm::vec3& chunkCenterWorld, float radiusWorld, float durationSec);
-        void forceCleanupSpellAnimatedVoxels(SpellEffect& s);
-        bool isSpellTooSmall(const gl3::SpellEffect& s);
         void updateChunkBurns(float dt);
-        bool isSpellTooSlowNow(const gl3::SpellEffect& s, float speedThresholdWorld) const;
-        bool isSpellTooSlow(const gl3::SpellEffect& s, float speedThreshold);
         bool isChunkMeshTooSmall(const gl3::Chunk& c, uint32_t vtxThreshold);
         static inline float smooth01(float x) {
             x = glm::clamp(x, 0.0f, 1.0f);
@@ -377,13 +280,7 @@ namespace gl3 {
 
         std::unordered_map<int, SphereMesh> sphereMeshCache; // radius -> mesh
 
-        void initSphereMeshCache();
-        SphereMesh generateIcosphere(float radius, int subdivisions);
-
-
         ////Debugging:
-        void debugComputeShaderState();
-
         void DisplayFPSCount();
 
         bool DebugMode1 = false;
@@ -401,8 +298,6 @@ namespace gl3 {
         void generateChunks();
 
         void setupVEffects();
-
-        void generateAssets();
 
         void setupControls();
 
@@ -620,6 +515,7 @@ namespace gl3 {
 
             // mutable
             Run_Physics,
+            Run_SpellSystem,
             Run_Controls,
             Run_Input,
             Run_World,
@@ -693,14 +589,17 @@ namespace gl3 {
 
         void buildAndUploadChunkLightIndexBuffer(int camCX, int camCY, int camCZ, int renderRadius);
 
-        void initSpellDestructibleVolume(SpellEffect &spell);
-
-        void rebuildDestructibleMeshIfNeeded(gl3::DestructibleObject &d);
         std::vector<DrawArraysIndirectCommand> visibleDrawCmds;
         std::vector<uint32_t> visibleSlots;
 
         void findNearbyVoxelsForVisualNew(const glm::vec3 &center, float radius, uint64_t targetMaterial,
                                           std::vector<AnimatedVoxel> &results, float strength,
                                           uint8_t &outDominantType);
+
+        void setupSpellContext();
+
+        SphereMesh generateIcosphere(float radius, int subdivisions);
+
+        void initSphereMeshCache();
     };
 }

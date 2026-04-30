@@ -162,7 +162,7 @@ void main() {
         vec3 toLight = lightPos - fragPos;
         float distSq = dot(toLight, toLight);
         float dist = sqrt(distSq);
-        vec3 L = toLight / max(dist, 0.001);
+        vec3 L = toLight / max(dist, 0.0);
 
         float NdotL = max(dot(N, L), 0.0);
         float attenuation = 7.5 / (distSq + 1.0);
@@ -175,13 +175,9 @@ void main() {
         vec3 H = normalize(L + V);
         float NdotH = max(dot(N, H), 0.0);
         float spec = pow(NdotH, shininess) * specStrength * step(0.0, NdotL);
+        spec=min(spec,0.1);
         specAccum += radiance * spec;
     }
-
-   /* if(((lightAccum.x+lightAccum.y+lightAccum.z)/3)<3)
-    {
-        lightAccum=vec3(3.0);
-    }*/
 
     vec3 diffuse = lightAccum * (albedo / PI);
     vec3 ambient = ambientColor * albedo;

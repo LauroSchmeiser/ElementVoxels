@@ -25,17 +25,14 @@ namespace gl3 {
 
         // --- Physics snapshot (captured on main thread at cast time) ---
         bool physicsEnabled = false;
-        glm::vec3 launchDir = glm::vec3(0, 0, -1);      // camera front at cast time
-        float launchSpeed = 0.0f;                        // world units/sec (already includes VOXEL_SIZE scaling if you want)
-        float lifetime = 0.0f;                           // seconds; 0 = infinite (matches your cleanupExpiredSpells logic)
-        // NOTE: creationTime is always set to 0 on spawn
+        glm::vec3 launchDir = glm::vec3(0, 0, -1);
+        float launchSpeed = 0.0f;
+        float lifetime = 0.0f;
 
-        // Snapshot data (immutable, safe off-thread)
         struct ChunkSnapshot
         {
             ChunkCoord coord;
             glm::vec3 chunkMinWorld;
-            // 17^3 voxels; same indexing as Chunk::voxels[x][y][z] for x,y,z in [0..CHUNK_SIZE]
             std::vector<Voxel> voxelsLinear;
         };
 
@@ -47,13 +44,11 @@ namespace gl3 {
         bool ok = false;
         std::string debugMsg;
 
-        // What to spawn on main thread
         SpellEffect spell;
         std::vector<AnimatedVoxel> visualVoxels;
 
-        // Main-thread world edits to apply
         std::vector<CraterStampBatch::Stamp> craterStamps;
-        std::vector<ChunkCoord> touchedChunks; // chunks containing collected voxels
+        std::vector<ChunkCoord> touchedChunks;
     };
 
     class SpellCastAsync
@@ -70,7 +65,7 @@ namespace gl3 {
 
     private:
         void workerLoop();
-        static SpellCastResult runJob(const SpellCastRequest& req);
+        SpellCastResult runJob(const SpellCastRequest& req);
 
     private:
         std::thread worker;
@@ -82,6 +77,21 @@ namespace gl3 {
         std::optional<SpellCastRequest> queued;
 
         std::vector<SpellCastResult> completed;
+
+        static glm::mat3 makeBasisFromNormalUp(glm::vec3 normal, glm::vec3 upHint);
+
+        static glm::vec3 distSphere(size_t index, size_t total, const FormationParams &p);
+
+        static glm::vec3 distWall(size_t index, size_t total, const FormationParams &p);
+
+        static glm::vec3 distCubeSurface(size_t index, size_t total, const FormationParams &p);
+
+        static glm::vec3 distCylinder(size_t index, size_t total, const FormationParams &p);
+
+        static glm::vec3 distPyramid(size_t index, size_t total, const FormationParams &p);
+
+        static glm::vec3 distPlatform(size_t index, size_t total, const FormationParams &p);
+
     };
 
-} // namespace gl3
+}
