@@ -245,7 +245,7 @@ namespace gl3 {
                 av.hasArrived = false;
                 av.animationSpeed = (glm::pow(req.strength,2)/glm::sqrt(req.baseFormationParams.radius))*2;
                 av.animationSpeed=glm::min(av.animationSpeed,9.5f);
-                av.animationSpeed=glm::max(av.animationSpeed,3.5f);
+                av.animationSpeed=glm::max(av.animationSpeed,4.5f);
                 visual.push_back(av);
 
                 avgColor += av.color;
@@ -344,7 +344,7 @@ namespace gl3 {
 
                 visual[i].animationSpeed = (glm::pow(req.strength,2)/glm::sqrt(req.baseFormationParams.radius))*2;
                 visual[i].animationSpeed=glm::min(visual[i].animationSpeed,9.5f);
-                visual[i].animationSpeed=glm::max(visual[i].animationSpeed,3.5f);            }
+                visual[i].animationSpeed=glm::max(visual[i].animationSpeed,4.5f);            }
         }
 
         // -------------------------------

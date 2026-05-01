@@ -189,6 +189,13 @@ namespace gl3 {
         uint64_t nextSpellID = 1;
 
         std::atomic<bool> shuttingDown{false};
+
+        void carveBoxInChunk(Chunk *chunk, const glm::vec3 &chunkOrigin, const glm::vec3 &minBounds,
+                             const glm::vec3 &maxBounds,
+                             const WorldPlanet &formation, uint64_t material);
+
+        void carveSphereInChunk(Chunk *chunk, const glm::vec3 &chunkOrigin, const glm::vec3 &center, float radius,
+                                const WorldPlanet &formation, uint64_t material);
     };
 
 }

@@ -144,7 +144,6 @@ namespace gl3 {
     void SpellSystem::castSphere(const glm::vec3& center, float radius, uint64_t material, float strength)
     {
         if (!spellCastAsync || !ctx.chunks) return;
-
         float searchRadius = radius * 1.5f;
 
         FormationParams params = FormationParams::Sphere(center, radius);
@@ -162,7 +161,10 @@ namespace gl3 {
                                float width, float height, float thickness,
                                uint64_t material, float strength)
     {
+        TRACY_CPU_ZONE("SpellSystem:CastWall()");
+
         if (!spellCastAsync || !ctx.chunks) return;
+
 
         FormationParams params = FormationParams::Wall(center, normal, width, height, thickness);
 
@@ -1242,10 +1244,9 @@ namespace gl3 {
         if (!ctx.chunks || !ctx.worldToChunk || !ctx.getChunkMin || !ctx.markChunkModified) return;
         TRACY_CPU_ZONE("Carve");
 
-        float boundingRadius = params.getBoundingRadius();
         glm::vec3 center = formation.worldPos;
+        float boundingRadius = params.getBoundingRadius();
 
-        // Pre-calculate chunk bounds
         int minCX = ctx.worldToChunk(center.x - boundingRadius);
         int maxCX = ctx.worldToChunk(center.x + boundingRadius);
         int minCY = ctx.worldToChunk(center.y - boundingRadius);
@@ -1253,12 +1254,19 @@ namespace gl3 {
         int minCZ = ctx.worldToChunk(center.z - boundingRadius);
         int maxCZ = ctx.worldToChunk(center.z + boundingRadius);
 
-        // Pre-calculate voxel world positions offset
         const float voxelSize = VOXEL_SIZE;
         const int chunkSize = CHUNK_SIZE;
-        const float epsilon = voxelSize * 0.5f;
+        const float voxelSizeInv = 1.0f / voxelSize;
 
-        // Pre-calculate the SDF for chunk corners to skip entire chunks
+        // Collect chunks for parallel processing
+        struct ChunkWork {
+            Chunk* chunk;
+            ChunkCoord coord;
+            glm::vec3 origin;
+        };
+        std::vector<ChunkWork> chunksToProcess;
+        chunksToProcess.reserve((maxCX - minCX + 1) * (maxCY - minCY + 1) * (maxCZ - minCZ + 1));
+
         for (int cx = minCX; cx <= maxCX; ++cx) {
             for (int cy = minCY; cy <= maxCY; ++cy) {
                 for (int cz = minCZ; cz <= maxCZ; ++cz) {
@@ -1267,115 +1275,172 @@ namespace gl3 {
                     if (!chunk) continue;
 
                     glm::vec3 chunkOrigin = ctx.getChunkMin(coord);
-                    glm::vec3 chunkCenter = chunkOrigin + glm::vec3(chunkSize * 0.5f) * voxelSize;
+                    chunksToProcess.push_back({chunk, coord, chunkOrigin});
+                }
+            }
+        }
 
-                    // Quick chunk-level rejection using bounding sphere
-                    float distToChunkCenter = glm::distance(chunkCenter, center);
-                    float chunkRadius = glm::length(glm::vec3(chunkSize * voxelSize * 0.5f));
-                    if (distToChunkCenter > boundingRadius + chunkRadius) continue;
+        // Process based on formation type
+        if (params.type == FormationType::SPHERE) {
+#pragma omp parallel for schedule(dynamic)
+            for (int i = 0; i < (int)chunksToProcess.size(); ++i) {
+                auto& work = chunksToProcess[i];
+                carveSphereInChunk(work.chunk, work.origin, center, params.radius,
+                                   formation, material);
+            }
+        } else if (params.type == FormationType::CUBE ||
+                   params.type == FormationType::PLATFORM ||
+                   params.type == FormationType::WALL) {
+            // Calculate box bounds
+            glm::vec3 halfSize(params.sizeX * 0.5f, params.sizeY * 0.5f, params.sizeZ * 0.5f);
+            glm::vec3 minBounds = center - halfSize;
+            glm::vec3 maxBounds = center + halfSize;
 
-                    // Check if chunk is fully inside or outside
-                    float minSDF = std::numeric_limits<float>::max();
-                    float maxSDF = -std::numeric_limits<float>::max();
+#pragma omp parallel for schedule(dynamic)
+            for (int i = 0; i < (int)chunksToProcess.size(); ++i) {
+                auto& work = chunksToProcess[i];
+                carveBoxInChunk(work.chunk, work.origin, minBounds, maxBounds,
+                                formation, material);
+            }
+        }
 
-                    // Sample corners of the chunk
-                    glm::vec3 corners[8] = {
-                            chunkOrigin,
-                            chunkOrigin + glm::vec3(chunkSize * voxelSize, 0, 0),
-                            chunkOrigin + glm::vec3(0, chunkSize * voxelSize, 0),
-                            chunkOrigin + glm::vec3(0, 0, chunkSize * voxelSize),
-                            chunkOrigin + glm::vec3(chunkSize * voxelSize, chunkSize * voxelSize, 0),
-                            chunkOrigin + glm::vec3(0, chunkSize * voxelSize, chunkSize * voxelSize),
-                            chunkOrigin + glm::vec3(chunkSize * voxelSize, 0, chunkSize * voxelSize),
-                            chunkOrigin + glm::vec3(chunkSize * voxelSize, chunkSize * voxelSize, chunkSize * voxelSize)
-                    };
+        // Mark chunks dirty on main thread
+        for (auto& work : chunksToProcess) {
+            if (work.chunk->meshDirty) {
+                work.chunk->lightingDirty = true;
+                if (ctx.markChunkModified) {
+                    ctx.markChunkModified(work.coord);
+                }
+            }
+        }
+    }
 
-                    for (const auto& corner : corners) {
-                        float sdf = params.evaluate(corner);
-                        minSDF = std::min(minSDF, sdf);
-                        maxSDF = std::max(maxSDF, sdf);
-                    }
+// Optimized sphere carving
+    void SpellSystem::carveSphereInChunk(Chunk* chunk, const glm::vec3& chunkOrigin,
+                                         const glm::vec3& center, float radius,
+                                         const WorldPlanet& formation, uint64_t material) {
+        const float voxelSize = VOXEL_SIZE;
+        const int chunkSize = CHUNK_SIZE;
+        const float radiusSq = radius * radius;
 
-                    // If entire chunk is outside formation (maxSDF < 0), skip
-                    if (maxSDF < 0) continue;
+        // Transform chunk origin to local space
+        glm::vec3 localOrigin = chunkOrigin - center;
 
-                    // If entire chunk is inside (minSDF > 0), we can fill without per-voxel SDF
-                    bool chunkFullyInside = (minSDF > 0);
+        // Pre-calculate bounds in local space
+        int minX = std::max(0, (int)((-radius - localOrigin.x) / voxelSize));
+        int maxX = std::min(chunkSize, (int)((radius - localOrigin.x) / voxelSize) + 1);
+        int minY = std::max(0, (int)((-radius - localOrigin.y) / voxelSize));
+        int maxY = std::min(chunkSize, (int)((radius - localOrigin.y) / voxelSize) + 1);
+        int minZ = std::max(0, (int)((-radius - localOrigin.z) / voxelSize));
+        int maxZ = std::min(chunkSize, (int)((radius - localOrigin.z) / voxelSize) + 1);
 
-                    bool chunkTouched = false;
+        bool chunkTouched = false;
 
-                    if (chunkFullyInside) {
-                        // Fast path: fill entire chunk with formation density
-                        for (int lx = 0; lx <= chunkSize; ++lx) {
-                            for (int ly = 0; ly <= chunkSize; ++ly) {
-                                for (int lz = 0; lz <= chunkSize; ++lz) {
-                                    auto& voxel = chunk->voxels[lx][ly][lz];
-                                    if (material != voxel.material || formation.type != voxel.type) {
-                                        voxel.density = 1.0f;
-                                        voxel.type = formation.type;
-                                        voxel.color = formation.color;
-                                        voxel.material = material;
-                                        chunkTouched = true;
-                                    } else if (voxel.density < 1.0f) {
-                                        voxel.density = 1.0f;
-                                        chunkTouched = true;
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        // Slow path: evaluate SDF per voxel
-                        for (int lx = 0; lx <= chunkSize; ++lx) {
-                            // Pre-calculate x world position
-                            float worldX = chunkOrigin.x + (float)lx * voxelSize;
-                            float dx = worldX - center.x;
-                            if (std::abs(dx) > boundingRadius + epsilon) continue;
+        // Fast sphere carving with bounds checking
+        for (int lz = minZ; lz <= maxZ; ++lz) {
+            float z = localOrigin.z + (float)lz * voxelSize;
+            float zSq = z * z;
 
-                            for (int ly = 0; ly <= chunkSize; ++ly) {
-                                float worldY = chunkOrigin.y + (float)ly * voxelSize;
-                                float dy = worldY - center.y;
-                                if (std::abs(dy) > boundingRadius + epsilon) continue;
+            for (int ly = minY; ly <= maxY; ++ly) {
+                float y = localOrigin.y + (float)ly * voxelSize;
+                float ySq = y * y;
+                float yzSq = ySq + zSq;
+                if (yzSq > radiusSq) continue;
 
-                                // Pre-calculate squared distance for quick rejection
-                                float xyDistSq = dx*dx + dy*dy;
-                                if (xyDistSq > (boundingRadius + epsilon) * (boundingRadius + epsilon)) continue;
+                for (int lx = minX; lx <= maxX; ++lx) {
+                    float x = localOrigin.x + (float)lx * voxelSize;
+                    float distSq = yzSq + x * x;
 
-                                for (int lz = 0; lz <= chunkSize; ++lz) {
-                                    float worldZ = chunkOrigin.z + (float)lz * voxelSize;
-                                    float dz = worldZ - center.z;
-                                    if (std::abs(dz) > boundingRadius + epsilon) continue;
+                    if (distSq <= radiusSq) {
+                        // Calculate density (falloff from center)
+                        float density = 1.0f - std::sqrt(distSq) / radius;
+                        // Optional: add some noise for natural look
+                        // density = std::max(0.0f, std::min(1.0f, density));
 
-                                    // Quick sphere rejection before expensive SDF
-                                    float distSq = xyDistSq + dz*dz;
-                                    if (distSq > boundingRadius * boundingRadius) continue;
-
-                                    glm::vec3 worldPos(worldX, worldY, worldZ);
-                                    float formationDensity = params.evaluate(worldPos);
-
-                                    if (formationDensity > 0) {
-                                        auto& voxel = chunk->voxels[lx][ly][lz];
-                                        if (formationDensity > voxel.density) {
-                                            voxel.density = formationDensity;
-                                            voxel.type = formation.type;
-                                            voxel.color = formation.color;
-                                            voxel.material = material;
-                                            chunkTouched = true;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if (chunkTouched) {
-                        chunk->meshDirty = true;
-                        chunk->lightingDirty = true;
-                        if (ctx.markChunkModified) {
-                            ctx.markChunkModified(coord);
+                        auto& voxel = chunk->voxels[lx][ly][lz];
+                        if (density > voxel.density) {
+                            voxel.density = density;
+                            voxel.type = formation.type;
+                            voxel.color = formation.color;
+                            voxel.material = material;
+                            chunkTouched = true;
                         }
                     }
                 }
             }
+        }
+
+        if (chunkTouched) {
+            chunk->meshDirty = true;
+        }
+    }
+
+// Optimized box carving
+    void SpellSystem::carveBoxInChunk(Chunk* chunk, const glm::vec3& chunkOrigin,
+                                      const glm::vec3& minBounds, const glm::vec3& maxBounds,
+                                      const WorldPlanet& formation, uint64_t material) {
+        const float voxelSize = VOXEL_SIZE;
+        const int chunkSize = CHUNK_SIZE;
+
+        // Calculate chunk-local bounds
+        int minX = std::max(0, (int)((minBounds.x - chunkOrigin.x) / voxelSize));
+        int maxX = std::min(chunkSize, (int)((maxBounds.x - chunkOrigin.x) / voxelSize) + 1);
+        int minY = std::max(0, (int)((minBounds.y - chunkOrigin.y) / voxelSize));
+        int maxY = std::min(chunkSize, (int)((maxBounds.y - chunkOrigin.y) / voxelSize) + 1);
+        int minZ = std::max(0, (int)((minBounds.z - chunkOrigin.z) / voxelSize));
+        int maxZ = std::min(chunkSize, (int)((maxBounds.z - chunkOrigin.z) / voxelSize) + 1);
+
+        // Early out if box doesn't intersect this chunk
+        if (minX > maxX || minY > maxY || minZ > maxZ) return;
+
+        bool chunkTouched = false;
+
+        // Calculate center for distance-based density (optional)
+        glm::vec3 boxCenter = (minBounds + maxBounds) * 0.5f;
+        glm::vec3 halfSize = (maxBounds - minBounds) * 0.5f;
+
+        for (int lz = minZ; lz <= maxZ; ++lz) {
+            float worldZ = chunkOrigin.z + (float)lz * voxelSize;
+            if (worldZ < minBounds.z || worldZ > maxBounds.z) continue;
+
+            for (int ly = minY; ly <= maxY; ++ly) {
+                float worldY = chunkOrigin.y + (float)ly * voxelSize;
+                if (worldY < minBounds.y || worldY > maxBounds.y) continue;
+
+                for (int lx = minX; lx <= maxX; ++lx) {
+                    float worldX = chunkOrigin.x + (float)lx * voxelSize;
+                    if (worldX < minBounds.x || worldX > maxBounds.x) continue;
+
+                    // Calculate density based on distance to box surface
+                    glm::vec3 pos(worldX, worldY, worldZ);
+                    glm::vec3 distToCenter = pos - boxCenter;
+                    glm::vec3 distToEdge = glm::abs(distToCenter) - halfSize;
+
+                    float maxDistToEdge = std::max({distToEdge.x, distToEdge.y, distToEdge.z});
+                    float density;
+
+                    if (maxDistToEdge <= 0) {
+                        // Inside box: solid density
+                        density = 1.0f;
+                    } else {
+                        // Outside box: falloff
+                        density = std::max(0.0f, 1.0f - (maxDistToEdge / (voxelSize * 2.0f)));
+                    }
+
+                    auto& voxel = chunk->voxels[lx][ly][lz];
+                    if (density > voxel.density) {
+                        voxel.density = density;
+                        voxel.type = formation.type;
+                        voxel.color = formation.color;
+                        voxel.material = material;
+                        chunkTouched = true;
+                    }
+                }
+            }
+        }
+
+        if (chunkTouched) {
+            chunk->meshDirty = true;
         }
     }
 

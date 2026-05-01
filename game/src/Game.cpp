@@ -1130,7 +1130,8 @@ namespace gl3 {
         if (!body) return;
         uint64_t spellId = (uint64_t)(uintptr_t)body->userData;
         if (auto* spell = spellSystem->findSpellById(spellId)) {
-            createCraterAtPosition(hitPos, glm::sqrt(impactSpeed), glm::sqrt(body->radius));
+            createCraterAtPosition(hitPos, glm::sqrt(impactSpeed)/10, glm::sqrt(body->radius)/2);
+            spell->physicsBody->velocity*=-1;
         }
     }
 
@@ -1559,7 +1560,7 @@ namespace gl3 {
         TRACY_CPU_ZONE("Game::updatePhysics");
 
         const float fixedTimeStep = 1.0f / 60.0f;
-        const int subStepCount = 4;
+        const int subStepCount = 8;
         const float subDt = (fixedTimeStep / (float)subStepCount);
 
         accumulator += deltaTime;

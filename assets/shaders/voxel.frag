@@ -62,7 +62,7 @@ uniform float uMatSpecular[64];
 uniform float uUVScale[64];
 
 const float PI = 3.14159265;
-const float MIN_ALBEDO = 0.0;
+const float MIN_ALBEDO = 0.05;
 
 float burnHash13(vec3 p) {
     p = fract(p * 0.1031);
@@ -175,7 +175,7 @@ void main() {
         vec3 H = normalize(L + V);
         float NdotH = max(dot(N, H), 0.0);
         float spec = pow(NdotH, shininess) * specStrength * step(0.0, NdotL);
-        spec=min(spec,0.1);
+        //spec=min(spec,0.1);
         specAccum += radiance * spec;
     }
 
