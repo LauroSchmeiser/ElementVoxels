@@ -12,58 +12,13 @@ find_package(imgui CONFIG REQUIRED)
 file(GLOB_RECURSE SOURCE_FILES CONFIGURE_DEPENDS
         ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/*.h
-        src/rendering/*.cpp
-        src/rendering/*.h
-        src/entities/*.cpp
-        src/entities/*.h
 )
 
 # Create executable with explicit file lists
 add_executable(${EXE_FILE}
         ${SOURCE_FILES}
-        src/rendering/VoxelStructures.h
         ../main.cpp
-        src/rendering/marchingTables.h
-        src/rendering/SunBillboard.cpp
-        src/rendering/SunBillboard.h
         ../extern/robin_hood.h
-        src/rendering/ChunkManager.cpp
-        src/rendering/ChunkManager.h
-        src/rendering/Chunk.h
-        src/Input/InputManager.h
-        src/Input/InputActionMap.h
-        src/CharacterController.cpp
-        src/CharacterController.h
-        src/physics/VoxelPhysicsBody.h
-        src/physics/VoxelPhysicsManager.h
-        src/physics/VoxelPhysicsManager.cpp
-        src/rendering/GpuStructsStd430.h
-        src/physics/VoxelCarver.h
-        src/physics/FastCraterCarver.h
-        src/physics/CraterStampBatch.h
-        src/spells/spellCastAsync.h
-        src/spells/spellCastAsync.cpp
-        src/rendering/MaterialSystem.h
-        src/rendering/MaterialSystem.cpp
-        src/rendering/stb_image_impl.cpp
-        src/rendering/stb_image_resize_impl.cpp
-        src/SceneId.h
-        src/IScene.h
-        src/SceneManager.cpp
-        src/scenes/MainMenuScene.h
-        src/scenes/MainMenuScene.cpp
-        src/scenes/GameplayScene.h
-        src/scenes/GameplayScene.cpp
-        src/SceneManager.h
-        src/scenes/MainMenuScene.cpp
-        src/scenes/MainMenuScene.h
-        src/ui/ImGuiLayer.cpp
-        src/ui/ImGuiLayer.h
-        src/scenes/LoadingScene.cpp
-        src/scenes/LoadingScene.h
-        src/scenes/GameOverScene.cpp
-        src/scenes/GameOverScene.h
-        src/spells/SpellSystem.cpp
 )
 
 # Link Tracy and enable it
