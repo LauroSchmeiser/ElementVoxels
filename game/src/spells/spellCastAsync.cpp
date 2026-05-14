@@ -121,7 +121,7 @@ namespace gl3 {
 
         float voxelVolume = VOXEL_SIZE * VOXEL_SIZE * VOXEL_SIZE;
         int maxVoxels = static_cast<int>((glm::pow(req.strength,4)) / voxelVolume);
-        maxVoxels = clampi(maxVoxels, 10, 60);
+        maxVoxels = clampi(maxVoxels, 10, 100);
 
         struct Candidate
         {
@@ -187,7 +187,7 @@ namespace gl3 {
             }
         }
 
-        constexpr int kMinVoxelsToCast = 6; // tweak
+        constexpr int kMinVoxelsToCast = 3;
 
         if ((int)candidates.size() < kMinVoxelsToCast)
         {

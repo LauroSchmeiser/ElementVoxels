@@ -503,9 +503,9 @@ namespace gl3 {
 
             case PreloadStage::Boot_SSBOs:
                 preloadStageName = "Setting up GPU buffers...";
-                setupSSBOsAndTables();
-                MAX_CHUNKS_GPU = (int)chunkManager->maxChunksGpu();
-                setupChunkBatchBuffers(MAX_CHUNKS_GPU);
+                //setupSSBOsAndTables();
+                //MAX_CHUNKS_GPU = (int)chunkManager->maxChunksGpu();
+                //setupChunkBatchBuffers(MAX_CHUNKS_GPU);
                 setupLightSSBOs();
                 preloadStage = PreloadStage::Boot_Materials;
                 return 0.30f;
@@ -1574,7 +1574,7 @@ namespace gl3 {
         TRACY_CPU_ZONE("Game::updatePhysics");
 
         const float fixedTimeStep = 1.0f / 60.0f;
-        const int subStepCount = 8;
+        const int subStepCount = 10;
         const float subDt = (fixedTimeStep / (float)subStepCount);
 
         accumulator += deltaTime;
@@ -2029,11 +2029,29 @@ namespace gl3 {
     void Game::update() {
         TRACY_CPU_ZONE("Game::update()");
 
+        // Update merged lights occasionally (CPU) + upload to GPU
+        if (frameCounter % 240 == 0) {
+            TRACY_CPU_ZONE("renderChunks::updateLightSpatialHash");
+            updateLightSpatialHash();
+            uploadMergedLightsToGPU();
+        }
+
         {
             TRACY_CPU_ZONE("Game::Recalc Meshes and Lights");
             chunkManager->rebuildDirtyChunks([this](Chunk* chunk) {
                 chunkRenderer->generateChunkMesh(chunk);
-            });
+            },cameraPos);
+        }
+
+        // per-chunk light index buffer
+        if(frameCounter % 311 == 0)
+        {
+            TRACY_CPU_ZONE("renderChunks::buildAndUploadChunkLightIndexBuffer");
+            const int camCX = worldToChunk(cameraPos.x);
+            const int camCY = worldToChunk(cameraPos.y);
+            const int camCZ = worldToChunk(cameraPos.z);
+            const int renderRadius = RenderingRange;
+            buildAndUploadChunkLightIndexBuffer(camCX, camCY, camCZ, renderRadius);
         }
 
         if(getPlayerHealth()<=0)
@@ -2272,13 +2290,6 @@ namespace gl3 {
             chunkManager->cleanupDistantSlots(cameraPos, renderRadius);
         }
 
-        // Update merged lights occasionally (CPU) + upload to GPU
-        if (frameCounter % 240 == 0) {
-            TRACY_CPU_ZONE("renderChunks::updateLightSpatialHash");
-            updateLightSpatialHash();
-            uploadMergedLightsToGPU();
-        }
-
        // visibleDrawCmds.clear();
         visibleSlots.clear();
        // visibleDrawCmds.reserve((2*renderRadius+1)*(2*renderRadius+1)*(2*renderRadius+1));
@@ -2307,14 +2318,14 @@ namespace gl3 {
                         // Skip empty chunks (no geometry)
                         if (chunk->isCleared) continue;
 
-                        // Allocate GPU slot if needed and chunk has content
+                       /* // Allocate GPU slot if needed and chunk has content
                         if (chunk->gpuSlot == FixedGridChunkManager::INVALID_GPU_SLOT) {
                             uint32_t slot = chunkManager->allocateGpuSlot(coord);
                             if (slot == FixedGridChunkManager::INVALID_GPU_SLOT) {
                                 // No GPU slots available, skip this chunk for now
                                 continue;
                             }
-                        }
+                        }*/
 /*
                         if (built < MAX_CHUNKS_PER_FRAME && (chunk->meshDirty || !chunk->gpuCache.isValid)) {
                             built++;
@@ -2351,13 +2362,6 @@ namespace gl3 {
                        // visibleDrawCmds.push_back(cmd);
                         visibleSlots.push_back(chunk->gpuSlot);
                     }
-        }
-
-        // per-chunk light index buffer
-        if(frameCounter % 311 == 0)
-        {
-            TRACY_CPU_ZONE("renderChunks::buildAndUploadChunkLightIndexBuffer");
-            buildAndUploadChunkLightIndexBuffer(camCX, camCY, camCZ, renderRadius);
         }
 
         // Draw
@@ -2405,8 +2409,8 @@ namespace gl3 {
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 10, ssboLights);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 11, ssboChunkLightIdx);
 
-            glBindVertexArray(globalChunkVAO);
-            glBindBuffer(GL_DRAW_INDIRECT_BUFFER, chunkIndirectBuffer);
+            glBindVertexArray(chunkRenderer->globalChunkVAO);
+            glBindBuffer(GL_DRAW_INDIRECT_BUFFER, chunkRenderer->chunkIndirectBuffer);
 
             for (uint32_t slot : visibleSlots) {
                 const GLsizeiptr offset = (GLsizeiptr)slot * (GLsizeiptr)sizeof(DrawArraysIndirectCommand);

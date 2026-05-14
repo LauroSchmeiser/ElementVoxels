@@ -8,6 +8,9 @@ namespace gl3 {
 
     void ChunkRenderer::initialize() {
         marchingCubesShader = std::make_unique<Shader>("shaders/marching_cubes.comp");
+        setupSSBOsAndTables();
+        MAX_CHUNKS_GPU = (int)chunkManager->maxChunksGpu();
+        setupChunkBatchBuffers(MAX_CHUNKS_GPU);
     }
 
     void ChunkRenderer::setupSSBOsAndTables() {

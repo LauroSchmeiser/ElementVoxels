@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 #include <array>
+#include <filesystem>
+#include "../../stb_image_write.h"
 
 namespace gl3 {
 
@@ -30,6 +32,10 @@ namespace gl3 {
         std::vector<unsigned char> resizeToRGBA(
                 const unsigned char* src, int sw, int sh,
                 int dw, int dh);
+
+        std::string buildResizedCachePath(const std::string& originalPath, int w, int h);
+        bool fileExists(const std::string& path);
+        bool saveRGBA8PNG(const std::string& path, int w, int h, const unsigned char* data);
 
         void destroy();
     };

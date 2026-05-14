@@ -22,8 +22,6 @@ namespace gl3 {
                 ssboCounter = 0, ssboTriangles = 0, particleSSBO = 0, fieldBitsSSBO = 0;
 
         GLuint globalChunkVertexBuffer = 0;
-        GLuint chunkIndirectBuffer = 0;
-        GLuint globalChunkVAO = 0;
 
         size_t CHUNK_MAX_VERTS = 0;
         int MAX_CHUNKS_GPU = 0;
@@ -44,6 +42,9 @@ namespace gl3 {
         ChunkRenderer(FixedGridChunkManager* chunkMgr);
 
         void initialize();
+
+        GLuint globalChunkVAO = 0;
+        GLuint chunkIndirectBuffer = 0;
     };
 
 }

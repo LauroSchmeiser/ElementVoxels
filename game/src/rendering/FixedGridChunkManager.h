@@ -10,7 +10,7 @@
 #include "VoxelStructures.h"
 #include "Chunk.h"
 #include "glm/glm.hpp"
-
+#include "iostream"
 
 namespace gl3 {
 
@@ -182,6 +182,7 @@ namespace gl3 {
                 c.isCleared = false;
                 c.gpuSlot = INVALID_GPU_SLOT;
                 c.gpuCache.isValid = false;
+                markChunkDirty(c.coord);
             }
 
             nextGpuSlot = 0;
@@ -253,7 +254,21 @@ namespace gl3 {
         }
 
         template<typename MeshFn>
-        void rebuildDirtyChunks(MeshFn&& rebuildMeshFn) {
+        void rebuildDirtyChunks(MeshFn&& rebuildMeshFn,const glm::vec3& cameraPos) {
+            if (dirtyChunks.empty()) return;
+
+            const int camCX = worldToChunk(cameraPos.x);
+            const int camCY = worldToChunk(cameraPos.y);
+            const int camCZ = worldToChunk(cameraPos.z);
+
+            std::sort(dirtyChunks.begin(), dirtyChunks.end(),
+                      [&](const ChunkCoord& a, const ChunkCoord& b) {
+                          int adx = a.x - camCX, ady = a.y - camCY, adz = a.z - camCZ;
+                          int bdx = b.x - camCX, bdy = b.y - camCY, bdz = b.z - camCZ;
+                          int da = adx*adx + ady*ady + adz*adz;
+                          int db = bdx*bdx + bdy*bdy + bdz*bdz;
+                          return da > db;
+                      });
             int toProcess = std::min(MAX_CALC_PER_FRAME, (int)dirtyChunks.size());
 
             for (int i = 0; i < toProcess; ++i) {
@@ -268,6 +283,12 @@ namespace gl3 {
                 }
 
                 if (chunk->meshDirty || !chunk->gpuCache.isValid) {
+                    if (chunk->gpuSlot == INVALID_GPU_SLOT) {
+                        uint32_t slot = allocateGpuSlot(coord);
+                        if (slot == INVALID_GPU_SLOT) {
+                            continue;
+                        }
+                    }
                     rebuildMeshFn(chunk);
                 }
             }
