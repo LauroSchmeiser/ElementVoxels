@@ -37,6 +37,8 @@
 #include "rendering/GpuStructsStd430.h"
 #include "spells/SpellSystem.h"
 #include "MainThreadDispatcher.h"
+#include "rendering/ChunkRenderer.h"
+
 #undef NEAR
 #undef FAR
 
@@ -71,7 +73,9 @@ namespace gl3 {
 
         ////Chunk Management:
         //std::unique_ptr<ChunkManager> chunkManager = std::make_unique<ChunkManager>(); // other manager (old)
-        std::unique_ptr<FixedGridChunkManager> chunkManager = std::make_unique<FixedGridChunkManager>(WORLD_RADIUS_CHUNKS);
+        std::unique_ptr<FixedGridChunkManager> chunkManager;
+        std::unique_ptr<ChunkRenderer> chunkRenderer;
+
 
         bool hasSolidVoxels(const gl3::Chunk &chunk);
 
@@ -280,6 +284,10 @@ namespace gl3 {
 
         std::unordered_map<int, SphereMesh> sphereMeshCache; // radius -> mesh
 
+        void initSphereMeshCache();
+        SphereMesh generateIcosphere(float radius, int subdivisions);
+
+
         ////Debugging:
         void DisplayFPSCount();
 
@@ -420,7 +428,7 @@ namespace gl3 {
 
         //Marching-cubes Variables
         size_t maxVerts = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5 * 3; //Max amount of vertices marching cubes can create
-        const int MAX_CHUNKS_PER_FRAME = 1;
+        const int MAX_CHUNKS_PER_FRAME = 4;
         //std::vector<Chunk> dirtyChunks;
         //SSBOs for marching cubes:
         GLuint ssboVoxels = 0, ssboEdgeTable = 0, ssboTriTable = 0,
@@ -597,9 +605,5 @@ namespace gl3 {
                                           uint8_t &outDominantType);
 
         void setupSpellContext();
-
-        SphereMesh generateIcosphere(float radius, int subdivisions);
-
-        void initSphereMeshCache();
     };
 }

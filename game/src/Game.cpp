@@ -143,7 +143,6 @@ namespace gl3 {
     Game::Game(int width, int height, const std::string &title)
             : windowWidth(width),
               windowHeight(height),
-              chunkManager(std::make_unique<FixedGridChunkManager>(WORLD_RADIUS_CHUNKS)),
               cameraPos(0.0f, 0.0f, 35.0f),
               cameraRotation(-90.0f, 0.0f)
             {
@@ -175,6 +174,10 @@ namespace gl3 {
         glfwSetWindowUserPointer(window, this);
         glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
 
+        chunkManager = std::make_unique<FixedGridChunkManager>(WORLD_RADIUS_CHUNKS);
+        chunkRenderer = std::make_unique<ChunkRenderer>(chunkManager.get());
+        chunkRenderer->initialize();
+
         //UI Setup
         imguiLayer.init(window, "#version 460");
 
@@ -184,6 +187,7 @@ namespace gl3 {
         marchingCubesShader = std::make_unique<Shader>("shaders/marching_cubes.comp");
         spellPreviewShader = std::make_unique<Shader>("shaders/spell_prev.vert", "shaders/spell_prev.frag");
         postShader = std::make_unique<Shader>("shaders/post_fullscreen.vert", "shaders/post_fog_glow.frag");
+
 
         try {
             voxelSplatShader = std::make_unique<Shader>("shaders/metaball_splat.comp");
@@ -830,7 +834,11 @@ namespace gl3 {
     void Game::markChunkModified(const ChunkCoord &coord) {
         Chunk *chunk = chunkManager->getChunk(coord);
         if (chunk) {
-            if (!chunk->isCleared) chunk->meshDirty = true;
+            if (!chunk->isCleared)
+            {
+                chunk->meshDirty = true;
+                chunkManager->markChunkDirty(coord);
+            }
 
             for (int dx=-1; dx<=1; ++dx)
                 for (int dy=-1; dy<=1; ++dy)
@@ -838,8 +846,11 @@ namespace gl3 {
                         ChunkCoord neighbor{coord.x + dx, coord.y + dy, coord.z + dz};
                         Chunk *neighborChunk = chunkManager->getChunk(neighbor);
                         if (neighborChunk) {
-                            if (!neighborChunk->isCleared) neighborChunk->meshDirty = true;
-                            neighborChunk->lightingDirty = true;
+                            if (!neighborChunk->isCleared) {
+                                neighborChunk->meshDirty = true;
+                                neighborChunk->lightingDirty = true;
+                                chunkManager->markChunkDirty(neighborChunk->coord);
+                            }
                         }
                     }
         }
@@ -1130,8 +1141,10 @@ namespace gl3 {
         if (!body) return;
         uint64_t spellId = (uint64_t)(uintptr_t)body->userData;
         if (auto* spell = spellSystem->findSpellById(spellId)) {
-            createCraterAtPosition(hitPos, glm::sqrt(impactSpeed)/10, glm::sqrt(body->radius)/2);
-            spell->physicsBody->velocity*=-1;
+            float mass = spell->physicsBody ? spell->physicsBody->mass : 1.0f;
+
+            createCraterAtPosition(hitPos,glm::sqrt(impactSpeed/10)*glm::sqrt(mass)/10,glm::sqrt(spell->physicsBody->radius));
+            spell->physicsBody->velocity*=-0.75;
         }
     }
 
@@ -1528,6 +1541,7 @@ namespace gl3 {
                             chunk->meshDirty = true;
                             chunk->lightingDirty = true;
                             FilledChunks++;
+                            chunkManager->markChunkDirty(coord);
 
                             // Rebuild lights for this chunk if it contains fire
                             if (planet.type == 2) {
@@ -2015,6 +2029,13 @@ namespace gl3 {
     void Game::update() {
         TRACY_CPU_ZONE("Game::update()");
 
+        {
+            TRACY_CPU_ZONE("Game::Recalc Meshes and Lights");
+            chunkManager->rebuildDirtyChunks([this](Chunk* chunk) {
+                chunkRenderer->generateChunkMesh(chunk);
+            });
+        }
+
         if(getPlayerHealth()<=0)
         {
             requestSceneChange(SceneId::MainMenu);
@@ -2294,7 +2315,7 @@ namespace gl3 {
                                 continue;
                             }
                         }
-
+/*
                         if (built < MAX_CHUNKS_PER_FRAME && (chunk->meshDirty || !chunk->gpuCache.isValid)) {
                             built++;
                             generateChunkMesh(chunk);
@@ -2305,6 +2326,7 @@ namespace gl3 {
                             rebuildChunkLights(chunk->coord);
                             chunk->lightingDirty = false;
                         }
+*/
 
                         for (const auto& light : chunk->emissiveLights) {
                             if (usedLightIDs.insert(light.id).second) {
@@ -3031,7 +3053,7 @@ namespace gl3 {
         MAX_CHUNKS_GPU = maxChunksGpu;
         CHUNK_MAX_VERTS = (DIM - 1) * (DIM - 1) * (DIM - 1) * 5 * 3;
 
-        const int MAX_VERTS_PER_CHUNK = 12000;
+        const int MAX_VERTS_PER_CHUNK = 8000;
         CHUNK_MAX_VERTS = std::min(
                 (int)chunkMaxVertices(DIM),
                 MAX_VERTS_PER_CHUNK

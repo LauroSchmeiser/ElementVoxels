@@ -252,10 +252,88 @@ namespace gl3 {
             return out;
         }
 
+        template<typename MeshFn>
+        void rebuildDirtyChunks(MeshFn&& rebuildMeshFn) {
+            int toProcess = std::min(MAX_CALC_PER_FRAME, (int)dirtyChunks.size());
+
+            for (int i = 0; i < toProcess; ++i) {
+                ChunkCoord coord = dirtyChunks.back();
+                dirtyChunks.pop_back();
+
+                Chunk* chunk = getChunk(coord);
+                if (!chunk) continue;
+
+                if (chunk->lightingDirty) {
+                    rebuildChunkLighting(chunk);
+                }
+
+                if (chunk->meshDirty || !chunk->gpuCache.isValid) {
+                    rebuildMeshFn(chunk);
+                }
+            }
+        }
+
+        void markChunkDirty(const ChunkCoord& coord) {
+            auto it = std::find(dirtyChunks.begin(), dirtyChunks.end(), coord);
+            if (it == dirtyChunks.end()) {
+                dirtyChunks.push_back(coord);
+            }
+        }
+
+        void rebuildChunkLighting(Chunk* chunk) {
+            if (!chunk) return;
+            chunk->emissiveLights.clear();
+
+            // chunk origin in world units
+            glm::vec3 chunkOrigin(
+                    chunk->coord.x * CHUNK_SIZE * gl3::VOXEL_SIZE,
+                    chunk->coord.y * CHUNK_SIZE * gl3::VOXEL_SIZE,
+                    chunk->coord.z * CHUNK_SIZE * gl3::VOXEL_SIZE
+            );
+
+            // Cluster emissive voxels within this chunk
+            glm::vec3 sumPos(0.0f);
+            glm::vec3 sumColor(0.0f);
+            int count = 0;
+
+            for (int x = 0; x <= CHUNK_SIZE; ++x) {
+                for (int y = 0; y <= CHUNK_SIZE; ++y) {
+                    for (int z = 0; z <= CHUNK_SIZE; ++z) {
+                        const auto &vox = chunk->voxels[x][y][z];
+                        if (vox.type == 2) { // Fire / emissive voxel
+                            glm::vec3 voxelWorldPos = chunkOrigin + glm::vec3((float)x, (float)y, (float)z) * gl3::VOXEL_SIZE;
+                            sumPos += voxelWorldPos;
+                            sumColor += vox.color;
+                            ++count;
+                        }
+                    }
+                }
+            }
+
+            if (count > 0) {
+                VoxelLight light;
+                light.pos = sumPos / float(count);
+                light.color = sumColor / float(count);
+                light.intensity = float(count) * 65.0f;
+                light.id = makeLightID(chunk->coord.x, chunk->coord.y, chunk->coord.z);
+
+                chunk->emissiveLights.push_back(light);
+            }
+
+            chunk->lightingDirty = false;
+            updateEmissiveMembership(*chunk);
+        }
+
+        uint32_t makeLightID(int cx, int cy, int cz) {
+            return ((cx & 0xFFF) << 20) | ((cy & 0xFFF) << 8) | (cz & 0xFF);
+        }
+
     private:
         int R = 0;
         int dim = 0;
+        const int MAX_CALC_PER_FRAME = 4;
         std::vector<Chunk> chunks;
+        std::vector<ChunkCoord> dirtyChunks;
         std::vector<uint32_t> emissiveIndices;
 
         uint32_t nextGpuSlot = 0;
