@@ -1143,8 +1143,7 @@ namespace gl3 {
         if (auto* spell = spellSystem->findSpellById(spellId)) {
             float mass = spell->physicsBody ? spell->physicsBody->mass : 1.0f;
 
-            createCraterAtPosition(hitPos,glm::sqrt(impactSpeed/10)*glm::sqrt(mass)/10,glm::sqrt(spell->physicsBody->radius));
-            spell->physicsBody->velocity*=-0.75;
+            createCraterAtPosition(hitPos,glm::sqrt((impactSpeed*mass))/30,glm::sqrt(spell->physicsBody->radius));
         }
     }
 
@@ -1602,7 +1601,7 @@ namespace gl3 {
 
                 std::vector<uint64_t> removedBodyIds;
                 if (voxelPhysics) voxelPhysics->update(subDt, removedBodyIds);
-
+                //if(spellSystem)   spellSystem->update(subDt);
                 // usually you only want "wasJustPressed" to apply once:
                 jump = false;
             }

@@ -1,7 +1,6 @@
 #include "EnemyManager.h"
 #include "EnemyMeshing.h"
 #include <stdexcept>
-#include <iostream>
 #include "LocalMarchingCubes.h"
 
 namespace gl3 {

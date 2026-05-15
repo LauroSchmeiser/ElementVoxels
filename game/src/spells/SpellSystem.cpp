@@ -470,7 +470,8 @@ namespace gl3 {
 
         // Queue physics creation
         if (s.geometryCreated && s.isPhysicsEnabled && s.physicsBody == nullptr) {
-            queueAsyncPhysicsCreation(s);
+            //queueAsyncPhysicsCreation(s);
+            createPhysicsBodyForSpell(s);
         }
 
         // Cleanup voxels if all arrived (deferred)
@@ -507,10 +508,6 @@ namespace gl3 {
                 if (age > spellIt->lifetime) {
                     spellIt->markForRemoval = true;
                 }
-            }
-
-            if (spellIt->physicsBody != nullptr && glm::length(spellIt->physicsBody->velocity) < 0.5f) {
-                spellIt->markForRemoval = true;
             }
 
             if (spellIt->isPhysicsEnabled && spellIt->voxelsCleaned) {
@@ -689,23 +686,29 @@ namespace gl3 {
                                    if (!live2) return;
 
                         if (!ctx.physics || live2->physicsBody != nullptr) return;
-
                         // Create body on main thread (safe)
                         float voxelVolume = VOXEL_SIZE * VOXEL_SIZE * VOXEL_SIZE;
                         float mass = (float)live2->animatedVoxelIDs.size() * voxelVolume * 0.5f;
                         mass = glm::clamp(mass, 1.0f, 1000.0f);
 
-                        live2->physicsBody = ctx.physics->createBody(
-                                live2->center,
-                                mass,
-                                VoxelPhysicsBody::ShapeType::BOX,
-                                extents
-                        );
+                                   if (live2->formationParams.type == FormationType::SPHERE) {
+                                       live2->physicsBody = ctx.physics->createBody(
+                                               live2->center,
+                                               mass,
+                                               VoxelPhysicsBody::ShapeType::SPHERE,
+                                               glm::vec3(live2->formationParams.radius)
+                                       );
+                                   } else {
+                                       live2->physicsBody = ctx.physics->createBody(
+                                               live2->center,
+                                               mass,
+                                               VoxelPhysicsBody::ShapeType::BOX,
+                                               extents
+                                       );
+                                   }
                         live2->physicsBodyId = live2->physicsBody ? live2->physicsBody->id : 0;
 
                         if (live2->physicsBody) {
-                            // IMPORTANT: do NOT store &spell if you ever erase/move spells.
-                            // Better: store spellId instead of pointer.
                             live2->physicsBody->userData =
                                     reinterpret_cast<void*>((uintptr_t)live2->ID);
 
@@ -1154,7 +1157,6 @@ namespace gl3 {
                 spell.physicsBody->userData = reinterpret_cast<void*>((uintptr_t)spell.ID);
                 spell.physicsBody->velocity = spell.initialVelocity;
                 spell.physicsBody->orientation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
-
                 initSpellDestructibleVolume(spell);
                 rebuildDestructibleMeshIfNeeded(spell.destruct);
                 spell.physicsBody->renderMesh = &spell.destruct.mesh;
@@ -1194,7 +1196,6 @@ namespace gl3 {
             spell.physicsBody->velocity = spell.initialVelocity;
 
             spell.physicsBody->orientation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
-
             initSpellDestructibleVolume(spell);
             rebuildDestructibleMeshIfNeeded(spell.destruct);
             spell.physicsBody->renderMesh = &spell.destruct.mesh;
