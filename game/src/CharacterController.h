@@ -45,12 +45,12 @@ namespace gl3 {
         float landingMinApproachSpeed = 0.05f;    // Low threshold for gentle landings
         float adhesionDuration = 0.5f;
         float adhesionMaxDistance = 20.0f;
-        float adhesionSnapDistance = 2.0f;        // Can afford larger since detection is tighter
-        float adhesionAcceleration = 0.02f;
-        float minGroundNormalDot = 0.25f;          // More lenient for angled surfaces
+        float adhesionSnapDistance = 1.0f;        // Can afford larger since detection is tighter
+        float adhesionAcceleration = 0.5f;
+        float minGroundNormalDot = 0.15f;          // More lenient for angled surfaces
 
         // Camera / orientation smoothing
-        float upLerpSpeed = 3.5f;                 // Medium speed (adaptive logic handles extremes)
+        float upLerpSpeed = 1.5f;                 // Medium speed (adaptive logic handles extremes)
     };
 
     struct CharacterState {

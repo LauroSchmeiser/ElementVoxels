@@ -532,7 +532,7 @@ namespace gl3 {
         updateAirSlam(deltaTime);
 
         updateSurfaceAdhesion(deltaTime);
-        updateOrientation(deltaTime);
+        //updateOrientation(deltaTime);
 
         // Handle crouching
         bool wantsCrouch = crouchInput;
