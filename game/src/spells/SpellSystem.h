@@ -178,9 +178,11 @@ namespace gl3 {
         std::vector<SpellEffect> pendingPhysicsResults;
         std::mutex physicsResultMutex;
 
-        void mergePhysicsBodyResult(const SpellEffect &result);
-
-        void scheduleSpellRemoval(SpellEffect &effect);
+        void carveSdfInChunk(Chunk* chunk,
+                             const glm::vec3& chunkOrigin,
+                             const WorldPlanet& formation,
+                             uint64_t material,
+                             const FormationParams& params);
 
         void createPhysicsBodyForSpell(SpellEffect &spell);
 

@@ -9,12 +9,11 @@ uniform mat4 model;
 out vec3 vWorldPos;
 out vec3 vLocalPos;
 
-uniform vec3 uCenter;
-
 void main() {
     vec4 wp = model * vec4(aPos, 1.0);
     vWorldPos = wp.xyz;
-    vLocalPos = wp.xyz - uCenter;
+
+    vLocalPos = aPos;
 
     gl_Position = pv * wp;
 }

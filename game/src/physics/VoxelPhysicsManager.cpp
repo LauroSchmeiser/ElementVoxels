@@ -187,9 +187,6 @@ namespace gl3 {
         return false;
     }
 
-    void VoxelPhysicsManager::removeBody(VoxelPhysicsBody* body) {
-        if (body) removeBody(body->id);
-    }
 
     float VoxelPhysicsManager::getDensityAtWorldCorner(const glm::vec3& worldPos) {
         if (!chunkManager) return -10000.0f;
@@ -370,6 +367,7 @@ namespace gl3 {
             glm::vec3 newTangentVel = tangentVel * (1.0f - body.friction);
 
             body.velocity = newNormalVel + newTangentVel;
+            body.velocity*=0.85f;
 
             if (glm::length(tangentVel) > 0.1f) {
                 glm::vec3 rotationAxis = glm::cross(normal, tangentVel);
@@ -378,7 +376,7 @@ namespace gl3 {
             }
         }
 
-        body.angularVelocity *= 0.95f;
+        body.angularVelocity *= 0.85f;
     }
 
     void VoxelPhysicsManager::update(float dt, std::vector<uint64_t>& removedBodies) {
@@ -406,7 +404,7 @@ namespace gl3 {
                 continue;
             }
 
-
+            body->impactVfxCooldown = glm::max(0.0f, body->impactVfxCooldown - dt);
 
             body->velocity += gravity * dt;
 
@@ -448,18 +446,47 @@ namespace gl3 {
 
                         glm::vec3 n;
                         float pen;
-                        if (sphereIntersectsWorld(*body, p, n, pen)) {
+                        int cx = chunkManager->worldToChunk(p.x);
+                        int cy = chunkManager->worldToChunk(p.y);
+                        int cz = chunkManager->worldToChunk(p.z);
+
+                        ChunkCoord coord{cx, cy, cz};
+                        Chunk* chunk = chunkManager->getChunk(coord);
+                        if (sphereIntersectsWorld(*body, p, n, pen)&&!chunk->inEmissiveList) {
                             body->position = p;
 
                             float impactSpeed = glm::length(body->velocity) * VOXEL_SIZE;
                             resolveCollision(*body, n, pen, impactSpeed);
 
-                            if (voxelCollisionCallback && impactSpeed > 1.0f * VOXEL_SIZE) {
+                            /*if (voxelCollisionCallback && impactSpeed > 1.0f * VOXEL_SIZE) {
                                 voxelCollisionCallback(body, body->position, n, impactSpeed);
+                            }*/
+                            if (voxelCollisionCallback && impactSpeed > 1.0f * VOXEL_SIZE && body->impactVfxCooldown <= 0.0f) {
+                                glm::vec3 contactPoint = body->position - n * body->radius;
+                                voxelCollisionCallback(body, contactPoint, n, impactSpeed);
+                                body->impactVfxCooldown = 0.08f;
                             }
 
                             hit = true;
                             break;
+                        } else if(sphereIntersectsWorld(*body, p, n, pen))
+                        {
+                            body->position = p;
+
+                            float impactSpeed = glm::length(body->velocity) * VOXEL_SIZE;
+                            //resolveCollision(*body, n, pen, impactSpeed);
+
+                            /*if (voxelCollisionCallback && impactSpeed > 1.0f * VOXEL_SIZE) {
+                                voxelCollisionCallback(body, body->position, n, impactSpeed);
+                            }*/
+                            /*if (voxelCollisionCallback && impactSpeed > 1.0f * VOXEL_SIZE && body->impactVfxCooldown <= 0.0f) {
+                                glm::vec3 contactPoint = body->position - n * body->radius;
+                                voxelCollisionCallback(body, contactPoint, n, impactSpeed);
+                                body->impactVfxCooldown = 0.08f;
+                            }*/
+
+                            hit = true;
+                            removeBody(body->id);
                         }
                     }
 

@@ -36,5 +36,6 @@ struct VoxelPhysicsBody {
     uint64_t id = 0;
 
     uint32_t material=0;
+    float impactVfxCooldown = 0.0f;
 };
 }

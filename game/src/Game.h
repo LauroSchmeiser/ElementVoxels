@@ -486,6 +486,8 @@ namespace gl3 {
         std::unique_ptr<Shader> marchingCubesShader;
         std::unique_ptr<Shader> voxelSplatShader;
         std::unique_ptr<Shader> spellPreviewShader;
+        std::unique_ptr<Shader> impactShader;
+
 
     public:
         ///Scenes
@@ -572,6 +574,59 @@ namespace gl3 {
                                     float speedWorld,
                                     glm::vec3 color);
 
+
+        ///V-Effects::
+        struct ImpactParticle {
+            glm::vec3 position = glm::vec3(0.0f);
+            glm::vec3 velocity = glm::vec3(0.0f);
+            glm::vec4 color = glm::vec4(1.0f);
+            float age = 0.0f;
+            float lifetime = 1.0f;
+            float startSize = 0.25f;
+            float endSize = 2.0f;
+            float rotation = 0.0f;
+            float rotationSpeed = 0.0f;
+            uint32_t kind = 0; // 0 smoke, 1 flash, 2 debris glow etc.
+            bool active = true;
+        };
+
+        enum class ImpactSizeClass : uint8_t {
+            Small,
+            Medium,
+            Large
+        };
+
+        std::vector<ImpactParticle> impactParticles;
+
+        GLuint impactQuadVAO = 0;
+        GLuint impactQuadVBO = 0;
+
+        void setupImpactEffects();
+        void ensureImpactQuad();
+        void updateImpactEffects(float dt);
+        void renderImpactEffects();
+
+        void spawnImpactEffect(const glm::vec3& hitPos,
+                               const glm::vec3& hitNormal,
+                               float impactSpeed,
+                               float removedVoxelEstimate,
+                               const glm::vec3& tint = glm::vec3(0.45f, 0.45f, 0.45f));
+
+        void spawnImpactPresetSmall(const glm::vec3& hitPos,
+                                    const glm::vec3& hitNormal,
+                                    float strength01,
+                                    const glm::vec3& tint);
+
+        void spawnImpactPresetMedium(const glm::vec3& hitPos,
+                                     const glm::vec3& hitNormal,
+                                     float strength01,
+                                     const glm::vec3& tint);
+
+        void spawnImpactPresetLarge(const glm::vec3& hitPos,
+                                    const glm::vec3& hitNormal,
+                                    float strength01,
+                                    const glm::vec3& tint);
+
     private:
         glm::vec2 getMouseDelta();
         glm::dvec2 previousMousePos = glm::dvec2(0.0, 0.0);
@@ -605,5 +660,12 @@ namespace gl3 {
                                           uint8_t &outDominantType);
 
         void setupSpellContext();
+
+        glm::vec3 getCameraUp() const;
+
+        glm::vec3 cameraForward;
+        glm::vec3 cameraRight;
+        const float cameraSensitivity=0.125f;
+
     };
 }

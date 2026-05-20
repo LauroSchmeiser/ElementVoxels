@@ -363,7 +363,7 @@ namespace gl3 {
             return;
         }
 
-        // Check if spell should start burning
+       /* // Check if spell should start burning
         const bool tooSmall = isSpellTooSmall(s);
         const bool tooSlowNow = isSpellTooSlowNow(s, speedThreshold);
         s.burn.slowAccum = tooSlowNow ? (s.burn.slowAccum + dt) : 0.0f;
@@ -373,7 +373,7 @@ namespace gl3 {
             const float r = glm::max(s.formationParams.getBoundingRadius(), 1.0f * VOXEL_SIZE);
             startSpellBurn(s, r, burnDuration);
             return;
-        }
+        }*/
 
         // Process animated voxels (the heavy part)
         processAnimatedVoxelsForSpell(s, dt);
@@ -459,12 +459,14 @@ namespace gl3 {
             float arrivalRatio = total ? (float)arrivedCount / (float)total : 1.0f;
 
             if (arrivalRatio >= 0.8f) {
-                // Queue async formation creation
-                queueAsyncFormationCreation(s, arrivalRatio);
+                if (!s.isPhysicsEnabled) {
+                    queueAsyncFormationCreation(s, arrivalRatio);
+                }
                 s.geometryCreated = true;
             } else if (arrivalRatio > 0.0005f) {
-                // Fast partial formation (can be async too)
-                createPartialFormation(s, arrivalRatio);
+                if (!s.isPhysicsEnabled) {
+                    createPartialFormation(s, arrivalRatio);
+                }
             }
         }
 
@@ -503,6 +505,10 @@ namespace gl3 {
                 body = ctx.physics->getBodyById(spellIt->physicsBodyId);
             }
 
+            if (spellIt->physicsBodyId != 0 && glm::length(spellIt->physicsBody->velocity) < 0.5f) {
+                spellIt->markForRemoval = true;
+            }
+
             if (spellIt->lifetime > 0) {
                 float age = spellIt->creationTime;
                 if (age > spellIt->lifetime) {
@@ -525,21 +531,23 @@ namespace gl3 {
         if (spell.physicsBodyId != 0 && ctx.physics) {
             gl3::VoxelPhysicsBody* body = ctx.physics->getBodyById(spell.physicsBodyId);
 
+            if(body&&glm::length(body->velocity)<0.5f) {
+                // Create formation before removing body
+                const float safeCollectedProxy = (float) spell.physicsMesh.vertexCount;
+                createSpellFormation(
+                        spell.center,
+                        spell.formationParams,
+                        spell.strength,
+                        spell.targetMaterial,
+                        spell.formationColor,
+                        (size_t) safeCollectedProxy,
+                        spell.dominantType
+                );
+            }
+
             if (body) {
                 body->userData = nullptr;
             }
-
-            // Create formation before removing body
-            const float safeCollectedProxy = (float)spell.physicsMesh.vertexCount;
-            createSpellFormation(
-                    spell.center,
-                    spell.formationParams,
-                    spell.strength,
-                    spell.targetMaterial,
-                    spell.formationColor,
-                    (size_t)safeCollectedProxy,
-                    spell.dominantType
-            );
 
             ctx.physics->removeBody(spell.physicsBodyId);
             spell.physicsBodyId = 0;
@@ -1226,18 +1234,43 @@ namespace gl3 {
         }
     }
 
-    void SpellSystem::scheduleSpellRemoval(SpellEffect& effect)
+    void SpellSystem::carveSdfInChunk(Chunk* chunk,
+                                      const glm::vec3& chunkOrigin,
+                                      const WorldPlanet& formation,
+                                      uint64_t material,
+                                      const FormationParams& params)
     {
-        // Defer removal to avoid iterator invalidation
-        effect.markForRemoval = true;
-    }
+        const float voxelSize = VOXEL_SIZE;
+        bool chunkTouched = false;
 
-    void SpellSystem::mergePhysicsBodyResult(const SpellEffect& result)
-    {
-        std::lock_guard<std::mutex> lock(physicsResultMutex);
+        for (int lx = 0; lx <= CHUNK_SIZE; ++lx) {
+            for (int ly = 0; ly <= CHUNK_SIZE; ++ly) {
+                for (int lz = 0; lz <= CHUNK_SIZE; ++lz) {
+                    glm::vec3 worldPos = chunkOrigin + glm::vec3((float)lx, (float)ly, (float)lz) * voxelSize;
 
-        // Store the result for processing on main thread
-        pendingPhysicsResults.push_back(result);
+                    float formationDensity = params.evaluate(worldPos);
+                    float existingDensity = chunk->voxels[lx][ly][lz].density;
+
+                    if (formationDensity > existingDensity) {
+                        chunk->voxels[lx][ly][lz].density = formationDensity;
+
+                        if (formationDensity >= -1.0f) {
+                            chunk->voxels[lx][ly][lz].type = formation.type;
+                            chunk->voxels[lx][ly][lz].color = formation.color;
+                            chunk->voxels[lx][ly][lz].material = material;
+
+                            if (formationDensity >= 0.0f) {
+                                chunkTouched = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (chunkTouched) {
+            chunk->meshDirty = true;
+        }
     }
 
     void SpellSystem::carveFormationWithSDF(const WorldPlanet& formation, uint64_t material,
@@ -1283,25 +1316,28 @@ namespace gl3 {
 
         // Process based on formation type
         if (params.type == FormationType::SPHERE) {
-#pragma omp parallel for schedule(dynamic)
+            #pragma omp parallel for schedule(dynamic)
             for (int i = 0; i < (int)chunksToProcess.size(); ++i) {
                 auto& work = chunksToProcess[i];
                 carveSphereInChunk(work.chunk, work.origin, center, params.radius,
                                    formation, material);
             }
-        } else if (params.type == FormationType::CUBE ||
-                   params.type == FormationType::PLATFORM ||
-                   params.type == FormationType::WALL) {
-            // Calculate box bounds
+        } else if (params.type == FormationType::CUBE) {
             glm::vec3 halfSize(params.sizeX * 0.5f, params.sizeY * 0.5f, params.sizeZ * 0.5f);
             glm::vec3 minBounds = center - halfSize;
             glm::vec3 maxBounds = center + halfSize;
 
-#pragma omp parallel for schedule(dynamic)
+            #pragma omp parallel for schedule(dynamic)
             for (int i = 0; i < (int)chunksToProcess.size(); ++i) {
                 auto& work = chunksToProcess[i];
                 carveBoxInChunk(work.chunk, work.origin, minBounds, maxBounds,
                                 formation, material);
+            }
+        } else {
+            #pragma omp parallel for schedule(dynamic)
+            for (int i = 0; i < (int)chunksToProcess.size(); ++i) {
+                auto& work = chunksToProcess[i];
+                carveSdfInChunk(work.chunk, work.origin, formation, material, params);
             }
         }
 
@@ -1633,14 +1669,16 @@ namespace gl3 {
 
         if (!ctx.chunks || !ctx.worldToChunk || !ctx.markChunkModified) return;
 
-        float effectiveRadius = spell.formationParams.getBoundingRadius();
+        const float effectiveRadius = spell.formationParams.getBoundingRadius();
+        const float removeMargin = VOXEL_SIZE * 1.25f;
+        const float queryRadius = effectiveRadius + removeMargin;
 
-        int minCX = ctx.worldToChunk(spell.center.x - effectiveRadius);
-        int maxCX = ctx.worldToChunk(spell.center.x + effectiveRadius);
-        int minCY = ctx.worldToChunk(spell.center.y - effectiveRadius);
-        int maxCY = ctx.worldToChunk(spell.center.y + effectiveRadius);
-        int minCZ = ctx.worldToChunk(spell.center.z - effectiveRadius);
-        int maxCZ = ctx.worldToChunk(spell.center.z + effectiveRadius);
+        int minCX = ctx.worldToChunk(spell.center.x - queryRadius);
+        int maxCX = ctx.worldToChunk(spell.center.x + queryRadius);
+        int minCY = ctx.worldToChunk(spell.center.y - queryRadius);
+        int maxCY = ctx.worldToChunk(spell.center.y + queryRadius);
+        int minCZ = ctx.worldToChunk(spell.center.z - queryRadius);
+        int maxCZ = ctx.worldToChunk(spell.center.z + queryRadius);
 
         for (int cx = minCX; cx <= maxCX; ++cx) {
             for (int cy = minCY; cy <= maxCY; ++cy) {
@@ -1658,9 +1696,10 @@ namespace gl3 {
                                 glm::vec3 worldPos = chunkOrigin + glm::vec3(lx, ly, lz) * VOXEL_SIZE;
                                 float sdfValue = spell.formationParams.evaluate(worldPos);
 
-                                if (sdfValue >= 0.0f) {
-                                    chunk->voxels[lx][ly][lz].density = -1.0f;
-                                    chunk->voxels[lx][ly][lz].type = 0;
+                                if (sdfValue >= -removeMargin) {
+                                    auto& v = chunk->voxels[lx][ly][lz];
+                                    v.density = -1.0f;
+                                    v.type = 0;
                                     chunkModified = true;
                                 }
                             }
@@ -1670,9 +1709,7 @@ namespace gl3 {
                     if (chunkModified) {
                         chunk->meshDirty = true;
                         chunk->lightingDirty = true;
-                        if (ctx.markChunkModified) {
-                            ctx.markChunkModified(coord);
-                        }
+                        ctx.markChunkModified(coord);
                     }
                 }
             }

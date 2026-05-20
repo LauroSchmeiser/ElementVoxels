@@ -18,7 +18,12 @@ namespace gl3 {
 
         // Jumping
         float jumpForce = 55.0f;
-        float gravity = 50.0f;
+        glm::vec3 gravityDir = glm::vec3(0.0f, -1.0f, 0.0f);
+        glm::vec3 lastGravPoint = glm::vec3(0.0f, 0.0f, 0.0f);;
+        float gravity= 10.0f;
+        float gravityMaxIntensity = 50.0f;
+        float gravityMinIntensity = 0.1f;
+
         float terminalVelocity = 750.0f;
         float coyoteTimeDuration = 3.5f;
         float jumpBufferDuration = 0.75f;
@@ -35,6 +40,17 @@ namespace gl3 {
 
         // Ground detection
         float groundCheckDistance = 0.2f;         // How far below character to check for ground
+
+        // Surface landing / adhesion
+        float landingMinApproachSpeed = 0.05f;    // Low threshold for gentle landings
+        float adhesionDuration = 0.5f;
+        float adhesionMaxDistance = 20.0f;
+        float adhesionSnapDistance = 2.0f;        // Can afford larger since detection is tighter
+        float adhesionAcceleration = 0.02f;
+        float minGroundNormalDot = 0.25f;          // More lenient for angled surfaces
+
+        // Camera / orientation smoothing
+        float upLerpSpeed = 3.5f;                 // Medium speed (adaptive logic handles extremes)
     };
 
     struct CharacterState {
@@ -50,6 +66,15 @@ namespace gl3 {
         float coyoteTime = 0.0f;
         float jumpBuffer = 0.0f;
         float airSlamTimer = 0.0f;       // NEW: Air slam duration timer
+
+        // Adhesion / landing state
+        bool isSurfaceAdhered = false;
+        glm::vec3 adheredNormal = glm::vec3(0.0f, 1.0f, 0.0f);
+        glm::vec3 lastGroundPoint = glm::vec3(0.0f);
+        float adhesionTimer = 0.0f;
+
+        // Smoothed orientation up used by movement/camera
+        glm::vec3 currentUp = glm::vec3(0.0f, 1.0f, 0.0f);
     };
 
     class CharacterController {
@@ -61,10 +86,13 @@ namespace gl3 {
 
         FixedGridChunkManager* chunkManager;
         VoxelPhysicsManager* physicsManager;
-
         CharacterState state;
+    public:
         CharacterSettings settings;
 
+        bool isSurfaceAdhered() const { return state.isSurfaceAdhered; }
+
+    private:
         // Collision detection
         bool checkCollision(const glm::vec3& testPosition,
                             glm::vec3& outNormal,
@@ -86,6 +114,12 @@ namespace gl3 {
         // NEW: Air slam functions
         void performAirSlam();
         void updateAirSlam(float deltaTime);
+
+        bool findGroundContact(glm::vec3& outPoint, glm::vec3& outNormal, float& outDistance) const;
+        bool shouldLandOnContact(const glm::vec3& contactNormal) const;
+        void beginSurfaceAdhesion(const glm::vec3& contactPoint, const glm::vec3& contactNormal);
+        void updateSurfaceAdhesion(float deltaTime);
+        void updateOrientation(float deltaTime);
 
     public:
         CharacterController(FixedGridChunkManager *chunkMgr, VoxelPhysicsManager *physicsMgr,
@@ -134,6 +168,11 @@ namespace gl3 {
         bool checkPhysicsBodyCollision(const glm::vec3& testPosition,
                                        glm::vec3& outNormal,
                                        float& outPenetration,VoxelPhysicsBody** outBody) const;
+
+        void setGravityDirection(const glm::vec3& g);
+        glm::vec3 getGravityDirection() const { return settings.gravityDir; }
+        glm::vec3 getUpDirection() const;
+
 
     private:
         PlayerBodyCollisionCallback playerBodyCollisionCallback;

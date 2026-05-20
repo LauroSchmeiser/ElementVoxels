@@ -104,9 +104,9 @@ namespace gl3 {
         glUniformMatrix4fv(uniformLocation, 1, GL_FALSE, glm::value_ptr(matrix));
     }
 
-    void Shader::setVector(const std::string &uniformName, glm::vec4 vector) const {
-        auto uniformLocation = glGetUniformLocation(shaderProgram, uniformName.c_str());
-        glUniform4fv(uniformLocation, 1, glm::value_ptr(vector));
+    void Shader::setVec4(const std::string& uniformName, glm::vec4 vector) const {
+        auto loc = glGetUniformLocation(shaderProgram, uniformName.c_str());
+        glUniform4fv(loc, 1, glm::value_ptr(vector));
     }
 
     void Shader::setVec3(const std::string& uniformName, glm::vec3 vector) const {

@@ -43,9 +43,7 @@ namespace gl3 {
         void setVoxelCollisionCallback(VoxelCollisionCallback cb) { voxelCollisionCallback = cb; }
         void setBodyBodyCollisionCallback(BodyBodyCollisionCallback cb) { bodyBodyCollisionCallback = cb; }
         void removeBody(uint64_t id);
-        void removeBody(VoxelPhysicsBody* body);
         const std::vector<std::unique_ptr<VoxelPhysicsBody>>& getBodies() const { return bodies; }
-
 
         VoxelPhysicsBody* getBodyById(uint64_t id) const;
 

@@ -323,8 +323,8 @@ namespace gl3 {
         characterController = std::make_unique<CharacterController>(
                 chunkManager.get(),
                 voxelPhysics.get(),
-                1.8f,
-                1.0f
+                5.8f,
+                1.5f
         );
 
         //player-body collision callback
@@ -386,6 +386,7 @@ namespace gl3 {
           //  enemyManager->update(deltaTime, cameraPos /* player pos */);
         }
         updatePhysics();
+        updateImpactEffects(deltaTime);
         updateChunkBurns(deltaTime);
 
         mainDispatcher.execute();
@@ -405,6 +406,7 @@ namespace gl3 {
         renderChunks();
         renderAnimatedVoxels();
         renderPhysicsFormations();
+        renderImpactEffects();
         renderEnemies();
         renderSpellPreview();
 
@@ -1139,12 +1141,31 @@ namespace gl3 {
                                 float impactSpeed)
     {
         if (!body) return;
+        std::mt19937 rng(std::random_device{}());
+        std::uniform_real_distribution<float> dist(-0.5f, 0.5f);
+
         uint64_t spellId = (uint64_t)(uintptr_t)body->userData;
         if (auto* spell = spellSystem->findSpellById(spellId)) {
             float mass = spell->physicsBody ? spell->physicsBody->mass : 1.0f;
 
-            createCraterAtPosition(hitPos,glm::sqrt((impactSpeed*mass))/30,glm::sqrt(spell->physicsBody->radius));
-        }
+            float craterStrength = glm::sqrt((impactSpeed * mass)) / 30.0f;
+            float spellRadius = glm::sqrt(glm::max(spell->physicsBody->radius, 0.001f));
+
+            createCraterAtPosition(hitPos, craterStrength, spellRadius);
+
+            // Estimate removed voxels from crater strength
+            float removedVoxelEstimate = craterStrength * 40.0f;
+
+            /*glm::vec3 tint = spell->formationColor;
+            if (glm::length(tint) < 0.001f) {
+                tint = glm::vec3(0.45f, 0.45f, 0.45f);
+            }*/
+            glm::vec3 tint = glm::vec3(0.45f, 0.45f, 0.45f);
+            glm::vec3 variance = glm::vec3(dist(rng));
+            tint+=(spell->formationColor/glm::vec3(5));
+            tint+=variance;
+
+            spawnImpactEffect(hitPos, hitNormal, impactSpeed, removedVoxelEstimate, tint);        }
     }
 
     void Game::createCraterAtPosition(const glm::vec3& worldPos, float impactFactor, float spellRadius) {
@@ -1558,10 +1579,52 @@ namespace gl3 {
         std::cout << "Created " << solidVoxels << " solid voxels\n";
     }
 
+    void Game::setupImpactEffects()
+    {
+        impactShader = std::make_unique<Shader>(
+                "shaders/impact_billboard.vert",
+                "shaders/impact_billboard.frag"
+        );
+
+        ensureImpactQuad();
+        impactParticles.reserve(512);
+    }
+
+    void Game::ensureImpactQuad()
+    {
+        if (impactQuadVAO != 0) return;
+
+        const float quad[] = {
+                // x, y, u, v
+                -0.5f, -0.5f, 0.0f, 0.0f,
+                0.5f, -0.5f, 1.0f, 0.0f,
+                0.5f,  0.5f, 1.0f, 1.0f,
+
+                -0.5f, -0.5f, 0.0f, 0.0f,
+                0.5f,  0.5f, 1.0f, 1.0f,
+                -0.5f,  0.5f, 0.0f, 1.0f
+        };
+
+        glGenVertexArrays(1, &impactQuadVAO);
+        glGenBuffers(1, &impactQuadVBO);
+
+        glBindVertexArray(impactQuadVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, impactQuadVBO);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(quad), quad, GL_STATIC_DRAW);
+
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+
+        glBindVertexArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
 
     void Game::setupVEffects() {
-        sunBillboards.init(12); // maxInstances, adjust based on max expected suns
-
+        sunBillboards.init(12);
+        setupImpactEffects();
     }
 
 
@@ -1592,7 +1655,13 @@ namespace gl3 {
             bool airSlam = actions["AirReset"].isPressed;
 
             glm::vec3 cameraFront = getCameraFront();
-            glm::vec3 cameraRight = glm::normalize(glm::cross(cameraFront, glm::vec3(0,1,0)));
+            glm::vec3 cameraUp = getCameraUp();
+            glm::vec3 cameraRight = glm::cross(cameraFront, cameraUp);
+            if (glm::length(cameraRight) > 1e-5f) {
+                cameraRight = glm::normalize(cameraRight);
+            } else {
+                cameraRight = glm::vec3(1, 0, 0);
+            }
             glm::vec2 mouseDelta = getMouseDelta();
 
             // IMPORTANT: advance simulation with fixedTimeStep/subDt, not deltaTime
@@ -2025,6 +2094,40 @@ namespace gl3 {
 
 ////----Input Code------------------------------------------------------------------------------------------------------------------------------
 
+    void Game::updateImpactEffects(float dt)
+    {
+        for (auto& p : impactParticles) {
+            if (!p.active) continue;
+
+            p.age += dt;
+            if (p.age >= p.lifetime) {
+                p.active = false;
+                continue;
+            }
+
+            // Basic motion
+            p.position += p.velocity * dt;
+
+            // Drag
+            p.velocity *= 0.96f;
+
+            // Gentle upward drift for smoke
+            if (p.kind == 0) {
+                p.velocity += glm::vec3(0.0f, 0.35f * VOXEL_SIZE, 0.0f) * dt;
+            }
+
+            p.rotation += p.rotationSpeed * dt;
+        }
+
+        // compact occasionally
+        impactParticles.erase(
+                std::remove_if(impactParticles.begin(), impactParticles.end(),
+                               [](const ImpactParticle& p) { return !p.active; }),
+                impactParticles.end()
+        );
+    }
+
+
     void Game::update() {
         TRACY_CPU_ZONE("Game::update()");
 
@@ -2060,6 +2163,8 @@ namespace gl3 {
         {
             TRACY_CPU_ZONE("SunBurns()");
             chunkManager->forEachEmissiveChunk([this](Chunk *chunk) {
+            VoxelLight best;
+            float bestGravity=0;
             for (auto &light: chunk->emissiveLights) {
                 glm::vec3 dist=(cameraPos-light.pos);
                 float distsq = glm::sqrt(dist.x*dist.x+ dist.y*dist.y+ dist.z*dist.z);
@@ -2067,7 +2172,24 @@ namespace gl3 {
                 {
                     setPlayerHealth(getPlayerHealth()-0.0075f*distsq);
                 }
+                float gravity = glm::pow(light.intensity,0.5f)-distsq;
+                if(gravity>bestGravity)
+                {
+                    bestGravity=gravity;
+                    best=light;
+                    gravity=glm::clamp(gravity,0.0f,25.0f);
+                    characterController->settings.gravity = gravity;
+                }
             }
+                if(best.pos!=characterController->settings.lastGravPoint&&!characterController->isSurfaceAdhered())
+                {
+                    characterController->settings.lastGravPoint=best.pos;
+                    glm::vec3 gravDir = glm::normalize(best.pos - cameraPos);
+                    characterController->settings.gravityDir = gravDir;
+                    //float pitch = glm::degrees(glm::asin(gravDir.y));
+                    //float yaw = glm::degrees(glm::atan(gravDir.z, gravDir.x));
+                    //cameraRotation = glm::vec2(pitch, yaw);
+                }
         });
         }
 
@@ -2204,14 +2326,27 @@ namespace gl3 {
     }
 
     glm::vec3 Game::getCameraFront() const {
-        glm::vec3 front = glm::vec3(
-                cos(glm::radians(cameraRotation.y)) * cos(glm::radians(cameraRotation.x)),
-                sin(glm::radians(cameraRotation.x)),
-                sin(glm::radians(cameraRotation.y)) * cos(glm::radians(cameraRotation.x))
-        );
-        if (glm::length(front) < 0.001f) front = glm::vec3(0, 0, -1);
-        return glm::normalize(front);
+        glm::vec3 up = getCameraUp();
 
+        glm::vec3 referenceForward = glm::vec3(0.0f, 0.0f, -1.0f);
+        if (std::abs(glm::dot(referenceForward, up)) > 0.98f) {
+            referenceForward = glm::vec3(1.0f, 0.0f, 0.0f);
+        }
+
+        glm::vec3 right = glm::normalize(glm::cross(referenceForward, up));
+        glm::vec3 forwardOnPlane = glm::normalize(glm::cross(up, right));
+
+        float yaw = glm::radians(cameraRotation.y);
+        float pitch = glm::radians(cameraRotation.x);
+
+        glm::vec3 yawed =
+                glm::normalize(forwardOnPlane * std::cos(yaw) + right * std::sin(yaw));
+
+        glm::vec3 pitchAxis = glm::normalize(glm::cross(up, yawed));
+        glm::vec3 front =
+                glm::normalize(yawed * std::cos(pitch) + up * std::sin(pitch));
+
+        return front;
     }
 
 
@@ -2226,7 +2361,11 @@ namespace gl3 {
         if (!skyboxBaked) {
             bakeNebulaCubemap(512);
         }
-        if (!skyboxRuntimeShader) return;
+        if (!skyboxRuntimeShader)
+        {
+            std::cout<<"No skybox shader found";
+            return;
+        }
 
         GLint oldDepthFunc;
         glGetIntegerv(GL_DEPTH_FUNC, &oldDepthFunc);
@@ -2241,8 +2380,8 @@ namespace gl3 {
 
         float aspect = (float)windowWidth / (float)windowHeight;
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
-        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), glm::vec3(0.0f, 1.0f, 0.0f));
-
+        glm::vec3 camUp = getCameraUp();
+        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
         skyboxRuntimeShader->setMatrix("projection", projection);
         skyboxRuntimeShader->setMatrix("view", view);
 
@@ -2270,7 +2409,8 @@ namespace gl3 {
 
         float aspect = (windowHeight == 0) ? (float)windowWidth : (float)windowWidth / (float)windowHeight;
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
-        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), glm::vec3(0.0f, 1.0f, 0.0f));
+        glm::vec3 camUp = getCameraUp();
+        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
         glm::mat4 pv = projection * view;
 
         frameCounter++;
@@ -2445,7 +2585,8 @@ namespace gl3 {
 
         float aspect = (windowHeight == 0) ? (float) windowWidth / 1.0f : (float) windowWidth / (float) windowHeight;
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
-        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), glm::vec3(0.0f, 1.0f, 0.0f));
+        glm::vec3 camUp = getCameraUp();
+        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
         glm::mat4 pv = projection * view;
 
         instancedShader.setMatrix("pv", pv);
@@ -2582,7 +2723,8 @@ namespace gl3 {
         voxelShader->use();
         float aspect = (windowHeight == 0) ? (float) windowWidth / 1.0f : (float) windowWidth / (float) windowHeight;
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
-        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), glm::vec3(0.0f, 1.0f, 0.0f));
+        glm::vec3 camUp = getCameraUp();
+        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
         glm::mat4 pv = projection * view;
 
         voxelShader->setVec3("viewPos", cameraPos);
@@ -2665,7 +2807,8 @@ namespace gl3 {
 
         float aspect = (windowHeight == 0) ? (float)windowWidth : (float)windowWidth / (float)windowHeight;
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
-        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), glm::vec3(0,1,0));
+        glm::vec3 camUp = getCameraUp();
+        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
         glm::mat4 pv = projection * view;
 
         for (auto& e : enemyManager->all()) {
@@ -2689,135 +2832,128 @@ namespace gl3 {
     void Game::renderSpellPreview() {
         TRACY_CPU_ZONE("Game::renderSpellPreview");
         TRACY_GPU_ZONE("SpellPreview");
+
         if (!spellPreviewShader) return;
 
-        // If you only want preview in non-debug or only in debug, gate it here.
-        // For now: always on.
         ensurePreviewCube();
         ensurePreviewSphereMesh();
 
-        // ---- Determine what spell is "armed" (based on your current keybinds) ----
-        // You have:
-        //   E: sphere spell
-        //   R: wall spell
-        //   F: air reset (currently also wall-like in your code)
-        //
-        // For preview, choose one "active preview mode".
-        // Minimal: show sphere if E is held, wall if R held, else none.
-        // If you want "last selected", add a variable and update it in update().
         int previewMode = -1; // -1 none, 0 sphere, 1 wall
-
         if (actions["CastSphere"].isHeld) previewMode = 0;
         else if (actions["CastWall"].isHeld) previewMode = 1;
         else if (actions["AirReset"].isHeld) previewMode = 1;
         else return;
 
-        // ---- Compute placement point (center) from camera raycast ----
-        // Use a longer ray for wall preview
         float maxDist = (previewMode == 0) ? 80.0f : 250.0f;
         RayCastResult hit = rayCastFromCamera(maxDist);
+
+        glm::vec3 cameraFront = glm::normalize(getCameraFront());
+
         glm::vec3 center;
-        if(previewMode==0)
-        {
-            center = hit.hit ? hit.hitPosition : (cameraPos + getCameraFront() * 35.0f);
-        } else
-        {
-            center = hit.hit ? hit.hitPosition+ getCameraFront() * 10.5f :
-                     (cameraPos + getCameraFront() * 10.5f);
+        if (previewMode == 0) {
+            center = hit.hit ? hit.hitPosition
+                             : (cameraPos + cameraFront * 35.0f);
+        } else {
+            center = hit.hit ? (hit.hitPosition + cameraFront * 10.5f)
+                             : (cameraPos + cameraFront * 10.5f);
         }
 
-        // Optional: snap to voxel grid so placement feels stable
-       /* auto snap = [&](float v) {
-            return std::round(v / VOXEL_SIZE) * VOXEL_SIZE;
-        };
-        center = glm::vec3(snap(center.x), snap(center.y), snap(center.z));*/
+        float aspect = (windowHeight == 0)
+                       ? (float)windowWidth
+                       : (float)windowWidth / (float)windowHeight;
 
-        // ---- Build pv (same as other render passes) ----
-        float aspect = (windowHeight == 0) ? (float)windowWidth : (float)windowWidth / (float)windowHeight;
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
-        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), glm::vec3(0.0f, 1.0f, 0.0f));
+        glm::vec3 camUp = getCameraUp();
+        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
         glm::mat4 pv = projection * view;
 
-        // ---- Spell params (match your cast code) ----
-        float formationRadius = 2.0f * VOXEL_SIZE;     // your castSpellSphere uses 4*VOXEL_SIZE
-        float pullRadius      = formationRadius * 6.5f; // your searchRadius behavior
+        float formationRadius = 2.0f * VOXEL_SIZE;
+        float pullRadius = formationRadius * 6.5f;
 
-        // Wall params (match your CastWall in update())
-        glm::vec3 wallNormal=-getCameraFront();
-        glm::vec3 wallUp(0,1,0);
-        glm::vec3 wallSize(3.0f*VOXEL_SIZE, 1.75f*VOXEL_SIZE, 0.35f*VOXEL_SIZE);
+        // Default wall setup
+        glm::vec3 wallNormal = -cameraFront;
+        glm::vec3 wallSize(3.0f * VOXEL_SIZE,
+                           1.75f * VOXEL_SIZE,
+                           0.35f * VOXEL_SIZE);
 
-        // AirReset spell currently also calls castSpellWall with normal (0,-1,0) and tiny dims
-        if (actions["AirReset"].isPressed) {
-            wallNormal = glm::vec3(0,-1,0);
-            wallUp     = glm::vec3(0,0,1); // choose a stable up when normal ~Y
-            wallSize   = glm::vec3(3.0f*VOXEL_SIZE, 1.0f*VOXEL_SIZE, 3.5f*VOXEL_SIZE);
-            pullRadius = 10.0f * 2.0f * VOXEL_SIZE; // your castSpellPlatform searchRadius-ish, but you used wall; pick something visible
-            center = (cameraPos + glm::vec3(0,-1,0) * 4.0f *VOXEL_SIZE);
+        FormationParams wallParams = FormationParams::Wall(
+                center,
+                wallNormal,
+                wallSize.x,
+                wallSize.y,
+                wallSize.z
+        );
+
+        // Air reset override
+        if (actions["AirReset"].isHeld) {
+            center = cameraPos + glm::vec3(0, -1, 0) * (4.0f * VOXEL_SIZE);
+
+            wallParams = FormationParams::Wall(
+                    center,
+                    glm::vec3(0, -1, 0),
+                    3.0f * VOXEL_SIZE,
+                    1.0f * VOXEL_SIZE,
+                    3.5f * VOXEL_SIZE
+            );
+
+            pullRadius = 20.0f * VOXEL_SIZE;
         }
 
-        // ---- Draw state for hologram overlay ----
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-        // Usually looks better not writing depth for translucent overlays
         glDepthMask(GL_FALSE);
 
         spellPreviewShader->use();
 
         float voxelVolume = VOXEL_SIZE * VOXEL_SIZE * VOXEL_SIZE;
         int maxVoxels = (int)((4.0f * 70.0f) / voxelVolume);
-        maxVoxels = glm::clamp(maxVoxels, 5 , 200);
+        maxVoxels = glm::clamp(maxVoxels, 5, 200);
 
         int available = estimateAvailableVoxels(center, pullRadius, 0, maxVoxels);
         float fillRatio = maxVoxels > 0 ? (float)available / (float)maxVoxels : 1.0f;
 
         spellPreviewShader->setFloat("uFillRatio", fillRatio);
-        spellPreviewShader->setVec3("uLowColor",  glm::vec3(1.0f, 0.2f, 0.2f)); // red
-        spellPreviewShader->setVec3("uHighColor", glm::vec3(0.2f, 1.0f, 0.2f)); // green
+        spellPreviewShader->setVec3("uLowColor", glm::vec3(1.0f, 0.2f, 0.2f));
+        spellPreviewShader->setVec3("uHighColor", glm::vec3(0.2f, 1.0f, 0.2f));
 
         spellPreviewShader->setMatrix("pv", pv);
-        spellPreviewShader->setVec3("uCenter", center);
         spellPreviewShader->setFloat("uVoxelSize", VOXEL_SIZE);
-
-
-        spellPreviewShader->setVec3("uFormationColor", glm::vec3(0.2f, 0.8f, 1.0f));
         spellPreviewShader->setFloat("uFormationAlpha", 0.35f);
 
-        // ---- Draw formation preview ----
         if (previewMode == 0) {
-            // Sphere: use sphere mesh
             spellPreviewShader->setInt("uPreviewMode", 0);
             spellPreviewShader->setFloat("uFormationRadius", formationRadius);
+            spellPreviewShader->setVec3("uWallSize", glm::vec3(1.0f));
 
-            // model = translate(center) * scale(radius)
             glm::mat4 model(1.0f);
             model = glm::translate(model, center);
             model = glm::scale(model, glm::vec3(formationRadius));
             spellPreviewShader->setMatrix("model", model);
 
-            // wall uniforms still must be set (safe defaults)
-            spellPreviewShader->setVec3("uWallNormal", glm::vec3(0,0,1));
-            spellPreviewShader->setVec3("uWallUp", glm::vec3(0,1,0));
-            spellPreviewShader->setVec3("uWallSize", glm::vec3(1));
-
             glBindVertexArray(previewSphereVAO);
             glDrawElements(GL_TRIANGLES, previewSphereIndexCount, GL_UNSIGNED_INT, 0);
             glBindVertexArray(0);
         } else {
-            // Wall: draw cube proxy scaled to wallSize
             spellPreviewShader->setInt("uPreviewMode", 1);
-            spellPreviewShader->setFloat("uFormationRadius", formationRadius); // unused for wall
+            spellPreviewShader->setFloat("uFormationRadius", 1.0f);
+            spellPreviewShader->setVec3("uWallSize", glm::vec3(wallParams.sizeX, wallParams.sizeY, wallParams.sizeZ));
 
-            spellPreviewShader->setVec3("uWallNormal", wallNormal);
-            spellPreviewShader->setVec3("uWallUp", wallUp);
-            spellPreviewShader->setVec3("uWallSize", wallSize);
+            glm::vec3 forward = glm::normalize(wallParams.normal);
+            glm::vec3 up = glm::normalize(wallParams.up);
+            glm::vec3 right = glm::normalize(glm::cross(forward, up));
+            up = glm::normalize(glm::cross(right, forward));
 
-            // For now: model is just translate(center) (orientation is handled in fragment SDF)
-            // But the mesh still must cover the region. Use a cube scaled to wall size.
+            glm::mat4 rot(1.0f);
+            rot[0] = glm::vec4(right,   0.0f);
+            rot[1] = glm::vec4(up,      0.0f);
+            rot[2] = glm::vec4(forward, 0.0f);
+
             glm::mat4 model(1.0f);
-            model = glm::translate(model, center);
-            model = glm::scale(model, wallSize);
+            model = glm::translate(glm::mat4(1.0f), wallParams.center)
+                    * rot
+                    * glm::scale(glm::mat4(1.0f),
+                                 glm::vec3(wallParams.sizeX, wallParams.sizeY, wallParams.sizeZ));
+
             spellPreviewShader->setMatrix("model", model);
 
             glBindVertexArray(previewCubeVAO);
@@ -2825,11 +2961,64 @@ namespace gl3 {
             glBindVertexArray(0);
         }
 
-        // restore state
         glDepthMask(GL_TRUE);
         glDisable(GL_BLEND);
     }
 
+    void Game::renderImpactEffects()
+    {
+        TRACY_CPU_ZONE("Game::renderImpactEffects");
+        TRACY_GPU_ZONE("ImpactEffects");
+
+        if (!impactShader || impactParticles.empty()) return;
+
+        glm::vec3 cameraFront = getCameraFront();
+        glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
+        glm::vec3 cameraRight = glm::normalize(glm::cross(cameraFront, worldUp));
+        glm::vec3 cameraUp = glm::normalize(glm::cross(cameraRight, cameraFront));
+
+        float aspect = (windowHeight == 0) ? (float)windowWidth : (float)windowWidth / (float)windowHeight;
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
+        glm::vec3 camUp = getCameraUp();
+        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
+
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDepthMask(GL_FALSE);
+        glEnable(GL_DEPTH_TEST);
+
+        impactShader->use();
+        impactShader->setMatrix("view", view);
+        impactShader->setMatrix("projection", projection);
+        impactShader->setVec3("uCameraRight", cameraRight);
+        impactShader->setVec3("uCameraUp", cameraUp);
+
+        glBindVertexArray(impactQuadVAO);
+
+        for (const auto& p : impactParticles) {
+            if (!p.active) continue;
+
+            float t = glm::clamp(p.age / glm::max(0.0001f, p.lifetime), 0.0f, 1.0f);
+            float size = glm::mix(p.startSize, p.endSize, t);
+
+            glm::vec4 color = p.color;
+            color.a *= (1.0f - t);
+
+            impactShader->setVec3("uWorldPos", p.position);
+            impactShader->setFloat("uSize", size);
+            impactShader->setFloat("uRotation", p.rotation);
+            impactShader->setVec4("uColor", color);
+            impactShader->setInt("uKind", (int)p.kind);
+            impactShader->setFloat("uLife01", t);
+
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+        }
+
+        glBindVertexArray(0);
+
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+    }
 //------Marching Cubes-Code---------------------------------------------------------------------------------------------------------------------
 
     void Game::generateChunkMesh(Chunk* chunk)
@@ -3294,76 +3483,54 @@ namespace gl3 {
         {
             setPlayerHealth(getPlayerHealth()-0.2f);
         }
-        // Desired camera offset behind the player (tweak this)
-        const float cameraFollowDistance = 1.75f * VOXEL_SIZE; // how far behind the head
-        const float cameraHeightOffset = 2.5f*VOXEL_SIZE;                // extra vertical offset if needed
-        glm::vec3 viewDir = getCameraFront();
-        glm::vec3 desiredCam = headPos - viewDir * cameraFollowDistance + glm::vec3(0.0f, cameraHeightOffset, 0.0f);
-        // Camera collision params
-        const float cameraRadius = 0.35f * VOXEL_SIZE; // radius of camera sphere
-        const float skinWidth = 0.02f * VOXEL_SIZE;   // small gap to keep off surface
-        const int steps = glm::max(4, (int)std::ceil(glm::length(desiredCam - headPos) / (VOXEL_SIZE * 0.25f)));
-        // Walk from headPos outward toward desiredCam and find first penetration
-        glm::vec3 safePos = headPos; // starts at head (should be non-penetrating)
-        bool collided = false;
-        glm::vec3 collidedNormal(0.0f);
-        for (int i = 1; i <= steps; ++i) {
-            float t = (float)i / (float)steps;
-                    glm::vec3 samplePos = glm::mix(headPos, desiredCam, t);
-                    float sdf = sampleDensityAtWorld(samplePos); // positive = inside solid
-                    float sphereSigned = sdf - cameraRadius;     // positive => penetration
-            if (sphereSigned > 0.0f) {
-                            // penetration at this sample -- step back to previous safe sample and push out
-                                    collided = true;
-                            // previous sample (clamped)
-                                    float prevT = (float)(i - 1) / (float)steps;
-                            glm::vec3 prevPos = glm::mix(headPos, desiredCam, prevT);
-                            // get normal at collision location (best attempt)
-                                    glm::vec3 n = sampleNormalAtWorld(samplePos);
-                            if (glm::length(n) < 1e-6f) n = glm::vec3(0,1,0);
-                            collidedNormal = glm::normalize(n);
-                            // place camera at prevPos plus offset OUT of surface
-                                    safePos = prevPos + collidedNormal * (cameraRadius + skinWidth);
-                            break;
-                        } else {
-                            safePos = samplePos; // this sample is safe; remember it
-                        }
-                }
 
-                    // If we never collided, but desiredCam is safe then use desiredCam (we already set safePos along the loop)
-                    // If we started inside geometry (rare), project outward using normal at headPos#//
-                    if (!collided) {
-                    float headSdf = sampleDensityAtWorld(safePos);
-                    float headSphereSigned = headSdf - cameraRadius;
-                    if (headSphereSigned > 0.0f) {
-                            glm::vec3 n = sampleNormalAtWorld(safePos);
-                            safePos = safePos + glm::normalize(n) * (headSphereSigned + skinWidth);
-                        }
-               }
+        // Get character's current orientation
+        glm::vec3 characterUp = characterController->getUpDirection();
 
-                    // Smooth camera movement to reduce snapping (tweak lerp factor)
-                            const float smoothingLerp = 0.55f; // 0 => no smoothing (immediate), <1 => smooth
-            cameraPos = glm::mix(cameraPos, safePos, smoothingLerp);
+        // Mouse input updates pitch/yaw as normal
+        glm::vec2 mouseDelta = getMouseDelta();
+        if (!paused && glm::length(mouseDelta) > 0.001f) {
+            cameraRotation.y += mouseDelta.x * cameraSensitivity; // yaw
+            cameraRotation.x -= mouseDelta.y * cameraSensitivity; // pitch (NOTE: negated to fix inversion)
 
-                    // Finally update camera rotation based on cursor
-                            double xpos, ypos;
-            glfwGetCursorPos(window, &xpos, &ypos);
-            static double lastX = xpos, lastY = ypos;
-
-                    float sensitivity = 0.1f;
-            float dx = (xpos - lastX) * sensitivity;
-            float dy = (lastY - ypos) * sensitivity; // invert Y movement
-
-                    cameraRotation.y += dx; // yaw
-           cameraRotation.x += dy; // pitch
-
-                    // Clamp pitch to avoid gimbal lock
-                            if (cameraRotation.x > 89.0f) cameraRotation.x = 89.0f;
-           if (cameraRotation.x < -89.0f) cameraRotation.x = -89.0f;
-
-                    lastX = xpos;
-            lastY = ypos;
+            // Clamp pitch to prevent gimbal lock
+            cameraRotation.x = glm::clamp(cameraRotation.x, -89.0f, 89.0f);
         }
+
+        // Build camera basis in CHARACTER'S local space
+        // Start with world forward based on yaw
+        float yawRad = glm::radians(cameraRotation.y);
+        glm::vec3 worldForward(
+                cos(yawRad),
+                0.0f,
+                sin(yawRad)
+        );
+
+        // Project forward onto character's tangent plane (perpendicular to up)
+        glm::vec3 localForward = worldForward - characterUp * glm::dot(worldForward, characterUp);
+        if (glm::length(localForward) < 0.001f) {
+            // Edge case: looking straight up/down relative to surface
+            // Use a stable fallback
+            glm::vec3 worldRight = glm::vec3(-sin(yawRad), 0.0f, cos(yawRad));
+            localForward = glm::cross(characterUp, worldRight);
+        }
+        localForward = glm::normalize(localForward);
+
+        // Calculate right vector in local space
+        glm::vec3 localRight = glm::normalize(glm::cross(localForward, characterUp));
+
+        // Apply pitch rotation using quaternion properly
+        float pitchRad = glm::radians(cameraRotation.x);
+        glm::quat pitchQuat = glm::angleAxis(pitchRad, localRight);
+        glm::vec3 cameraForward = pitchQuat * localForward;
+
+        // Update camera position
+        cameraPos = characterController->getCameraPosition();
+
+        // Store for use in character controller update
+        this->cameraForward = cameraForward;
+        this->cameraRight = localRight;
+    }
 
     void Game::setupSkybox() {
         // Create shader
@@ -3654,4 +3821,155 @@ namespace gl3 {
         //spellCastAsync->enqueueOrReplaceQueued(std::move(req));
     }
 
+    ///Impact Effects::
+    void Game::spawnImpactEffect(const glm::vec3& hitPos,
+                                 const glm::vec3& hitNormal,
+                                 float impactSpeed,
+                                 float removedVoxelEstimate,
+                                 const glm::vec3& tint)
+    {
+        // Normalize impact into 0..1-ish range
+        float strength01 = glm::clamp(impactSpeed / (12.0f * VOXEL_SIZE), 0.0f, 1.0f);
+
+        // Let voxel removal contribute too
+        float removal01 = glm::clamp(removedVoxelEstimate / 80.0f, 0.0f, 1.0f);
+
+        float combined = glm::clamp(strength01 * 0.7f + removal01 * 0.3f, 0.0f, 1.0f);
+
+        if (combined < 0.25f) {
+            spawnImpactPresetSmall(hitPos, hitNormal, combined, tint);
+            //spawnImpactPresetMedium(hitPos, hitNormal, combined, tint);
+            //spawnImpactPresetLarge(hitPos, hitNormal, combined, tint);
+        } else if (combined < 0.65f) {
+            //spawnImpactPresetSmall(hitPos, hitNormal, combined, tint);
+            spawnImpactPresetMedium(hitPos, hitNormal, combined, tint);
+            //spawnImpactPresetLarge(hitPos, hitNormal, combined, tint);
+        } else {
+            //spawnImpactPresetSmall(hitPos, hitNormal, combined, tint);
+            //spawnImpactPresetMedium(hitPos, hitNormal, combined, tint);
+            spawnImpactPresetLarge(hitPos, hitNormal, combined, tint);
+
+        }
+    }
+
+    void Game::spawnImpactPresetSmall(const glm::vec3& hitPos,
+                                      const glm::vec3& hitNormal,
+                                      float strength01,
+                                      const glm::vec3& tint)
+    {
+        const int count = 6 + (int)(strength01 * 6.0f);
+
+        for (int i = 0; i < count; ++i) {
+            float rx = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f;
+            float ry = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f;
+            float rz = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f;
+
+            glm::vec3 randDir = glm::normalize(glm::vec3(rx, ry, rz) + hitNormal * 1.5f);
+
+            ImpactParticle p;
+            p.position = hitPos + hitNormal * (0.9f * VOXEL_SIZE);
+            p.velocity = randDir * glm::mix(1.0f, 3.5f, strength01) * VOXEL_SIZE;
+            p.color = glm::vec4(tint, 0.0125f);
+            p.age = 0.0f;
+            p.lifetime = glm::mix(0.25f, 0.55f, strength01);
+            p.startSize = 0.35f * VOXEL_SIZE;
+            p.endSize = glm::mix(1.2f, 2.6f, strength01) * VOXEL_SIZE;
+            p.rotation = ((float)rand() / (float)RAND_MAX) * glm::two_pi<float>();
+            p.rotationSpeed = (((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f) * 2.0f;
+            p.kind = 0;
+            impactParticles.push_back(p);
+        }
+    }
+
+    void Game::spawnImpactPresetMedium(const glm::vec3& hitPos,
+                                       const glm::vec3& hitNormal,
+                                       float strength01,
+                                       const glm::vec3& tint)
+    {
+        const int smokeCount = 14 + (int)(strength01 * 10.0f);
+
+        for (int i = 0; i < smokeCount; ++i) {
+            float rx = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f;
+            float ry = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f;
+            float rz = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f;
+
+            glm::vec3 randDir = glm::normalize(glm::vec3(rx, ry, rz) + hitNormal * 1.8f);
+
+            ImpactParticle p;
+            p.position = hitPos + hitNormal * (1.1f * VOXEL_SIZE);
+            p.velocity = randDir * glm::mix(2.0f, 5.0f, strength01) * VOXEL_SIZE;
+            p.color = glm::vec4(tint * 0.95f, 0.025f);
+            p.age = 0.0f;
+            p.lifetime = glm::mix(0.45f, 1.5f, strength01);
+            p.startSize = 0.45f * VOXEL_SIZE;
+            p.endSize = glm::mix(2.0f, 4.5f, strength01) * VOXEL_SIZE;
+            p.rotation = ((float)rand() / (float)RAND_MAX) * glm::two_pi<float>();
+            p.rotationSpeed = (((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f) * 2.5f;
+            p.kind = 0;
+            impactParticles.push_back(p);
+        }
+
+        // add quick flash
+        ImpactParticle flash;
+        flash.position = hitPos + hitNormal * (1.1f * VOXEL_SIZE);
+        flash.velocity = glm::vec3(0.0f);
+        flash.color = glm::vec4(1.0f, 0.85f, 0.55f, 0.80f);
+        flash.age = 0.0f;
+        flash.lifetime = 0.2f;
+        flash.startSize = 1.0f * VOXEL_SIZE;
+        flash.endSize = 3.5f * VOXEL_SIZE;
+        flash.rotation = 0.0f;
+        flash.rotationSpeed = 0.0f;
+        flash.kind = 1;
+        impactParticles.push_back(flash);
+    }
+
+    void Game::spawnImpactPresetLarge(const glm::vec3& hitPos,
+                                      const glm::vec3& hitNormal,
+                                      float strength01,
+                                      const glm::vec3& tint)
+    {
+        const int smokeCount = 26 + (int)(strength01 * 24.0f);
+
+        for (int i = 0; i < smokeCount; ++i) {
+            float rx = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f;
+            float ry = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f;
+            float rz = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f;
+
+            glm::vec3 randDir = glm::normalize(glm::vec3(rx, ry, rz) + hitNormal * 2.0f);
+
+            ImpactParticle p;
+            p.position = hitPos + hitNormal * (0.6f * VOXEL_SIZE);
+            p.velocity = randDir * glm::mix(3.0f, 7.5f, strength01) * VOXEL_SIZE;
+            p.color = glm::vec4(tint * 0.9f, 0.05f);
+            p.age = 0.0f;
+            p.lifetime = glm::mix(0.75f, 1.6f, strength01);
+            p.startSize = 0.6f * VOXEL_SIZE;
+            p.endSize = glm::mix(3.0f, 7.0f, strength01) * VOXEL_SIZE;
+            p.rotation = ((float)rand() / (float)RAND_MAX) * glm::two_pi<float>();
+            p.rotationSpeed = (((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f) * 3.0f;
+            p.kind = 0;
+            impactParticles.push_back(p);
+        }
+
+        ImpactParticle flash;
+        flash.position = hitPos;
+        flash.velocity = glm::vec3(0.0f);
+        flash.color = glm::vec4(1.0f, 0.75f, 0.45f, 0.95f);
+        flash.age = 0.0f;
+        flash.lifetime = 0.16f;
+        flash.startSize = 1.5f * VOXEL_SIZE;
+        flash.endSize = 5.5f * VOXEL_SIZE;
+        flash.rotation = 0.0f;
+        flash.rotationSpeed = 0.0f;
+        flash.kind = 1;
+        impactParticles.push_back(flash);
+    }
+
+    glm::vec3 Game::getCameraUp() const {
+        if (characterController) {
+            return characterController->getUpDirection();
+        }
+        return glm::vec3(0.0f, 1.0f, 0.0f);
+    }
 }

@@ -185,7 +185,7 @@ namespace gl3 {
 
         // Capsule center segment
         float halfSegment = glm::max(0.0f, (currentHeight * 0.5f) - radius);
-        glm::vec3 up(0.0f, 1.0f, 0.0f);
+        glm::vec3 up = getUpDirection();
         glm::vec3 p0 = testPosition - up * halfSegment; // bottom
         glm::vec3 p1 = testPosition + up * halfSegment; // top
         float segmentLength = glm::length(p1 - p0);
@@ -238,49 +238,63 @@ namespace gl3 {
         return true;
     }
 
-    // NEW: Check if we're standing on ground by testing multiple points under the character
     bool CharacterController::checkIfGrounded() const {
         if (!chunkManager) return false;
 
-        // Test multiple points under the character for better detection
-        const float groundCheckDistance = radius * 0.5f;
-        const int numChecks = 5;
+        glm::vec3 up = state.isSurfaceAdhered ? glm::normalize(state.adheredNormal)
+                                              : getUpDirection();
+        glm::vec3 down = -up;
 
-        // Points to test (center + 4 corners in a square pattern)
+        // Calculate tangent vectors for radial checks
+        glm::vec3 tangentA;
+        if (std::abs(up.y) < 0.99f)
+            tangentA = glm::normalize(glm::cross(up, glm::vec3(0,1,0)));
+        else
+            tangentA = glm::normalize(glm::cross(up, glm::vec3(1,0,0)));
+
+        glm::vec3 tangentB = glm::normalize(glm::cross(up, tangentA));
+
+        // Check from bottom sphere center
+        float halfSegment = glm::max(0.0f, (currentHeight * 0.5f) - radius);
+        glm::vec3 bottomSphereCenter = state.position - up * halfSegment;
+
+        const float groundCheckDistance = radius * 0.35f; // Check slightly below bottom
+        const float sideOffset = radius * 0.6f;
+
         glm::vec3 testPoints[] = {
-                state.position - glm::vec3(0, currentHeight * 0.5f + groundCheckDistance, 0), // Center
-                state.position + glm::vec3(radius * 0.7f, -currentHeight * 0.5f - groundCheckDistance, radius * 0.7f),
-                state.position + glm::vec3(-radius * 0.7f, -currentHeight * 0.5f - groundCheckDistance, radius * 0.7f),
-                state.position + glm::vec3(radius * 0.7f, -currentHeight * 0.5f - groundCheckDistance, -radius * 0.7f),
-                state.position + glm::vec3(-radius * 0.7f, -currentHeight * 0.5f - groundCheckDistance, -radius * 0.7f)
+                bottomSphereCenter + down * groundCheckDistance,
+                bottomSphereCenter + down * groundCheckDistance + tangentA * sideOffset,
+                bottomSphereCenter + down * groundCheckDistance - tangentA * sideOffset,
+                bottomSphereCenter + down * groundCheckDistance + tangentB * sideOffset,
+                bottomSphereCenter + down * groundCheckDistance - tangentB * sideOffset
         };
 
         int groundHits = 0;
-        float requiredHits = 2; // Need at least 2 points to be on ground
+        const int requiredHits = 2;
 
-        for (int i = 0; i < numChecks; i++) {
-            glm::vec3 normal;
-            float penetration;
+        for (const glm::vec3& p : testPoints) {
+            float sdf = sampleDensityAtWorld(chunkManager, p);
 
-            // Check collision at test point
-            if (checkCollision(testPoints[i], normal, penetration)) {
-                // Check if normal is mostly upward (ground-like surface)
-                if (normal.y > 0.3f) {
-                    groundHits++;
+            // If the point is inside or very close to the surface
+            if (sdf > -VOXEL_SIZE * 0.1f) {
+                glm::vec3 normal = sampleNormalAtWorld(chunkManager, p);
+                if (glm::dot(normal, up) > 0.25f) { // Slightly more lenient
+                    ++groundHits;
+                    if (groundHits >= requiredHits) return true;
                 }
-            }
-
-            // Early exit if we already have enough hits
-            if (groundHits >= requiredHits) {
-                return true;
             }
         }
 
-        return groundHits >= requiredHits;
+        return false;
     }
 
+
     glm::vec3 CharacterController::getCameraPosition() const {
-        return state.position + glm::vec3(0.0f, getEyeHeight(), 0.0f);
+        glm::vec3 up = getUpDirection();
+
+        float eyeOffset = getEyeHeight();
+
+        return state.position + up * eyeOffset;
     }
 
     void CharacterController::resolveCollisions() {
@@ -293,19 +307,38 @@ namespace gl3 {
 
             // Check voxel world collision
             if (checkCollision(state.position, normal, penetration)) {
-                state.position += normal * (penetration + 0.0001f);
+                state.position += normal * (penetration + VOXEL_SIZE * 0.01f);
 
                 float velDotNormal = glm::dot(state.velocity, normal);
                 if (velDotNormal < 0) {
                     state.velocity -= normal * velDotNormal;
                 }
 
-                if (normal.y > 0.5f && checkIfGrounded()) {
-                    state.isGrounded = true;
-                    state.coyoteTime = settings.coyoteTimeDuration;
-                    state.airSlamAvailable = true;
+                // FIXED: Calculate proper contact point on the capsule surface
+                glm::vec3 up = getUpDirection();
+                float halfSegment = glm::max(0.0f, (currentHeight * 0.5f) - radius);
+
+                // Project normal onto the capsule to find contact point
+                glm::vec3 bottomSphereCenter = state.position - up * halfSegment;
+                glm::vec3 topSphereCenter = state.position + up * halfSegment;
+
+                // Find closest point on capsule segment to collision normal direction
+                glm::vec3 capsuleDir = topSphereCenter - bottomSphereCenter;
+                float capsuleLength = glm::length(capsuleDir);
+
+                glm::vec3 contactPoint;
+                if (capsuleLength > 1e-6f) {
+                    capsuleDir /= capsuleLength;
+                    float t = glm::clamp(glm::dot(-normal, capsuleDir), 0.0f, 1.0f);
+                    glm::vec3 closestOnSegment = glm::mix(bottomSphereCenter, topSphereCenter, t);
+                    contactPoint = closestOnSegment - normal * radius;
+                } else {
+                    contactPoint = state.position - normal * radius;
                 }
 
+                if (shouldLandOnContact(normal)) {
+                    beginSurfaceAdhesion(contactPoint, normal);
+                }
                 collided = true;
             }
 
@@ -334,8 +367,10 @@ namespace gl3 {
     glm::vec3 CharacterController::calculateWishVelocity(const glm::vec3 &moveInput,
                                                          const glm::vec3 &forward,
                                                          const glm::vec3 &right) const {
+        glm::vec3 up = getUpDirection();
         glm::vec3 wishDir = (forward * moveInput.z) + (right * moveInput.x);
-        wishDir.y = 0.0f;
+
+        wishDir -= up * glm::dot(wishDir, up);
 
         if (glm::length(wishDir) > 0.001f) {
             wishDir = glm::normalize(wishDir);
@@ -380,16 +415,21 @@ namespace gl3 {
     void CharacterController::move(float deltaTime) {
         // Apply gravity (with air slam modifier)
         float gravityMultiplier = 1.0f;
+        float velAlongGravity = glm::dot(state.velocity, settings.gravityDir);
         if (state.isAirSlamming) {
             gravityMultiplier = settings.airSlamGravityMultiplier;
-        } else if (!state.isGrounded && state.velocity.y < 0) {
-            // Apply falling gravity multiplier for faster falling
+        } else if (!state.isGrounded && velAlongGravity > 0.0f) {
             gravityMultiplier = settings.fallingGravityMultiplier;
         }
 
         if (!state.isGrounded) {
-            state.velocity.y -= settings.gravity * gravityMultiplier * deltaTime;
-            state.velocity.y = glm::max(state.velocity.y, -settings.terminalVelocity);
+            state.velocity += settings.gravityDir * settings.gravity * gravityMultiplier * deltaTime;
+
+            float alongGrav = glm::dot(state.velocity, settings.gravityDir);
+            if (alongGrav > settings.terminalVelocity) {
+                glm::vec3 lateral = state.velocity - settings.gravityDir * alongGrav;
+                state.velocity = lateral + settings.gravityDir * settings.terminalVelocity;
+            }
         }
 
         // Update position with collision sliding
@@ -420,22 +460,30 @@ namespace gl3 {
             }
         }
 
+        // ONLY snap to ground if moving fast enough (prevents standing jank)
+        if (state.isGrounded && glm::length(state.velocity) > 1.0f) {
+            glm::vec3 gp, gn;
+            float gd = 0.0f;
+            if (findGroundContact(gp, gn, gd) && gd > 0.001f && gd <= settings.adhesionSnapDistance) {
+                newPosition -= getUpDirection() * gd;
+            }
+        }
+
         state.position = newPosition;
     }
 
-    // NEW: Perform air slam
     void CharacterController::performAirSlam() {
         if (!state.isGrounded && state.airSlamAvailable && !state.isAirSlamming) {
             state.isAirSlamming = true;
             state.airSlamAvailable = false;
 
-            // Cancel upward velocity and apply strong downward force
-            if (state.velocity.y > 0) {
-                state.velocity.y = 0;
-                state.velocity.y = -settings.airSlamInitialVelocity;
+            glm::vec3 down = settings.gravityDir;
+            float velDown = glm::dot(state.velocity, down);
+
+            if (velDown < settings.airSlamInitialVelocity) {
+                state.velocity += down * (settings.airSlamInitialVelocity - velDown);
             }
 
-            // Start slam timer
             state.airSlamTimer = settings.airSlamDuration;
         }
     }
@@ -483,6 +531,9 @@ namespace gl3 {
         // Update air slam state
         updateAirSlam(deltaTime);
 
+        updateSurfaceAdhesion(deltaTime);
+        updateOrientation(deltaTime);
+
         // Handle crouching
         bool wantsCrouch = crouchInput;
         if (wantsCrouch != state.isCrouching) {
@@ -498,9 +549,13 @@ namespace gl3 {
         float targetSpeed = state.isCrouching ? settings.crouchSpeed :
                             (state.isSprinting ? settings.sprintSpeed : settings.walkSpeed);
 
-        // Get camera-relative movement vectors
-        glm::vec3 forward = glm::normalize(glm::vec3(cameraForward.x, 0.0f, cameraForward.z));
-        glm::vec3 right = glm::normalize(glm::vec3(cameraRight.x, 0.0f, cameraRight.z));
+        glm::vec3 up = getUpDirection();
+
+        glm::vec3 forward = cameraForward - up * glm::dot(cameraForward, up);
+        glm::vec3 right = cameraRight - up * glm::dot(cameraRight, up);
+
+        if (glm::length(forward) > 1e-6f) forward = glm::normalize(forward);
+        if (glm::length(right) > 1e-6f) right = glm::normalize(right);
 
         // Calculate wish velocity
         glm::vec3 wishDir = calculateWishVelocity(moveInput, forward, right);
@@ -515,11 +570,18 @@ namespace gl3 {
 
         // Handle jumping (can't jump while air slamming)
         if (!state.isAirSlamming && state.jumpBuffer > 0.0f && state.coyoteTime > 0.0f) {
-            state.velocity.y = settings.jumpForce;
+            glm::vec3 up = getUpDirection();
+
+            float velUp = glm::dot(state.velocity, up);
+            if (velUp < settings.jumpForce) {
+                state.velocity += up * (settings.jumpForce - velUp);
+            }
+
             state.isGrounded = false;
+            state.isSurfaceAdhered = false;
             state.jumpBuffer = 0.0f;
             state.coyoteTime = 0.0f;
-            state.airSlamAvailable = true; // Allow air slam after jumping
+            state.airSlamAvailable = true;
         }
 
         // Move character
@@ -528,22 +590,40 @@ namespace gl3 {
         // Resolve collisions
         resolveCollisions();
 
-        // NEW: Better ground detection after movement
-        // Check if we've walked off a platform
-        if (state.isGrounded) {
-            // Perform more thorough ground check
+        updateOrientation(deltaTime);
+
+        if (state.isSurfaceAdhered) {
             bool stillGrounded = checkIfGrounded();
 
             if (!stillGrounded) {
                 state.isGrounded = false;
-                state.coyoteTime = settings.coyoteTimeDuration; // Give coyote time
+                state.isSurfaceAdhered = false;
+                state.coyoteTime = settings.coyoteTimeDuration;
+            } else {
+                glm::vec3 gp, gn;
+                float gd = 0.0f;
+                if (findGroundContact(gp, gn, gd)) {
+                    state.lastGroundPoint = gp;
+                    state.adheredNormal = glm::normalize(gn);
+                    state.isGrounded = true;
+                    setGravityDirection(-state.adheredNormal);
+                }
             }
         } else {
-            // Check if we've landed
-            if (checkIfGrounded() && state.velocity.y <= 0) {
-                state.isGrounded = true;
-                state.velocity.y = glm::max(state.velocity.y, 0.0f);
-                state.airSlamAvailable = true; // Reset air slam
+            float velDown = glm::dot(state.velocity, settings.gravityDir);
+
+            if (checkIfGrounded() && velDown >= 0.0f) {
+                glm::vec3 gp, gn;
+                float gd = 0.0f;
+                if (findGroundContact(gp, gn, gd)) {
+                    beginSurfaceAdhesion(gp, gn);
+
+                    glm::vec3 up = glm::normalize(gn);
+                    float velUp = glm::dot(state.velocity, up);
+                    if (velUp < 0.0f) {
+                        state.velocity -= up * velUp;
+                    }
+                }
             }
         }
     }
@@ -556,7 +636,7 @@ namespace gl3 {
     ) const {
         if (!physicsManager) return false;
 
-        glm::vec3 up(0.0f, 1.0f, 0.0f);
+        glm::vec3 up = getUpDirection();
         float halfSegment = glm::max(0.0f, (currentHeight * 0.5f) - radius);
         glm::vec3 p0 = testPosition - up * halfSegment;
         glm::vec3 p1 = testPosition + up * halfSegment;
@@ -610,4 +690,180 @@ namespace gl3 {
         if (outBody) *outBody = bestBody;
         return true;
     }
+
+    void CharacterController::setGravityDirection(const glm::vec3& g)
+    {
+        if (glm::length(g) < 1e-6f) return;
+        settings.gravityDir = glm::normalize(g);
+    }
+
+    glm::vec3 CharacterController::getUpDirection() const
+    {
+        if (glm::length(state.currentUp) < 1e-5f) {
+            return -settings.gravityDir;
+        }
+        return glm::normalize(state.currentUp);
+    }
+
+
+    bool CharacterController::findGroundContact(glm::vec3& outPoint, glm::vec3& outNormal, float& outDistance) const {
+        if (!chunkManager) return false;
+
+        glm::vec3 up = getUpDirection();
+        glm::vec3 down = -up;
+
+        float halfSegment = glm::max(0.0f, (currentHeight * 0.5f) - radius);
+        glm::vec3 bottomSphereCenter = state.position - up * halfSegment;
+
+        const float maxDist = settings.adhesionSnapDistance;
+        const int steps = 16; // Even more precision
+
+        float bestDist = std::numeric_limits<float>::infinity();
+        bool found = false;
+        glm::vec3 bestPoint, bestNormal;
+
+        for (int i = 0; i <= steps; ++i) {
+            float t = (float)i / (float)steps;
+            float d = t * maxDist;
+
+            glm::vec3 samplePos = bottomSphereCenter + down * d;
+            float sdf = sampleDensityAtWorld(chunkManager, samplePos);
+
+            // Surface band: accept samples near zero crossing (sphere just touching surface)
+            // sdf = distance to surface from sample point
+            // We want: sdf ≈ radius (sphere touching surface from outside)
+            float distToSurface = sdf - radius;
+
+            // Accept if within tight band around surface
+            if (distToSurface >= -VOXEL_SIZE * 0.15f && distToSurface <= VOXEL_SIZE * 0.25f) {
+                glm::vec3 n = sampleNormalAtWorld(chunkManager, samplePos);
+
+                if (glm::dot(n, up) >= settings.minGroundNormalDot) {
+                    // Prefer the sample closest to ideal zero-crossing
+                    float surfaceError = std::abs(distToSurface);
+                    if (surfaceError < std::abs(bestDist)) {
+                        bestDist = d;
+                        bestPoint = samplePos;
+                        bestNormal = n;
+                        found = true;
+                    }
+                }
+            }
+        }
+
+        if (found) {
+            // Project bestPoint onto actual surface (improve accuracy)
+            // The sample might be slightly off; trace to true surface
+            float sdf = sampleDensityAtWorld(chunkManager, bestPoint);
+            glm::vec3 normal = sampleNormalAtWorld(chunkManager, bestPoint);
+
+            // Move sample to exact surface (where SDF = radius)
+            float correction = sdf - radius;
+            bestPoint -= normal * correction;
+
+            outPoint = bestPoint;
+            outNormal = bestNormal;
+            outDistance = bestDist;
+        }
+
+        return found;
+    }
+
+
+    bool CharacterController::shouldLandOnContact(const glm::vec3& contactNormal) const {
+        glm::vec3 n = glm::normalize(contactNormal);
+        float speedIntoSurface = -glm::dot(state.velocity, n); // positive if moving into wall/floor
+
+        if (speedIntoSurface < settings.landingMinApproachSpeed) {
+            return false;
+        }
+
+        // Don't treat ceilings as landing surfaces relative to current body up
+        glm::vec3 currentUp = getUpDirection();
+        if (glm::dot(n, currentUp) < -0.35f) {
+            return false;
+        }
+
+        return true;
+    }
+
+    void CharacterController::beginSurfaceAdhesion(const glm::vec3& contactPoint, const glm::vec3& contactNormal) {
+        glm::vec3 n = glm::normalize(contactNormal);
+
+        state.isGrounded = true;
+        state.isSurfaceAdhered = true;
+        state.adheredNormal = n;
+        state.lastGroundPoint = contactPoint;
+        state.adhesionTimer = settings.adhesionDuration;
+        state.coyoteTime = settings.coyoteTimeDuration;
+        state.airSlamAvailable = true;
+
+        settings.gravityDir = -n;
+
+        // Remove velocity into surface
+        float vn = glm::dot(state.velocity, n);
+        if (vn < 0.0f) {
+            state.velocity -= n * vn;
+        }
+    }
+
+    void CharacterController::updateSurfaceAdhesion(float deltaTime) {
+        if (!state.isSurfaceAdhered) return;
+
+        state.adhesionTimer -= deltaTime;
+
+        glm::vec3 surfaceNormal = glm::normalize(state.adheredNormal);
+        glm::vec3 down = -surfaceNormal;
+
+        float distFromAnchor = glm::length(state.position - state.lastGroundPoint);
+        if (distFromAnchor > settings.adhesionMaxDistance || state.adhesionTimer <= 0.0f) {
+            state.isSurfaceAdhered = false;
+            state.isGrounded = false;
+            return;
+        }
+
+        // MUCH WEAKER pull to prevent fighting with player movement
+        state.velocity += down * settings.adhesionAcceleration * deltaTime * 0.2f; // 20% strength
+    }
+
+    void CharacterController::updateOrientation(float deltaTime) {
+        glm::vec3 targetUp;
+
+        if (state.isSurfaceAdhered) {
+            targetUp = glm::normalize(state.adheredNormal);
+        } else {
+            targetUp = glm::normalize(-settings.gravityDir);
+        }
+
+        glm::vec3 curUp = glm::normalize(state.currentUp);
+
+        // Calculate angular difference
+        float dot = glm::clamp(glm::dot(curUp, targetUp), -1.0f, 1.0f);
+        float angleDiff = std::acos(dot);
+
+        // STOP ROTATION when close enough (prevents micro-jitter)
+        if (angleDiff < glm::radians(0.5f)) {
+            state.currentUp = targetUp;
+            return;
+        }
+
+        // Use FIXED slow speed for all rotations (no adaptive speed)
+        float rotationSpeed = 1.5f; // Lower = smoother
+
+        float t = glm::clamp(rotationSpeed * deltaTime, 0.0f, 1.0f);
+
+        // Use spherical lerp (slerp) for smooth rotation
+        glm::vec3 blended;
+        if (angleDiff > 0.001f) {
+            float sinAngle = std::sin(angleDiff);
+            float a = std::sin((1.0f - t) * angleDiff) / sinAngle;
+            float b = std::sin(t * angleDiff) / sinAngle;
+            blended = glm::normalize(curUp * a + targetUp * b);
+        } else {
+            blended = targetUp;
+        }
+
+        state.currentUp = blended;
+    }
+
 }
