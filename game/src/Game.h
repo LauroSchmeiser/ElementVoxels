@@ -667,5 +667,12 @@ namespace gl3 {
         glm::vec3 cameraRight;
         const float cameraSensitivity=0.125f;
 
+        std::unique_ptr<Shader> speedLinesShader;
+        bool enableSpeedLines = true;
+        float speedLinesIntensity = 1.0f;
+
+        void initSpeedLinesShader();
+        void renderSpeedLines();
+
     };
 }

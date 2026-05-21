@@ -447,6 +447,7 @@ namespace gl3 {
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glBindVertexArray(0);
 
+        renderSpeedLines();
 
         // UI and other stuff AFTER post
         DisplayFPSCount();
@@ -1625,6 +1626,7 @@ namespace gl3 {
     void Game::setupVEffects() {
         sunBillboards.init(12);
         setupImpactEffects();
+        initSpeedLinesShader();
     }
 
 
@@ -3971,5 +3973,91 @@ namespace gl3 {
             return characterController->getUpDirection();
         }
         return glm::vec3(0.0f, 1.0f, 0.0f);
+    }
+
+    void Game::initSpeedLinesShader() {
+        try {
+            speedLinesShader = std::make_unique<Shader>(
+                    resolveAssetPath("shaders/speedlines.vert"),
+                    resolveAssetPath("shaders/speedlines.frag")
+            );
+            std::cout << "Speed lines shader loaded successfully\n";
+        } catch (const std::exception& e) {
+            std::cerr << "Failed to load speed lines shader: " << e.what() << "\n";
+            speedLinesShader = nullptr;
+        }
+    }
+
+    void Game::renderSpeedLines() {
+        if (!speedLinesShader || !enableSpeedLines) return;
+
+        // Get player velocity
+        glm::vec3 velocity = characterController->getVelocity();
+        float speed = glm::length(velocity);
+
+        // Normalize speed (adjust maxSpeed to your game's scale)
+        const float maxSpeed = 100.0f; // Tune this based on your movement speed
+        float normalizedSpeed = glm::clamp(speed / maxSpeed, 0.0f, 1.5f) * speedLinesIntensity;
+
+        if (normalizedSpeed < 0.05f) return; // Skip if too slow
+
+        glDisable(GL_DEPTH_TEST);
+        glDepthMask(GL_FALSE);
+
+        speedLinesShader->use();
+
+        // Bind the scene texture rendered in postColorTex
+        speedLinesShader->setInt("uSceneTexture", 0);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, postColorTex);
+
+        // Pass velocity and speed
+        speedLinesShader->setVec3("uVelocity3D", velocity);
+        speedLinesShader->setFloat("uSpeed", normalizedSpeed);
+        speedLinesShader->setFloat("uTime", (float)glfwGetTime());
+
+        // Camera matrices (not used for radial, but kept for future variants)
+        float aspect = (float)windowWidth / (float)windowHeight;
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
+        glm::vec3 camUp = getCameraUp();
+        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
+
+        speedLinesShader->setMatrix("uView", view);
+        speedLinesShader->setMatrix("uProjection", projection);
+        speedLinesShader->setVec3("uCameraPos", cameraPos);
+
+        // RADIAL LINE SETTINGS
+        speedLinesShader->setFloat("uLineCount", 6.0f);        // Number of lines
+        speedLinesShader->setFloat("uLineWidth", 0.15f);       // Thickness
+        speedLinesShader->setFloat("uLineSharpness", 0.95f);    // Edge sharpness (higher = sharper)
+        speedLinesShader->setFloat("uInnerRadius", 0.35f);      // Clear center zone
+        speedLinesShader->setFloat("uOuterFade", 0.85f);        // Where lines fade at edges
+        speedLinesShader->setFloat("uVignetteStrength", 0.4f);
+        speedLinesShader->setFloat("uLineOpacity", 0.7f);       // Overall line visibility
+
+        // Change color based on game state
+        glm::vec3 lineColor = glm::vec3(1.0f, 1.0f, 1.0f); // White default
+
+        if (characterController->getState().isSprinting) {
+            lineColor = glm::vec3(0.3f, 0.7f, 1.0f); // Blue for sprint
+            speedLinesShader->setFloat("uLineCount", 15.0f); // More lines when sprinting
+            speedLinesShader->setFloat("uLineWidth", 0.12f); // Thicker
+
+        }
+        if (characterController->getState().isAirSlamming) {
+            lineColor = glm::vec3(1.0f, 1.0f, 0.0f); // Red for air slam
+            speedLinesShader->setFloat("uLineCount", 12.0f); // Even more lines
+            speedLinesShader->setFloat("uLineWidth", 0.2f); // Thicker
+        }
+
+        speedLinesShader->setVec3("uLineColor", lineColor);
+
+        // Draw fullscreen triangle
+        glBindVertexArray(postVAO);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glBindVertexArray(0);
+
+        glDepthMask(GL_TRUE);
+        glEnable(GL_DEPTH_TEST);
     }
 }
