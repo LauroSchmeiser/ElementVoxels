@@ -120,8 +120,8 @@ namespace gl3 {
         const float radiusSq = req.searchRadius * req.searchRadius;
 
         float voxelVolume = VOXEL_SIZE * VOXEL_SIZE * VOXEL_SIZE;
-        int maxVoxels = static_cast<int>((glm::pow(req.strength,4)) / voxelVolume);
-        maxVoxels = clampi(maxVoxels, 10, 100);
+        int maxVoxels = static_cast<int>((glm::pow(req.baseFormationParams.radius,2)) / voxelVolume);
+        maxVoxels = clampi(maxVoxels, 10, 200);
 
         struct Candidate
         {
@@ -273,10 +273,15 @@ namespace gl3 {
             {
                 case FormationType::SPHERE:
                 {
-                    float computedRadius = std::cbrt((3.0f / (4.0f * PI)) * ((desiredVolumeWorld/2) / packingEfficiency));
+                    /*float computedRadius = std::cbrt((3.0f / (4.0f * PI)) * ((desiredVolumeWorld/2) / packingEfficiency));
                     float maxRadius = std::max(minWorldDim, adjusted.radius * 0.75f);
                     float minRadius = minWorldDim;
-                    adjusted.radius = std::max(minRadius, std::min(computedRadius, maxRadius));
+                    adjusted.radius = std::max(minRadius, std::min(computedRadius, maxRadius));*/
+                    float computedRadius = std::cbrt((3.0f / (4.0f * PI)) * (desiredVolumeWorld / packingEfficiency));
+                    float minRadius = minWorldDim;
+
+                // preserve requested size as an upper target, but don't shrink it unnecessarily
+                    adjusted.radius = std::max(adjusted.radius, std::max(minRadius, computedRadius));
                     break;
                 }
                 case FormationType::PLATFORM:

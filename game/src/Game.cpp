@@ -236,7 +236,7 @@ namespace gl3 {
         generateChunks();
         setupCamera();
         setupVEffects();
-        fillMaterialTable();
+        //fillMaterialTable();
     }
 
     void Game::fillMaterialTable()
@@ -251,6 +251,11 @@ namespace gl3 {
         mats.push_back(gl3::resolveAssetPath("textures/water2.jpg").string());
         mats.push_back(gl3::resolveAssetPath("textures/metal.jpg").string());
         mats.push_back(gl3::resolveAssetPath("textures/cobble.jpg").string());
+        mats.push_back(gl3::resolveAssetPath("textures/flesh.jpg").string());
+        mats.push_back(gl3::resolveAssetPath("textures/EyeMaterial_new.png").string());
+        mats.push_back(gl3::resolveAssetPath("textures/lava.jpg").string());
+
+
 
         //mats.push_back(gl3::resolveAssetPath("textures/gem.jpg").string());
 
@@ -286,9 +291,17 @@ namespace gl3 {
         materials.params[6].specular  = 0.05f;
         materials.params[6].uvScale   = 0.05f;
 
-        materials.params[7].roughness = 1.0f;
-        materials.params[7].specular  = 0.05f;
-        materials.params[7].uvScale   = 0.05f;
+        materials.params[7].roughness = 0.85f;
+        materials.params[7].specular  = 0.2f;
+        materials.params[7].uvScale   = 0.5f;
+
+        materials.params[8].roughness = 0.05f;
+        materials.params[8].specular  = 0.9f;
+        materials.params[8].uvScale   = 3.9f;
+
+        materials.params[7].roughness = 0.85f;
+        materials.params[7].specular  = 0.2f;
+        materials.params[7].uvScale   = 0.75f;
 
         for (int i = 0; i < 64; ++i) {
             rough[i] = materials.params[i].roughness;
@@ -308,7 +321,7 @@ namespace gl3 {
         ctx.markChunkModified = [this](const ChunkCoord& c){ markChunkModified(c); };
         ctx.sampleNormalAtWorld = [this](const glm::vec3& p){ return sampleNormalAtWorld(p); };
         ctx.sampleDensityAtWorld = [this](const glm::vec3& p){ return sampleDensityAtWorld(p); };
-        ctx.generateChunkMesh = [this](Chunk* ch){ generateChunkMesh(ch); };
+        ctx.generateChunkMesh = [this](Chunk* ch){ chunkRenderer->generateChunkMesh(ch); };
         const uint64_t myEpoch = mainDispatcher.epoch();
         ctx.mainThreadDispatcher = [this, myEpoch](std::function<void()> task) {
             mainDispatcher.dispatch([this, myEpoch, task = std::move(task)]() mutable {
@@ -324,7 +337,7 @@ namespace gl3 {
                 chunkManager.get(),
                 voxelPhysics.get(),
                 5.8f,
-                1.5f
+                2.5f
         );
 
         //player-body collision callback
@@ -348,7 +361,7 @@ namespace gl3 {
                        const glm::vec3& hitPos,
                        const glm::vec3& hitNormal,
                        float impactSpeed) {
-                    onBodyBodyCollision(bodyA, bodyB, hitPos, hitNormal, impactSpeed*impactSpeed);
+                    onBodyBodyCollision(bodyA, bodyB, hitPos, hitNormal, impactSpeed);
                 }
         );
         // body-world collision callback
@@ -363,16 +376,7 @@ namespace gl3 {
         enemyManager = std::make_unique<EnemyManager>();
         enemyManager->init(voxelPhysics.get(),chunkManager.get(), this);
 
-        static EnemyArchetype basic;
-        basic.name = "Basic";
-        basic.maxHP = 1.0f;
-        basic.moveSpeed = 6.0f;
-        basic.shapeType = VoxelPhysicsBody::ShapeType::SPHERE;
-        basic.mass = 50.0f;
-        basic.radius = 2.5f * VOXEL_SIZE;
-        basic.cooldownsSec = { 2.0f, 0.0f, 0.0f };
-
-        enemyManager->spawn(basic, cameraPos + getCameraFront() * (35.0f * VOXEL_SIZE));
+        waveManager.init(enemyManager.get());
     }
 
     void Game::updateGameplayFrame() {
@@ -383,8 +387,17 @@ namespace gl3 {
         glfwPollEvents();
         update();
         if (enemyManager) {
-          //  enemyManager->update(deltaTime, cameraPos /* player pos */);
+           enemyManager->update(deltaTime, cameraPos /* player pos */);
         }
+
+        if (enemyManager && waveManager.isWaveActive()) {
+            waveManager.update(deltaTime, cameraPos);
+        }
+
+        if (!waveManager.isWaveActive()) {
+            waveManager.startNextWave();
+        }
+
         updatePhysics();
         updateImpactEffects(deltaTime);
         updateChunkBurns(deltaTime);
@@ -575,8 +588,8 @@ namespace gl3 {
 
             case PreloadStage::Run_Lighting:
                 preloadStageName = "Setting up lighting...";
-                updateLightSpatialHash();
-                uploadMergedLightsToGPU();
+                chunkRenderer->updateLightSpatialHash();
+                chunkRenderer->uploadMergedLightsToGPU();
                 chunkManager->forEachChunk([&](gl3::Chunk* chunk)
                 {rebuildChunkLights(chunk->coord);
                     chunk->lightingDirty = false;
@@ -590,7 +603,7 @@ namespace gl3 {
                         }
                     }
                 });
-                buildAndUploadChunkLightIndexBuffer(worldToChunk(cameraPos.x),worldToChunk(cameraPos.y),worldToChunk(cameraPos.z),RenderingRange);
+                chunkRenderer->buildAndUploadChunkLightIndexBuffer(worldToChunk(cameraPos.x),worldToChunk(cameraPos.y),worldToChunk(cameraPos.z),RenderingRange,frameCounter);
                 preloadStage = PreloadStage::Done;
                 return 0.92f;
 
@@ -669,6 +682,34 @@ namespace gl3 {
                 ImGui::Text("%d / %d", (int)playerHealth, (int)playerMaxHealth);
                 ImGui::PopItemWidth();
             }
+            // In ImGui rendering:
+            float intensity = waveManager.getWaveIntensity();
+            ImVec4 textColor = ImVec4(1.0f, 1.0f - intensity, 1.0f - intensity, 1.0f);
+
+            ImGui::PushStyleColor(ImGuiCol_Text, textColor);
+            ImGui::Text("Wave: %d", waveManager.getCurrentWave());
+            ImGui::Text("Enemies: %d", waveManager.getEnemiesRemaining());
+            ImGui::PopStyleColor();
+
+            if (waveManager.isBossActive()) {
+                float bossHP = waveManager.getBossHealthPercent();
+                ImGui::ProgressBar(bossHP, ImVec2(-1, 0), "BOSS");
+            };
+
+            ImGui::PushStyleColor(ImGuiCol_Text, textColor);
+           //ImGui::Text("Enemies spawned: %d", waveManager.getSpawnedEnemies());
+            //ImGui::Text("Enemies alive : %d", enemyManager->getEnemiesAlive());
+            for (int i = 0; i < enemyManager->getEnemiesAlive(); ++i) {
+                glm::vec3 diff = (enemyManager->getEnemyPos(i)-cameraPos);
+                float dist = glm::sqrt(diff.x*diff.x+diff.y*diff.y+diff.z*diff.z);
+              //  ImGui::Text("Enemy: %d", i+1);
+                ImGui::Text("distance : %f", dist);
+                //ImGui::Text("Mesh valid : %d", enemyManager->getEnemyRenderingMesh(i));
+                ImGui::Text("HP : %f", enemyManager->getEnemyHP(i));
+                //ImGui::Text("Material : %f", enemyManager->getEnemyMat(i));
+            }
+            ImGui::PopStyleColor();
+
             ImGui::End();
         }
 
@@ -724,8 +765,8 @@ namespace gl3 {
                 if (ImGui::Button("Exit to Desktop", btnSize)) {
                     glfwSetWindowShouldClose(getWindow(), true);
                 }
+                ImGui::End();    waveManager.init(enemyManager.get());
             }
-            ImGui::End();
         }
 
         imguiLayer.endFrame();
@@ -1149,9 +1190,8 @@ namespace gl3 {
         if (auto* spell = spellSystem->findSpellById(spellId)) {
             float mass = spell->physicsBody ? spell->physicsBody->mass : 1.0f;
 
-            float craterStrength = glm::sqrt((impactSpeed * mass)) / 30.0f;
-            float spellRadius = glm::sqrt(glm::max(spell->physicsBody->radius, 0.001f));
-
+            float craterStrength = glm::sqrt((impactSpeed * glm::pow(mass,1)*spell->physicsBody->radius)) / 30.0f;
+            float spellRadius = glm::max(spell->physicsBody->radius, 0.001f);
             createCraterAtPosition(hitPos, craterStrength, spellRadius);
 
             // Estimate removed voxels from crater strength
@@ -1166,7 +1206,8 @@ namespace gl3 {
             tint+=(spell->formationColor/glm::vec3(5));
             tint+=variance;
 
-            spawnImpactEffect(hitPos, hitNormal, impactSpeed, removedVoxelEstimate, tint);        }
+            spawnImpactEffect(hitPos, hitNormal, impactSpeed, removedVoxelEstimate, tint);
+        }
     }
 
     void Game::createCraterAtPosition(const glm::vec3& worldPos, float impactFactor, float spellRadius) {
@@ -1416,9 +1457,11 @@ namespace gl3 {
     }
 
     void Game::setupCamera() {
-        // --- Camera setup ---
-        cameraRotation = glm::vec2(0.0f, -90.0f);
         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+
+        cameraForward = glm::vec3(0.0f, 0.0f, -1.0f);
+        cameraUp      = glm::vec3(0.0f, 1.0f, 0.0f);
+        cameraRight   = glm::normalize(glm::cross(cameraForward, cameraUp));
     }
 
 
@@ -1433,7 +1476,7 @@ namespace gl3 {
         std::uniform_real_distribution<float> distPos(-worldMax * 0.9f, worldMax * 0.9f);
         std::uniform_real_distribution<float> distScale(0.5f, 3.0f);
         std::uniform_real_distribution<float> distColor(0.3f, 1.0f);
-        std::uniform_real_distribution<float> distMat(0.0f, 3.9f);
+        std::uniform_real_distribution<float> distMat(0.0f, 0.9f);
 
         std::vector<WorldPlanet> worldPlanets;
 
@@ -1450,6 +1493,14 @@ namespace gl3 {
         p.color = glm::vec3(distColor(rng), distColor(rng), distColor(rng));
         p.type = 1; // solid
         p.material=(int)distMat(rng);
+        if(p.material==7)
+        {
+            p.color= glm::vec3(1.0, 0.0, 1.0);
+        }
+        else if(p.material==8)
+        {
+            p.color= glm::vec3(1.0, 0.6, 0.0);
+        }
         //p.material=0;
         worldPlanets.push_back(p);
         cameraPos=p.worldPos+glm::vec3(0,VOXEL_SIZE,0);
@@ -1461,13 +1512,13 @@ namespace gl3 {
             p.color = glm::vec3(distColor(rng), distColor(rng), distColor(rng));
             p.type = 1; // solid
            // p.material=(int)distMat(rng);
-             p.material=0;
+           p.material=0;
             worldPlanets.push_back(p);
         }
 
         // Create suns (type 2 - fire)
-        std::uniform_real_distribution<float> lavaDistColorR(0.8f, 1.0f);
-        std::uniform_real_distribution<float> lavaDistColorG(0.2f, 0.5f);
+        std::uniform_real_distribution<float> lavaDistColorR(0.7f, 1.0f);
+        std::uniform_real_distribution<float> lavaDistColorG(0.3f, 0.6f);
         std::uniform_real_distribution<float> lavaDistColorB(0.0f, 0.1f);
 
         int lavaCount = 3 + (rng() % 3);
@@ -1477,6 +1528,8 @@ namespace gl3 {
             p.radius = distScale(rng) * CHUNK_SIZE;
             p.color = glm::vec3(lavaDistColorR(rng), lavaDistColorG(rng), lavaDistColorB(rng));
             p.type = 2; // fire
+            p.material = 9; // fire
+
             worldPlanets.push_back(p);
         }
 
@@ -1641,7 +1694,9 @@ namespace gl3 {
         const int subStepCount = 10;
         const float subDt = (fixedTimeStep / (float)subStepCount);
 
-        accumulator += deltaTime;
+        float localDt = deltaTime;
+        localDt=glm::clamp(deltaTime,deltaTime,1.0f/100.0f);
+        accumulator += localDt;
 
         while (accumulator >= fixedTimeStep) {
             // (Input can be sampled once per fixed step; that's fine)
@@ -1666,15 +1721,18 @@ namespace gl3 {
             }
             glm::vec2 mouseDelta = getMouseDelta();
 
-            // IMPORTANT: advance simulation with fixedTimeStep/subDt, not deltaTime
             for (int i = 0; i < subStepCount; ++i) {
-                characterController->update(subDt, moveInput, jump, sprint, crouch, mouseDelta, cameraFront, cameraRight, airSlam);
-
-                std::vector<uint64_t> removedBodyIds;
-                if (voxelPhysics) voxelPhysics->update(subDt, removedBodyIds);
-                //if(spellSystem)   spellSystem->update(subDt);
-                // usually you only want "wasJustPressed" to apply once:
+                {
+                    TRACY_CPU_ZONE("Game::updatePlayer()");
+                    characterController->update(subDt, moveInput, jump, sprint, crouch, mouseDelta, cameraFront,
+                                                cameraRight, airSlam);
+                }
                 jump = false;
+            }
+            std::vector<uint64_t> removedBodyIds;
+            {
+                TRACY_CPU_ZONE("Game::updateBodies()");
+                if (voxelPhysics) voxelPhysics->update(localDt, removedBodyIds);
             }
 
             accumulator -= fixedTimeStep;
@@ -1721,752 +1779,819 @@ namespace gl3 {
 
         // Apply approach scaling (comment out if you want full damage once threshold passes)
         //dmg *= approach01;
-        dmg = glm::min(dmg,getPlayerMaxHealth()/5);
-        dmg= glm::max(dmg,getPlayerMaxHealth()/10);
+        dmg = glm::min(dmg,getPlayerMaxHealth()/10);
+        dmg= glm::max(dmg,getPlayerMaxHealth()/20);
         setPlayerHealth(getPlayerHealth() - dmg);
         body->velocity=-body->velocity*0.75f;
+
+
+        std::mt19937 rng(std::random_device{}());
+        std::uniform_real_distribution<float> dist(-0.5f, 0.5f);
+        uint64_t spellId = (uint64_t)(uintptr_t)body->userData;
+        if (auto* spell = spellSystem->findSpellById(spellId)) {
+            float mass = spell->physicsBody ? spell->physicsBody->mass : 1.0f;
+
+            float craterStrength = glm::sqrt((hitSpeed * mass)) / 30.0f;
+            float spellRadius = glm::max(spell->physicsBody->radius, 0.001f);
+            createCraterAtPosition(hitPos, craterStrength, spellRadius);
+
+            // Estimate removed voxels from crater strength
+            float removedVoxelEstimate = craterStrength * 40.0f;
+
+            glm::vec3 tint = spell->formationColor;
+            if (glm::length(tint) < 0.001f) {
+                tint = glm::vec3(0.45f, 0.45f, 0.45f);
+            }
+            glm::vec3 variance = glm::vec3(dist(rng));
+            tint+=(spell->formationColor/glm::vec3(5));
+            tint+=variance;
+
+            spawnImpactEffect(hitPos, hitNormal, hitSpeed, removedVoxelEstimate, tint);
+        }
     }
 
     void Game::onBodyBodyCollision(gl3::VoxelPhysicsBody *bodyA, gl3::VoxelPhysicsBody *bodyB, const glm::vec3 &hitPos,
                                    const glm::vec3 &hitNormal, float impactSpeed) {
+
+            std::cout<<"Enemy Callback entered:"<<"\n";
             enemyManager->applyDamageSphere(bodyA->id,hitPos,bodyA->radius,impactSpeed);
             enemyManager->applyDamageSphere(bodyB->id,hitPos,bodyA->radius,impactSpeed);
 
-    }
 
-    void Game::updateDeltaTime() {
-        float frameTime = glfwGetTime();
-        deltaTime = frameTime - lastFrameTime;
-        lastFrameTime = frameTime;
-    }
+            std::mt19937 rng(std::random_device{}());
+            std::uniform_real_distribution<float> dist(-0.5f, 0.5f);
+            uint64_t spellId = (uint64_t)(uintptr_t)bodyA->userData;
+            if (auto* spell = spellSystem->findSpellById(spellId)) {
+                float mass = spell->physicsBody ? spell->physicsBody->mass : 1.0f;
+
+                float craterStrength = glm::sqrt((impactSpeed * mass)) / 30.0f;
+                float spellRadius = glm::max(spell->physicsBody->radius, 0.001f);
+
+                createCraterAtPosition(hitPos, craterStrength, spellRadius);
+
+                // Estimate removed voxels from crater strength
+                float removedVoxelEstimate = craterStrength * 40.0f;
+
+                glm::vec3 tint = spell->formationColor;
+                if (glm::length(tint) < 0.001f) {
+                    tint = glm::vec3(0.45f, 0.45f, 0.45f);
+                }
+                glm::vec3 variance = glm::vec3(dist(rng));
+                tint+=(spell->formationColor/glm::vec3(5));
+                tint+=variance;
+
+                spawnImpactEffect(hitPos, hitNormal, impactSpeed, removedVoxelEstimate, tint);
+            }
+            spellId = (uint64_t)(uintptr_t)bodyB->userData;
+            if (auto* spell = spellSystem->findSpellById(spellId)) {
+                float mass = spell->physicsBody ? spell->physicsBody->mass : 1.0f;
+
+                float craterStrength = glm::sqrt((impactSpeed * mass)) / 30.0f;
+                float spellRadius = glm::sqrt(glm::max(spell->physicsBody->radius, 0.001f));
+
+                createCraterAtPosition(hitPos, craterStrength, spellRadius);
+
+                // Estimate removed voxels from crater strength
+                float removedVoxelEstimate = craterStrength * 40.0f;
+
+                glm::vec3 tint = spell->formationColor;
+                if (glm::length(tint) < 0.001f) {
+                    tint = glm::vec3(0.45f, 0.45f, 0.45f);
+                }
+                glm::vec3 variance = glm::vec3(dist(rng));
+                tint+=(spell->formationColor/glm::vec3(5));
+                tint+=variance;
+
+                spawnImpactEffect(hitPos, hitNormal, impactSpeed, removedVoxelEstimate, tint);
+            }
+
+}
+
+void Game::updateDeltaTime() {
+float frameTime = glfwGetTime();
+deltaTime = frameTime - lastFrameTime;
+lastFrameTime = frameTime;
+}
 
 //------Lighting-Code---------------------------------------------------------------------------------------------------------------------------
 
-    // Replace updateGlobalLightGrid with a spatial hash approach and a flat list and performs
-    // a simple greedy merging of lights that are close to each other.
-    void Game::updateLightSpatialHash() {
-        ZoneScoped;
-        lightSpatialHash.clear();
-        flatEmissiveLightList.clear();
-        mergedEmissiveLightPool.clear();
+// Replace updateGlobalLightGrid with a spatial hash approach and a flat list and performs
+// a simple greedy merging of lights that are close to each other.
+void Game::updateLightSpatialHash() {
+ZoneScoped;
+lightSpatialHash.clear();
+flatEmissiveLightList.clear();
+mergedEmissiveLightPool.clear();
 
-        // 1) Gather raw pointers (lights stored inside chunks) and fill spatial-hash as before
-        std::vector<const VoxelLight *> rawLights;
-        chunkManager->forEachEmissiveChunk([this, &rawLights](Chunk *chunk) {
-            for (auto &light: chunk->emissiveLights) {
-                // coarse bucket size (same as before)
-                ChunkCoord gridCell{
-                        (int) std::floor(light.pos.x / (DIM * 2)),
-                        (int) std::floor(light.pos.y / (DIM * 2)),
-                        (int) std::floor(light.pos.z / (DIM * 2))
-                };
-                lightSpatialHash[gridCell].push_back(&light);
-                rawLights.push_back(&light);
-            }
-        });
+// 1) Gather raw pointers (lights stored inside chunks) and fill spatial-hash as before
+std::vector<const VoxelLight *> rawLights;
+chunkManager->forEachEmissiveChunk([this, &rawLights](Chunk *chunk) {
+    for (auto &light: chunk->emissiveLights) {
+        // coarse bucket size (same as before)
+        ChunkCoord gridCell{
+                (int) std::floor(light.pos.x / (DIM * 2)),
+                (int) std::floor(light.pos.y / (DIM * 2)),
+                (int) std::floor(light.pos.z / (DIM * 2))
+        };
+        lightSpatialHash[gridCell].push_back(&light);
+        rawLights.push_back(&light);
+    }
+});
 
-        // 2) If no lights, done
-        if (rawLights.empty()) {
-            std::cout << "Light spatial hash updated: 0 grid cells; 0 emissive blobs\n";
-            return;
+// 2) If no lights, done
+if (rawLights.empty()) {
+    std::cout << "Light spatial hash updated: 0 grid cells; 0 emissive blobs\n";
+    return;
+}
+
+// 3) Simple greedy clustering (merge lights that are spatially close)
+// Tune this merge radius. Using CHUNK_SIZE * 1.5 means lights that spill over
+// into adjacent chunks are folded into a single logical emitter.
+const float MERGE_RADIUS = DIM * 12.0f;
+const float MERGE_RADIUS_SQ = MERGE_RADIUS * MERGE_RADIUS;
+
+std::vector<char> used(rawLights.size(), 0);
+for (size_t i = 0; i < rawLights.size(); ++i) {
+    if (used[i]) continue;
+    used[i] = 1;
+
+    // accumulate weighted by intensity (so stronger lights dominate)
+    float totalIntensity = 0.0f;
+    glm::vec3 accumPos(0.0f);
+    glm::vec3 accumColor(0.0f);
+    uint32_t mergedId = rawLights[i]->id; // base id
+    int amountMerged = 0;
+
+    // merge any other lights that lie within MERGE_RADIUS of rawLights[i]
+    for (size_t j = i; j < rawLights.size(); ++j) {
+        if (used[j]) continue;
+        float d2 = glm::dot(rawLights[i]->pos - rawLights[j]->pos, rawLights[i]->pos - rawLights[j]->pos);
+        if (d2 <= MERGE_RADIUS_SQ) {
+            used[j] = 1;
+            const VoxelLight *L = rawLights[j];
+            float w = glm::max(1.0f, L->intensity); // weight (avoid zero)
+            accumPos += L->pos * w;
+            accumColor += L->color * w;
+            totalIntensity += L->intensity;
+            amountMerged++;
+            // You can combine ids in a deterministic way if needed; keep first for now
         }
-
-        // 3) Simple greedy clustering (merge lights that are spatially close)
-        // Tune this merge radius. Using CHUNK_SIZE * 1.5 means lights that spill over
-        // into adjacent chunks are folded into a single logical emitter.
-        const float MERGE_RADIUS = DIM * 12.0f;
-        const float MERGE_RADIUS_SQ = MERGE_RADIUS * MERGE_RADIUS;
-
-        std::vector<char> used(rawLights.size(), 0);
-        for (size_t i = 0; i < rawLights.size(); ++i) {
-            if (used[i]) continue;
-            used[i] = 1;
-
-            // accumulate weighted by intensity (so stronger lights dominate)
-            float totalIntensity = 0.0f;
-            glm::vec3 accumPos(0.0f);
-            glm::vec3 accumColor(0.0f);
-            uint32_t mergedId = rawLights[i]->id; // base id
-            int amountMerged = 0;
-
-            // merge any other lights that lie within MERGE_RADIUS of rawLights[i]
-            for (size_t j = i; j < rawLights.size(); ++j) {
-                if (used[j]) continue;
-                float d2 = glm::dot(rawLights[i]->pos - rawLights[j]->pos, rawLights[i]->pos - rawLights[j]->pos);
-                if (d2 <= MERGE_RADIUS_SQ) {
-                    used[j] = 1;
-                    const VoxelLight *L = rawLights[j];
-                    float w = glm::max(1.0f, L->intensity); // weight (avoid zero)
-                    accumPos += L->pos * w;
-                    accumColor += L->color * w;
-                    totalIntensity += L->intensity;
-                    amountMerged++;
-                    // You can combine ids in a deterministic way if needed; keep first for now
-                }
-            }
-
-            // construct merged light (fallbacks)
-            VoxelLight merged;
-            if (totalIntensity > 0.0f) {
-                merged.intensity = (totalIntensity / amountMerged);
-                merged.pos = accumPos / (totalIntensity > 0.0f ? totalIntensity : 1.0f);
-                merged.color = accumColor / (totalIntensity > 0.0f ? totalIntensity : 1.0f);
-            } else {
-                // fallback: single entry (should not typically occur)
-                merged = *rawLights[i];
-            }
-            merged.id = mergedId;
-
-            // store into pool and push pointer into flat list
-            mergedEmissiveLightPool.push_back(merged);
-        }
-
-        // 4) Build final flat list of pointers into mergedEmissiveLightPool
-        flatEmissiveLightList.reserve(mergedEmissiveLightPool.size());
-        for (auto &m: mergedEmissiveLightPool) {
-            flatEmissiveLightList.push_back(&m);
-        }
-
-        std::cout << "Light spatial hash updated: " << lightSpatialHash.size()
-                  << " grid cells; raw=" << rawLights.size()
-                  << " merged=" << mergedEmissiveLightPool.size() << " emissive blobs\n";
     }
 
-    void Game::rebuildChunkLights(const ChunkCoord &coord) {
-        ZoneScoped;
-        Chunk *chunk = chunkManager->getChunk(coord);
-        if (!chunk) return;
+    // construct merged light (fallbacks)
+    VoxelLight merged;
+    if (totalIntensity > 0.0f) {
+        merged.intensity = (totalIntensity / amountMerged);
+        merged.pos = accumPos / (totalIntensity > 0.0f ? totalIntensity : 1.0f);
+        merged.color = accumColor / (totalIntensity > 0.0f ? totalIntensity : 1.0f);
+    } else {
+        // fallback: single entry (should not typically occur)
+        merged = *rawLights[i];
+    }
+    merged.id = mergedId;
 
-        chunk->emissiveLights.clear();
+    // store into pool and push pointer into flat list
+    mergedEmissiveLightPool.push_back(merged);
+}
 
-        // chunk origin in world units
-        glm::vec3 chunkOrigin(
-                coord.x * CHUNK_SIZE * gl3::VOXEL_SIZE,
-                coord.y * CHUNK_SIZE * gl3::VOXEL_SIZE,
-                coord.z * CHUNK_SIZE * gl3::VOXEL_SIZE
-        );
+// 4) Build final flat list of pointers into mergedEmissiveLightPool
+flatEmissiveLightList.reserve(mergedEmissiveLightPool.size());
+for (auto &m: mergedEmissiveLightPool) {
+    flatEmissiveLightList.push_back(&m);
+}
 
-        // Cluster emissive voxels within this chunk
-        glm::vec3 sumPos(0.0f);
-        glm::vec3 sumColor(0.0f);
-        int count = 0;
+std::cout << "Light spatial hash updated: " << lightSpatialHash.size()
+          << " grid cells; raw=" << rawLights.size()
+          << " merged=" << mergedEmissiveLightPool.size() << " emissive blobs\n";
+}
 
-        for (int x = 0; x <= CHUNK_SIZE; ++x) {
-            for (int y = 0; y <= CHUNK_SIZE; ++y) {
-                for (int z = 0; z <= CHUNK_SIZE; ++z) {
-                    const auto &vox = chunk->voxels[x][y][z];
-                    if (vox.type == 2) { // Fire / emissive voxel
-                        glm::vec3 voxelWorldPos = chunkOrigin + glm::vec3((float)x, (float)y, (float)z) * gl3::VOXEL_SIZE;
-                        sumPos += voxelWorldPos;
-                        sumColor += vox.color;
-                        ++count;
-                    }
-                }
+void Game::rebuildChunkLights(const ChunkCoord &coord) {
+ZoneScoped;
+Chunk *chunk = chunkManager->getChunk(coord);
+if (!chunk) return;
+
+chunk->emissiveLights.clear();
+
+// chunk origin in world units
+glm::vec3 chunkOrigin(
+        coord.x * CHUNK_SIZE * gl3::VOXEL_SIZE,
+        coord.y * CHUNK_SIZE * gl3::VOXEL_SIZE,
+        coord.z * CHUNK_SIZE * gl3::VOXEL_SIZE
+);
+
+// Cluster emissive voxels within this chunk
+glm::vec3 sumPos(0.0f);
+glm::vec3 sumColor(0.0f);
+int count = 0;
+
+for (int x = 0; x <= CHUNK_SIZE; ++x) {
+    for (int y = 0; y <= CHUNK_SIZE; ++y) {
+        for (int z = 0; z <= CHUNK_SIZE; ++z) {
+            const auto &vox = chunk->voxels[x][y][z];
+            if (vox.type == 2) { // Fire / emissive voxel
+                glm::vec3 voxelWorldPos = chunkOrigin + glm::vec3((float)x, (float)y, (float)z) * gl3::VOXEL_SIZE;
+                sumPos += voxelWorldPos;
+                sumColor += vox.color;
+                ++count;
             }
         }
-
-        if (count > 0) {
-            VoxelLight light;
-            light.pos = sumPos / float(count);
-            light.color = sumColor / float(count);
-            light.intensity = float(count) * 65.0f;
-            light.id = makeLightID(coord.x, coord.y, coord.z);
-
-            chunk->emissiveLights.push_back(light);
-        }
-
-        chunk->lightingDirty = false;
-        chunkManager->updateEmissiveMembership(*chunk);
     }
+}
 
-    void Game::updateChunkLights(Chunk *chunk) {
-        ZoneScoped;
-        chunk->gpuCache.nearbyLights.clear();
-        chunk->gpuCache.nearbyLights.reserve(MAX_LIGHTS);
+if (count > 0) {
+    VoxelLight light;
+    light.pos = sumPos / float(count);
+    light.color = sumColor / float(count);
+    light.intensity = float(count) * 65.0f;
+    light.id = makeLightID(coord.x, coord.y, coord.z);
 
-        glm::vec3 chunkOrigin(
-                chunk->coord.x * DIM,
-                chunk->coord.y * DIM,
-                chunk->coord.z * DIM
-        );
-        glm::vec3 chunkCenter = chunkOrigin + glm::vec3(DIM * 0.5f);
+    chunk->emissiveLights.push_back(light);
+}
 
-        // Fast path
-        if (flatEmissiveLightList.empty()) {
-            chunk->gpuCache.lastLightUpdateFrame = frameCounter;
-            return;
-        }
+chunk->lightingDirty = false;
+chunkManager->updateEmissiveMembership(*chunk);
+}
 
-        const float radiusSq = LIGHT_RADIUS_SQ;
-        const int K = MAX_LIGHTS;
+void Game::updateChunkLights(Chunk *chunk) {
+ZoneScoped;
+chunk->gpuCache.nearbyLights.clear();
+chunk->gpuCache.nearbyLights.reserve(MAX_LIGHTS);
 
-        // small stack arrays (K is tiny)
-        std::array<const VoxelLight *, 8> bestPtrs{};   // pointer candidates
-        std::array<float, 8> bestScore{};              // score = intensity / (distSq + 1)
-        int bestCount = 0;
+glm::vec3 chunkOrigin(
+        chunk->coord.x * DIM,
+        chunk->coord.y * DIM,
+        chunk->coord.z * DIM
+);
+glm::vec3 chunkCenter = chunkOrigin + glm::vec3(DIM * 0.5f);
 
-        // keep track of the current worst score index (min score)
-        float worstScore = std::numeric_limits<float>::infinity();
-        int worstIndex = -1;
+// Fast path
+if (flatEmissiveLightList.empty()) {
+    chunk->gpuCache.lastLightUpdateFrame = frameCounter;
+    return;
+}
 
-        for (const VoxelLight *light: flatEmissiveLightList) {
-            glm::vec3 d = light->pos - chunkCenter;
-            float distSq = glm::dot(d, d);
+const float radiusSq = LIGHT_RADIUS_SQ;
+const int K = MAX_LIGHTS;
 
-            if (distSq > radiusSq) continue; // skip out-of-range lights
+// small stack arrays (K is tiny)
+std::array<const VoxelLight *, 8> bestPtrs{};   // pointer candidates
+std::array<float, 8> bestScore{};              // score = intensity / (distSq + 1)
+int bestCount = 0;
 
-            // Score uses shader-like falloff (intensity divided by squared distance + 1)
-            // +1 avoids division by zero and keeps near-zero distance finite
-            float score = light->intensity / (distSq + 1.0f);
+// keep track of the current worst score index (min score)
+float worstScore = std::numeric_limits<float>::infinity();
+int worstIndex = -1;
 
-            if (bestCount < K) {
-                // append
-                bestPtrs[bestCount] = light;
-                bestScore[bestCount] = score;
-                ++bestCount;
+for (const VoxelLight *light: flatEmissiveLightList) {
+    glm::vec3 d = light->pos - chunkCenter;
+    float distSq = glm::dot(d, d);
 
-                // find new worst
-                worstScore = bestScore[0];
-                worstIndex = 0;
-                for (int i = 1; i < bestCount; ++i) {
-                    if (bestScore[i] < worstScore) {
-                        worstScore = bestScore[i];
-                        worstIndex = i;
-                    }
-                }
-            } else {
-                // replace worst if this one has a higher score
-                if (score > worstScore) {
-                    bestPtrs[worstIndex] = light;
-                    bestScore[worstIndex] = score;
+    if (distSq > radiusSq) continue; // skip out-of-range lights
 
-                    // recompute worst (small K)
-                    worstScore = bestScore[0];
-                    worstIndex = 0;
-                    for (int i = 1; i < K; ++i) {
-                        if (bestScore[i] < worstScore) {
-                            worstScore = bestScore[i];
-                            worstIndex = i;
-                        }
-                    }
-                }
+    // Score uses shader-like falloff (intensity divided by squared distance + 1)
+    // +1 avoids division by zero and keeps near-zero distance finite
+    float score = light->intensity / (distSq + 1.0f);
+
+    if (bestCount < K) {
+        // append
+        bestPtrs[bestCount] = light;
+        bestScore[bestCount] = score;
+        ++bestCount;
+
+        // find new worst
+        worstScore = bestScore[0];
+        worstIndex = 0;
+        for (int i = 1; i < bestCount; ++i) {
+            if (bestScore[i] < worstScore) {
+                worstScore = bestScore[i];
+                worstIndex = i;
             }
         }
+    } else {
+        // replace worst if this one has a higher score
+        if (score > worstScore) {
+            bestPtrs[worstIndex] = light;
+            bestScore[worstIndex] = score;
 
-        // Move found lights into chunk->gpuCache.nearbyLights sorted by descending score
-        if (bestCount > 0) {
-            std::vector<int> idx(bestCount);
-            for (int i = 0; i < bestCount; ++i) idx[i] = i;
-            // sort so highest score first
-            std::sort(idx.begin(), idx.end(), [&](int a, int b) {
-                return bestScore[a] > bestScore[b];
-            });
-
-            for (int i = 0; i < bestCount; ++i) {
-                chunk->gpuCache.nearbyLights.push_back(const_cast<VoxelLight *>(bestPtrs[idx[i]]));
-            }
-        }
-
-        chunk->gpuCache.lastLightUpdateFrame = frameCounter;
-    }
-
-
-    void Game::processEmissiveChunks() {
-        chunkManager->forEachEmissiveChunk([this](Chunk *chunk) {
-            // Process only emissive chunks
-            if (chunk->lightingDirty) {
-                rebuildChunkLights(chunk->coord);
-            }
-
-            // Collect emissive lights for billboards
-            for (const auto &light: chunk->emissiveLights) {
-                if (usedLightIDs.insert(light.id).second) {
-                    SunInstance inst;
-                    inst.position = light.pos;
-                    inst.scale = std::sqrt(light.intensity)/VOXEL_SIZE * 0.5f;
-                    inst.color = light.color * 2.5f;
-                    emissiveBillboards.push_back(inst);
-                }
-            }
-        });
-    }
-
-    uint32_t Game::makeLightID(int cx, int cy, int cz) {
-        // Simple hash function for light ID
-        return ((cx & 0xFFF) << 20) | ((cy & 0xFFF) << 8) | (cz & 0xFF);
-    }
-
-    void Game::setupLightSSBOs()
-    {
-        glGenBuffers(1, &ssboLights);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboLights);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, 4096 * sizeof(VoxelLightGpu), nullptr, GL_DYNAMIC_DRAW); // capacity
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-
-        glGenBuffers(1, &ssboChunkLightIdx);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboChunkLightIdx);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, MAX_CHUNKS_GPU * sizeof(ChunkLightIndexGpu), nullptr, GL_DYNAMIC_DRAW);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-    }
-
-    inline uint32_t Game::lightIndexFromPtr(const VoxelLight* ptr) const {
-        const VoxelLight* base = mergedEmissiveLightPool.data();
-        return (uint32_t)(ptr - base);
-    }
-
-    void Game::uploadMergedLightsToGPU()
-    {
-        std::vector<VoxelLightGpu> gpu;
-        gpu.resize(mergedEmissiveLightPool.size());
-
-        for (size_t i = 0; i < mergedEmissiveLightPool.size(); ++i) {
-            const auto& L = mergedEmissiveLightPool[i];
-            gpu[i].posIntensity = glm::vec4(L.pos, L.intensity);
-            gpu[i].color        = glm::vec4(L.color, 0.0f);
-        }
-
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboLights);
-        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, gpu.size() * sizeof(VoxelLightGpu), gpu.data());
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-    }
-
-    void Game::buildAndUploadChunkLightIndexBuffer(int camCX, int camCY, int camCZ, int renderRadius)
-    {
-        static int lastUpdateFrame = -1;
-        static int lastCamCX = camCX, lastCamCY = camCY, lastCamCZ = camCZ;
-        static int lastRenderRadius = renderRadius;
-
-        const int UPDATE_INTERVAL = 213;
-        const int CAM_MOVE_THRESHOLD = VOXEL_SIZE*CHUNK_SIZE;
-
-        bool needsUpdate = false;
-
-        if ((std::abs(camCX - lastCamCX) >= CAM_MOVE_THRESHOLD ||
-            std::abs(camCY - lastCamCY) >= CAM_MOVE_THRESHOLD ||
-            std::abs(camCZ - lastCamCZ) >= CAM_MOVE_THRESHOLD ||
-            renderRadius != lastRenderRadius)&&(frameCounter - lastUpdateFrame >= UPDATE_INTERVAL)) {
-            needsUpdate = true;
-        }
-
-        if (!needsUpdate) {
-            return; // Skip update this frame
-        }
-
-        lastUpdateFrame = frameCounter;
-        lastCamCX = camCX;
-        lastCamCY = camCY;
-        lastCamCZ = camCZ;
-        lastRenderRadius = renderRadius;
-
-        std::vector<ChunkLightIndexGpu> chunkIdx(MAX_CHUNKS_GPU);
-        for (auto& e : chunkIdx) {
-            e.count = 0;
-            for (int i = 0; i < 4; ++i) e.indices[i] = 0;
-        }
-
-        for (int cx = camCX - renderRadius; cx <= camCX + renderRadius; ++cx) {
-            for (int cy = camCY - renderRadius; cy <= camCY + renderRadius; ++cy) {
-                for (int cz = camCZ - renderRadius; cz <= camCZ + renderRadius; ++cz) {
-                    Chunk* chunk = chunkManager->getChunk({cx,cy,cz});
-                    if (!chunk) continue;
-                    if (!chunk->gpuCache.isValid) continue;
-
-                    if (frameCounter - chunk->gpuCache.lastLightUpdateFrame > LIGHT_UPDATE_INTERVAL ||
-                        chunk->gpuCache.nearbyLights.empty()) {
-                        updateChunkLights(chunk);
-                    }
-
-                    auto& dst = chunkIdx[chunk->gpuSlot];
-                    int num = std::min((int)chunk->gpuCache.nearbyLights.size(), MAX_LIGHTS);
-                    dst.count = (uint32_t)num;
-
-                    for (int i = 0; i < num; ++i) {
-                        const VoxelLight* L = chunk->gpuCache.nearbyLights[i];
-                        dst.indices[i] = lightIndexFromPtr(L);
-                    }
+            // recompute worst (small K)
+            worstScore = bestScore[0];
+            worstIndex = 0;
+            for (int i = 1; i < K; ++i) {
+                if (bestScore[i] < worstScore) {
+                    worstScore = bestScore[i];
+                    worstIndex = i;
                 }
             }
         }
-
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboChunkLightIdx);
-        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, chunkIdx.size() * sizeof(ChunkLightIndexGpu), chunkIdx.data());
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     }
+}
+
+// Move found lights into chunk->gpuCache.nearbyLights sorted by descending score
+if (bestCount > 0) {
+    std::vector<int> idx(bestCount);
+    for (int i = 0; i < bestCount; ++i) idx[i] = i;
+    // sort so highest score first
+    std::sort(idx.begin(), idx.end(), [&](int a, int b) {
+        return bestScore[a] > bestScore[b];
+    });
+
+    for (int i = 0; i < bestCount; ++i) {
+        chunk->gpuCache.nearbyLights.push_back(const_cast<VoxelLight *>(bestPtrs[idx[i]]));
+    }
+}
+
+chunk->gpuCache.lastLightUpdateFrame = frameCounter;
+}
+
+
+void Game::processEmissiveChunks() {
+chunkManager->forEachEmissiveChunk([this](Chunk *chunk) {
+    // Process only emissive chunks
+    if (chunk->lightingDirty) {
+        rebuildChunkLights(chunk->coord);
+    }
+
+    // Collect emissive lights for billboards
+    for (const auto &light: chunk->emissiveLights) {
+        if (usedLightIDs.insert(light.id).second) {
+            SunInstance inst;
+            inst.position = light.pos;
+            inst.scale = std::sqrt(light.intensity)/VOXEL_SIZE * 0.5f;
+            inst.color = light.color * 2.5f;
+            emissiveBillboards.push_back(inst);
+        }
+    }
+});
+}
+
+uint32_t Game::makeLightID(int cx, int cy, int cz) {
+// Simple hash function for light ID
+return ((cx & 0xFFF) << 20) | ((cy & 0xFFF) << 8) | (cz & 0xFF);
+}
+
+void Game::setupLightSSBOs()
+{
+glGenBuffers(1, &ssboLights);
+glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboLights);
+glBufferData(GL_SHADER_STORAGE_BUFFER, 4096 * sizeof(VoxelLightGpu), nullptr, GL_DYNAMIC_DRAW); // capacity
+glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+glGenBuffers(1, &ssboChunkLightIdx);
+glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboChunkLightIdx);
+glBufferData(GL_SHADER_STORAGE_BUFFER, MAX_CHUNKS_GPU * sizeof(ChunkLightIndexGpu), nullptr, GL_DYNAMIC_DRAW);
+glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+}
+
+inline uint32_t Game::lightIndexFromPtr(const VoxelLight* ptr) const {
+const VoxelLight* base = mergedEmissiveLightPool.data();
+return (uint32_t)(ptr - base);
+}
+
+void Game::uploadMergedLightsToGPU()
+{
+std::vector<VoxelLightGpu> gpu;
+gpu.resize(mergedEmissiveLightPool.size());
+
+for (size_t i = 0; i < mergedEmissiveLightPool.size(); ++i) {
+    const auto& L = mergedEmissiveLightPool[i];
+    gpu[i].posIntensity = glm::vec4(L.pos, L.intensity);
+    gpu[i].color        = glm::vec4(L.color, 0.0f);
+}
+
+glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboLights);
+glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, gpu.size() * sizeof(VoxelLightGpu), gpu.data());
+glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+}
+
+void Game::buildAndUploadChunkLightIndexBuffer(int camCX, int camCY, int camCZ, int renderRadius)
+{
+static int lastUpdateFrame = -1;
+static int lastCamCX = camCX, lastCamCY = camCY, lastCamCZ = camCZ;
+static int lastRenderRadius = renderRadius;
+
+const int UPDATE_INTERVAL = 213;
+const int CAM_MOVE_THRESHOLD = VOXEL_SIZE*CHUNK_SIZE;
+
+bool needsUpdate = false;
+
+if ((std::abs(camCX - lastCamCX) >= CAM_MOVE_THRESHOLD ||
+    std::abs(camCY - lastCamCY) >= CAM_MOVE_THRESHOLD ||
+    std::abs(camCZ - lastCamCZ) >= CAM_MOVE_THRESHOLD ||
+    renderRadius != lastRenderRadius)&&(frameCounter - lastUpdateFrame >= UPDATE_INTERVAL)) {
+    needsUpdate = true;
+}
+
+if (!needsUpdate) {
+    return; // Skip update this frame
+}
+
+lastUpdateFrame = frameCounter;
+lastCamCX = camCX;
+lastCamCY = camCY;
+lastCamCZ = camCZ;
+lastRenderRadius = renderRadius;
+
+std::vector<ChunkLightIndexGpu> chunkIdx(MAX_CHUNKS_GPU);
+for (auto& e : chunkIdx) {
+    e.count = 0;
+    for (int i = 0; i < 4; ++i) e.indices[i] = 0;
+}
+
+for (int cx = camCX - renderRadius; cx <= camCX + renderRadius; ++cx) {
+    for (int cy = camCY - renderRadius; cy <= camCY + renderRadius; ++cy) {
+        for (int cz = camCZ - renderRadius; cz <= camCZ + renderRadius; ++cz) {
+            Chunk* chunk = chunkManager->getChunk({cx,cy,cz});
+            if (!chunk) continue;
+            if (!chunk->gpuCache.isValid) continue;
+
+            if (frameCounter - chunk->gpuCache.lastLightUpdateFrame > LIGHT_UPDATE_INTERVAL ||
+                chunk->gpuCache.nearbyLights.empty()) {
+                updateChunkLights(chunk);
+            }
+
+            auto& dst = chunkIdx[chunk->gpuSlot];
+            int num = std::min((int)chunk->gpuCache.nearbyLights.size(), MAX_LIGHTS);
+            dst.count = (uint32_t)num;
+
+            for (int i = 0; i < num; ++i) {
+                const VoxelLight* L = chunk->gpuCache.nearbyLights[i];
+                dst.indices[i] = lightIndexFromPtr(L);
+            }
+        }
+    }
+}
+
+glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboChunkLightIdx);
+glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, chunkIdx.size() * sizeof(ChunkLightIndexGpu), chunkIdx.data());
+glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+}
 
 
 ////----Input Code------------------------------------------------------------------------------------------------------------------------------
 
-    void Game::updateImpactEffects(float dt)
-    {
-        for (auto& p : impactParticles) {
-            if (!p.active) continue;
+void Game::updateImpactEffects(float dt)
+{
+for (auto& p : impactParticles) {
+    if (!p.active) continue;
 
-            p.age += dt;
-            if (p.age >= p.lifetime) {
-                p.active = false;
-                continue;
-            }
-
-            // Basic motion
-            p.position += p.velocity * dt;
-
-            // Drag
-            p.velocity *= 0.96f;
-
-            // Gentle upward drift for smoke
-            if (p.kind == 0) {
-                p.velocity += glm::vec3(0.0f, 0.35f * VOXEL_SIZE, 0.0f) * dt;
-            }
-
-            p.rotation += p.rotationSpeed * dt;
-        }
-
-        // compact occasionally
-        impactParticles.erase(
-                std::remove_if(impactParticles.begin(), impactParticles.end(),
-                               [](const ImpactParticle& p) { return !p.active; }),
-                impactParticles.end()
-        );
+    p.age += dt;
+    if (p.age >= p.lifetime) {
+        p.active = false;
+        continue;
     }
 
+    // Basic motion
+    p.position += p.velocity * dt;
 
-    void Game::update() {
-        TRACY_CPU_ZONE("Game::update()");
+    // Drag
+    p.velocity *= 0.96f;
 
-        // Update merged lights occasionally (CPU) + upload to GPU
-        if (frameCounter % 240 == 0) {
-            TRACY_CPU_ZONE("renderChunks::updateLightSpatialHash");
-            updateLightSpatialHash();
-            uploadMergedLightsToGPU();
-        }
-
-        {
-            TRACY_CPU_ZONE("Game::Recalc Meshes and Lights");
-            chunkManager->rebuildDirtyChunks([this](Chunk* chunk) {
-                chunkRenderer->generateChunkMesh(chunk);
-            },cameraPos);
-        }
-
-        // per-chunk light index buffer
-        if(frameCounter % 311 == 0)
-        {
-            TRACY_CPU_ZONE("renderChunks::buildAndUploadChunkLightIndexBuffer");
-            const int camCX = worldToChunk(cameraPos.x);
-            const int camCY = worldToChunk(cameraPos.y);
-            const int camCZ = worldToChunk(cameraPos.z);
-            const int renderRadius = RenderingRange;
-            buildAndUploadChunkLightIndexBuffer(camCX, camCY, camCZ, renderRadius);
-        }
-
-        if(getPlayerHealth()<=0)
-        {
-            requestSceneChange(SceneId::MainMenu);
-        }
-        {
-            TRACY_CPU_ZONE("SunBurns()");
-            chunkManager->forEachEmissiveChunk([this](Chunk *chunk) {
-            VoxelLight best;
-            float bestGravity=0;
-            for (auto &light: chunk->emissiveLights) {
-                glm::vec3 dist=(cameraPos-light.pos);
-                float distsq = glm::sqrt(dist.x*dist.x+ dist.y*dist.y+ dist.z*dist.z);
-                if(distsq<0.0006f*light.intensity)
-                {
-                    setPlayerHealth(getPlayerHealth()-0.0075f*distsq);
-                }
-                float gravity = glm::pow(light.intensity,0.5f)-distsq;
-                if(gravity>bestGravity)
-                {
-                    bestGravity=gravity;
-                    best=light;
-                    gravity=glm::clamp(gravity,0.0f,25.0f);
-                    characterController->settings.gravity = gravity;
-                }
-            }
-                if(best.pos!=characterController->settings.lastGravPoint&&!characterController->isSurfaceAdhered())
-                {
-                    characterController->settings.lastGravPoint=best.pos;
-                    glm::vec3 gravDir = glm::normalize(best.pos - cameraPos);
-                    characterController->settings.gravityDir = gravDir;
-                    //float pitch = glm::degrees(glm::asin(gravDir.y));
-                    //float yaw = glm::degrees(glm::atan(gravDir.z, gravDir.x));
-                    //cameraRotation = glm::vec2(pitch, yaw);
-                }
-        });
-        }
-
-        emissiveUpdateCounter++;
-        if (++emissiveUpdateCounter >= 100) { // Every 100 frames
-            TRACY_CPU_ZONE("ProcessEmissiveChunks()");
-            processEmissiveChunks();
-            emissiveUpdateCounter = 0;
-        }
-
-        input.update(window);
-        actions.update(input);
-
-        // Now use clean, readable input checks
-        if (actions["Escape"].wasJustPressed) {
-           // glfwSetWindowShouldClose(window, true);
-        }
-
-        if (actions["ToggleDebug"].wasJustPressed) {
-            DebugMode1 = !DebugMode1;
-            activeSpellMat=0;
-            std::cout << "Debug mode: " << (DebugMode1 ? "ON" : "OFF") << "\n";
-
-            // Optional: Update shaders like before
-            if (DebugMode1) {
-                voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel_debug.frag");
-                activeDebugMode = 0;
-            } else {
-                DebugMode2=false;
-                voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel.frag");
-            }
-        }
-
-        if (actions["DebugMode1"].wasJustPressed&&DebugMode1) {
-            activeDebugMode = 1;
-        } else if(actions["DebugMode1"].wasJustPressed)
-        {
-            activeSpellMat=1;
-        }
-        if (actions["DebugMode2"].wasJustPressed&&DebugMode1) {
-            activeDebugMode = 2;
-        } else if (actions["DebugMode2"].wasJustPressed) {
-            activeSpellMat = 2;
-        }
-        if (actions["DebugMode3"].wasJustPressed&&DebugMode1) {
-            activeDebugMode = 3;
-        } else  if (actions["DebugMode3"].wasJustPressed) {
-            activeSpellMat = 3;
-        }
-        if (actions["DebugMode4"].wasJustPressed&&DebugMode1) {
-            activeDebugMode = 4;
-        }
-        else if (actions["DebugMode4"].wasJustPressed) {
-            activeSpellMat = 4;
-        }
-        if (actions["DebugMode5"].wasJustPressed&&DebugMode1) {
-            activeDebugMode = 5;
-        } else  if (actions["DebugMode5"].wasJustPressed) {
-            activeSpellMat = 5;
-        }
-        if (actions["DebugMode6"].wasJustPressed&&DebugMode1) {
-            activeDebugMode = 6;
-        } else if (actions["DebugMode6"].wasJustPressed) {
-            activeSpellMat = 6;
-        }
-        if (actions["Wireframe"].wasJustPressed&&DebugMode1) {
-            DebugMode2=!DebugMode2;
-        }
-
-        if (actions["CastSphere"].wasJustReleased) {
-            std::cout << "Sphere Spell Triggered\n";
-            RayCastResult hit = rayCastFromCamera(5.0f);
-            glm::vec3 spellCenter = hit.hit ? hit.hitPosition :
-                                    (cameraPos + getCameraFront() * 35.0f);
-
-            // Cast spell with physics enabled
-            float spellRadius = 20.0f * VOXEL_SIZE;  // Adjust size
-            float spellStrength = 3.0f;              // Affects velocity
-
-            if (spellSystem)
-                spellSystem->castSphere(spellCenter, spellRadius, activeSpellMat, spellStrength);
-        }
-
-        if (actions["CastWall"].wasJustReleased) {
-            std::cout << "Wall Spell Triggered" << "\n";
-            RayCastResult hit = rayCastFromCamera(250.0f);
-            glm::vec3 spellCenter = hit.hit ? hit.hitPosition+getCameraFront() * 20.5f :
-                                    (cameraPos + getCameraFront() * 40.0f);
-
-            // Get camera direction for wall orientation
-            glm::vec3 cameraFront = getCameraFront();
-
-            // Wall dimensions (tune these values)
-            float wallWidth = 0.75f*VOXEL_SIZE;    // Horizontal width
-            float wallHeight = 0.25f*VOXEL_SIZE;   // Vertical height
-            float wallThickness = 3.5f*VOXEL_SIZE; // How thick the wall is
-
-            // Cast the wall spell
-            spellSystem->castWall(spellCenter, cameraFront,
-                          wallWidth, wallHeight, wallThickness,
-                          0, 2.0f*VOXEL_SIZE);
-        }
-        if (actions["AirReset"].wasJustReleased) {
-            std::cout << "Platform Spell Triggered" << "\n";
-            glm::vec3 spellCenter =(cameraPos + glm::vec3(0,-1,0) * 25.0f*VOXEL_SIZE);
-
-            // Wall dimensions (tune these values)
-            float wallWidth = 1.0f*VOXEL_SIZE;    // Horizontal width
-            float wallHeight = 1.05f*VOXEL_SIZE;   // Vertical height
-            float wallThickness = 3.5f*VOXEL_SIZE; // How thick the wall is
-
-            // Cast the wall spell
-            spellSystem->castWall(spellCenter, glm::vec3(0,-1,0),
-                          wallWidth, wallHeight, wallThickness,
-                          0, 7.5f*VOXEL_SIZE);
-        }
-
-
-        // Character movement - perfect for your controller
-
-        // Update camera to follow character
-        updateCamera();
-        burn01(1.0f,5.0f);
-
-        // Update dynamic chunks
-        // chunkManager->forEachDynamicChunk([this](Chunk* chunk) {
-        // Physics, animation, etc.
-        //});
-
-        // Update fluid chunks
-        //chunkManager->forEachFluidChunk([this](Chunk* chunk) {
-        // Fluid simulation
-        //});
+    // Gentle upward drift for smoke
+    if (p.kind == 0) {
+        p.velocity += glm::vec3(0.0f, 0.35f * VOXEL_SIZE, 0.0f) * dt;
     }
 
-    glm::vec3 Game::getCameraFront() const {
-        glm::vec3 up = getCameraUp();
+    p.rotation += p.rotationSpeed * dt;
+}
 
-        glm::vec3 referenceForward = glm::vec3(0.0f, 0.0f, -1.0f);
-        if (std::abs(glm::dot(referenceForward, up)) > 0.98f) {
-            referenceForward = glm::vec3(1.0f, 0.0f, 0.0f);
+// compact occasionally
+impactParticles.erase(
+        std::remove_if(impactParticles.begin(), impactParticles.end(),
+                       [](const ImpactParticle& p) { return !p.active; }),
+        impactParticles.end()
+);
+}
+
+
+void Game::update() {
+TRACY_CPU_ZONE("Game::update()");
+
+// Update merged lights occasionally (CPU) + upload to GPU
+if (frameCounter % 240 == 0) {
+    TRACY_CPU_ZONE("renderChunks::updateLightSpatialHash");
+    chunkRenderer->updateLightSpatialHash();
+    chunkRenderer->uploadMergedLightsToGPU();
+    chunkManager->forEachChunk([&](gl3::Chunk* chunk)
+                               {rebuildChunkLights(chunk->coord);
+                                   chunk->lightingDirty = false;
+                                   for (const auto& light : chunk->emissiveLights) {
+                                       if (usedLightIDs.insert(light.id).second) {
+                                           SunInstance inst;
+                                           inst.position = light.pos;
+                                           inst.scale = std::sqrt(light.intensity) * 0.5f;
+                                           inst.color = light.color * 1.0f;
+                                           emissiveBillboards.push_back(inst);
+                                       }
+                                   }
+                               });
+}
+{
+    TRACY_CPU_ZONE("Game::Recalc Meshes and Lights");
+    chunkManager->rebuildDirtyChunks([this](Chunk* chunk) {
+        chunkRenderer->generateChunkMesh(chunk);
+    },cameraPos);
+}
+
+// per-chunk light index buffer
+if(frameCounter % 311 == 0)
+{
+    TRACY_CPU_ZONE("renderChunks::buildAndUploadChunkLightIndexBuffer");
+    const int camCX = worldToChunk(cameraPos.x);
+    const int camCY = worldToChunk(cameraPos.y);
+    const int camCZ = worldToChunk(cameraPos.z);
+    const int renderRadius = RenderingRange;
+    chunkRenderer->buildAndUploadChunkLightIndexBuffer(camCX, camCY, camCZ, renderRadius,frameCounter);
+}
+
+if(getPlayerHealth()<=0)
+{
+    requestSceneChange(SceneId::MainMenu);
+}
+{
+    TRACY_CPU_ZONE("SunBurns()");
+    chunkManager->forEachEmissiveChunk([this](Chunk *chunk) {
+    VoxelLight best;
+    float bestGravity=0;
+    for (auto &light: chunk->emissiveLights) {
+        glm::vec3 dist=(cameraPos-light.pos);
+        float distsq = glm::sqrt(dist.x*dist.x+ dist.y*dist.y+ dist.z*dist.z);
+        if(distsq<std::sqrt(light.intensity) * 0.15f)
+        {
+            setPlayerHealth(getPlayerHealth()-0.0075f*distsq);
         }
+        float gravity = glm::pow(light.intensity,1.0f)-distsq;
+        if(gravity>bestGravity&&!characterController->isSurfaceAdhered())
+        {
+            bestGravity=gravity;
+            best=light;
+            gravity=glm::clamp(gravity,0.0f,25.0f);
+            characterController->settings.gravity = gravity;
+        }
+    }
+        if(best.pos!=characterController->settings.lastGravPoint&&!characterController->isSurfaceAdhered())
+        {
+            characterController->settings.lastGravPoint=best.pos;
+            glm::vec3 gravDir = glm::normalize(best.pos - cameraPos);
+            characterController->settings.gravityDir = gravDir;
+            //float pitch = glm::degrees(glm::asin(gravDir.y));
+            //float yaw = glm::degrees(glm::atan(gravDir.z, gravDir.x));
+            //cameraRotation = glm::vec2(pitch, yaw);
+        }
+});
+}
 
-        glm::vec3 right = glm::normalize(glm::cross(referenceForward, up));
-        glm::vec3 forwardOnPlane = glm::normalize(glm::cross(up, right));
+emissiveUpdateCounter++;
+if (++emissiveUpdateCounter >= 100) { // Every 100 frames
+    TRACY_CPU_ZONE("ProcessEmissiveChunks()");
+    processEmissiveChunks();
+    emissiveUpdateCounter = 0;
+}
 
-        float yaw = glm::radians(cameraRotation.y);
-        float pitch = glm::radians(cameraRotation.x);
+input.update(window);
+actions.update(input);
 
-        glm::vec3 yawed =
-                glm::normalize(forwardOnPlane * std::cos(yaw) + right * std::sin(yaw));
+// Now use clean, readable input checks
+if (actions["Escape"].wasJustPressed) {
+   // glfwSetWindowShouldClose(window, true);
+}
 
-        glm::vec3 pitchAxis = glm::normalize(glm::cross(up, yawed));
-        glm::vec3 front =
-                glm::normalize(yawed * std::cos(pitch) + up * std::sin(pitch));
+if (actions["ToggleDebug"].wasJustPressed) {
+    DebugMode1 = !DebugMode1;
+    activeSpellMat=0;
+    std::cout << "Debug mode: " << (DebugMode1 ? "ON" : "OFF") << "\n";
 
-        return front;
+    // Optional: Update shaders like before
+    if (DebugMode1) {
+        voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel_debug.frag");
+        activeDebugMode = 0;
+    } else {
+        DebugMode2=false;
+        voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel.frag");
+    }
+}
+
+if (actions["DebugMode1"].wasJustPressed&&DebugMode1) {
+    activeDebugMode = 1;
+} else if(actions["DebugMode1"].wasJustPressed)
+{
+    activeSpellMat=1;
+}
+if (actions["DebugMode2"].wasJustPressed&&DebugMode1) {
+    activeDebugMode = 2;
+} else if (actions["DebugMode2"].wasJustPressed) {
+    activeSpellMat = 2;
+}
+if (actions["DebugMode3"].wasJustPressed&&DebugMode1) {
+    activeDebugMode = 3;
+} else  if (actions["DebugMode3"].wasJustPressed) {
+    activeSpellMat = 3;
+}
+if (actions["DebugMode4"].wasJustPressed&&DebugMode1) {
+    activeDebugMode = 4;
+}
+else if (actions["DebugMode4"].wasJustPressed) {
+    activeSpellMat = 4;
+}
+if (actions["DebugMode5"].wasJustPressed&&DebugMode1) {
+    activeDebugMode = 5;
+} else  if (actions["DebugMode5"].wasJustPressed) {
+    activeSpellMat = 5;
+}
+if (actions["DebugMode6"].wasJustPressed&&DebugMode1) {
+    activeDebugMode = 6;
+} else if (actions["DebugMode6"].wasJustPressed) {
+    activeSpellMat = 9;
+}
+if (actions["Wireframe"].wasJustPressed&&DebugMode1) {
+    DebugMode2=!DebugMode2;
+}
+
+if (actions["CastSphere"].wasJustReleased) {
+    std::cout << "Sphere Spell Triggered\n";
+    RayCastResult hit = rayCastFromCamera(5.0f);
+    glm::vec3 spellCenter = hit.hit ? hit.hitPosition :
+                            (cameraPos + getCameraFront() * 35.0f);
+
+    // Cast spell with physics enabled
+    float spellRadius = 2.0f * VOXEL_SIZE;  // Adjust size
+    float spellStrength = 3.0f;              // Affects velocity
+
+    if (spellSystem)
+        spellSystem->castSphere(spellCenter, spellRadius, activeSpellMat, spellStrength, getCameraFront(), VOXEL_SIZE*CHUNK_SIZE*3);
+}
+
+if (actions["CastWall"].wasJustReleased) {
+    std::cout << "Wall Spell Triggered" << "\n";
+    RayCastResult hit = rayCastFromCamera(250.0f);
+    glm::vec3 spellCenter = hit.hit ? hit.hitPosition+getCameraFront() * 20.5f :
+                            (cameraPos + getCameraFront() * 40.0f);
+
+    // Get camera direction for wall orientation
+    glm::vec3 cameraFront = getCameraFront();
+
+    // Wall dimensions (tune these values)
+    float wallWidth = 0.75f*VOXEL_SIZE;    // Horizontal width
+    float wallHeight = 0.25f*VOXEL_SIZE;   // Vertical height
+    float wallThickness = 3.5f*VOXEL_SIZE; // How thick the wall is
+
+    // Cast the wall spell
+    spellSystem->castWall(spellCenter, cameraFront,
+                  wallWidth, wallHeight, wallThickness,
+                  0, 2.0f*VOXEL_SIZE);
+}
+if (actions["AirReset"].wasJustReleased) {
+    std::cout << "Platform Spell Triggered" << "\n";
+    glm::vec3 spellCenter =(cameraPos + glm::vec3(0,-1,0) * 25.0f*VOXEL_SIZE);
+
+    // Wall dimensions (tune these values)
+    float wallWidth = 1.0f*VOXEL_SIZE;    // Horizontal width
+    float wallHeight = 1.05f*VOXEL_SIZE;   // Vertical height
+    float wallThickness = 3.5f*VOXEL_SIZE; // How thick the wall is
+
+    // Cast the wall spell
+    spellSystem->castWall(spellCenter, glm::vec3(0,-1,0),
+                  wallWidth, wallHeight, wallThickness,
+                  0, 7.5f*VOXEL_SIZE);
+}
+
+
+// Character movement - perfect for your controller
+
+// Update camera to follow character
+updateCamera();
+burn01(1.0f,5.0f);
+
+// Update dynamic chunks
+// chunkManager->forEachDynamicChunk([this](Chunk* chunk) {
+// Physics, animation, etc.
+//});
+
+// Update fluid chunks
+//chunkManager->forEachFluidChunk([this](Chunk* chunk) {
+// Fluid simulation
+//});
+}
+
+glm::vec3 Game::getCameraFront() const {
+        return glm::normalize(cameraForward);
     }
 
 
 ////----Rendering Code--------------------------------------------------------------------------------------------------------------------------
 
 //------General Rendering-Code------------------------------------------------------------------------------------------------------------------
-    void Game::renderSkybox() {
-        TRACY_CPU_ZONE("Game::renderSkybox");
-        TRACY_GPU_ZONE("Skybox");
+void Game::renderSkybox() {
+TRACY_CPU_ZONE("Game::renderSkybox");
+TRACY_GPU_ZONE("Skybox");
 
-        // If not baked yet for some reason, bake now (safe fallback)
-        if (!skyboxBaked) {
-            bakeNebulaCubemap(512);
-        }
-        if (!skyboxRuntimeShader)
-        {
-            std::cout<<"No skybox shader found";
-            return;
-        }
+// If not baked yet for some reason, bake now (safe fallback)
+if (!skyboxBaked) {
+    bakeNebulaCubemap(512);
+}
+if (!skyboxRuntimeShader)
+{
+    std::cout<<"No skybox shader found";
+    return;
+}
 
-        GLint oldDepthFunc;
-        glGetIntegerv(GL_DEPTH_FUNC, &oldDepthFunc);
-        GLboolean depthMask;
-        glGetBooleanv(GL_DEPTH_WRITEMASK, &depthMask);
+GLint oldDepthFunc;
+glGetIntegerv(GL_DEPTH_FUNC, &oldDepthFunc);
+GLboolean depthMask;
+glGetBooleanv(GL_DEPTH_WRITEMASK, &depthMask);
 
-        glDepthFunc(GL_LEQUAL);
-        glDepthMask(GL_FALSE);
+glDepthFunc(GL_LEQUAL);
+glDepthMask(GL_FALSE);
 
-        skyboxRuntimeShader->use();
-        skyboxRuntimeShader->setFloat("time", (float)glfwGetTime());
+skyboxRuntimeShader->use();
+skyboxRuntimeShader->setFloat("time", (float)glfwGetTime());
 
-        float aspect = (float)windowWidth / (float)windowHeight;
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
-        glm::vec3 camUp = getCameraUp();
-        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
-        skyboxRuntimeShader->setMatrix("projection", projection);
-        skyboxRuntimeShader->setMatrix("view", view);
+float aspect = (float)windowWidth / (float)windowHeight;
+glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
+glm::vec3 camUp = getCameraUp();
+glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
+skyboxRuntimeShader->setMatrix("projection", projection);
+skyboxRuntimeShader->setMatrix("view", view);
 
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_CUBE_MAP, nebulaCubemap);
-        skyboxRuntimeShader->setInt("nebulaCube", 0);
+glActiveTexture(GL_TEXTURE0);
+glBindTexture(GL_TEXTURE_CUBE_MAP, nebulaCubemap);
+skyboxRuntimeShader->setInt("nebulaCube", 0);
 
-        glBindVertexArray(skyboxVAO);
-        glDrawArrays(GL_TRIANGLES, 0, 36);
-        glBindVertexArray(0);
+glBindVertexArray(skyboxVAO);
+glDrawArrays(GL_TRIANGLES, 0, 36);
+glBindVertexArray(0);
 
-        glDepthFunc(oldDepthFunc);
-        glDepthMask(depthMask);
-    }
+glDepthFunc(oldDepthFunc);
+glDepthMask(depthMask);
+}
 
-    void Game::renderChunks()
-    {
-        TRACY_CPU_ZONE("Game::renderChunks");
-        TRACY_GPU_ZONE("Chunks (total)");
+void Game::renderChunks()
+{
+TRACY_CPU_ZONE("Game::renderChunks");
+TRACY_GPU_ZONE("Chunks (total)");
 
-        int built = 0;
-        int lighted = 0;
+int built = 0;
+int lighted = 0;
 
-        glPolygonMode(GL_FRONT_AND_BACK, DebugMode2 ? GL_LINE : GL_FILL);
+glPolygonMode(GL_FRONT_AND_BACK, DebugMode2 ? GL_LINE : GL_FILL);
 
-        float aspect = (windowHeight == 0) ? (float)windowWidth : (float)windowWidth / (float)windowHeight;
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
-        glm::vec3 camUp = getCameraUp();
-        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
-        glm::mat4 pv = projection * view;
+float aspect = (windowHeight == 0) ? (float)windowWidth : (float)windowWidth / (float)windowHeight;
+glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
+glm::vec3 camUp = getCameraUp();
+glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
+glm::mat4 pv = projection * view;
 
-        frameCounter++;
+frameCounter++;
 
-        emissiveBillboards.clear();
-        usedLightIDs.clear();
+emissiveBillboards.clear();
+usedLightIDs.clear();
 
-        const int camCX = worldToChunk(cameraPos.x);
-        const int camCY = worldToChunk(cameraPos.y);
-        const int camCZ = worldToChunk(cameraPos.z);
-        const int renderRadius = RenderingRange;
+const int camCX = worldToChunk(cameraPos.x);
+const int camCY = worldToChunk(cameraPos.y);
+const int camCZ = worldToChunk(cameraPos.z);
+const int renderRadius = RenderingRange;
 
-        // Cleanup distant chunks periodically (every 60 frames)
-        if (frameCounter % 60 == 0) {
-            TRACY_CPU_ZONE("renderChunks::cleanupDistantSlots");
-            chunkManager->cleanupDistantSlots(cameraPos, renderRadius);
-        }
+// Cleanup distant chunks periodically (every 60 frames)
+if (frameCounter % 60 == 0) {
+    TRACY_CPU_ZONE("renderChunks::cleanupDistantSlots");
+    chunkManager->cleanupDistantSlots(cameraPos, renderRadius);
+}
 
-       // visibleDrawCmds.clear();
-        visibleSlots.clear();
-       // visibleDrawCmds.reserve((2*renderRadius+1)*(2*renderRadius+1)*(2*renderRadius+1));
+// visibleDrawCmds.clear();
+visibleSlots.clear();
+// visibleDrawCmds.reserve((2*renderRadius+1)*(2*renderRadius+1)*(2*renderRadius+1));
 
-        // Generate meshes / rebuild emissive lights
-        {
-            TRACY_CPU_ZONE("renderChunks::PrepareMeshesAndLights");
-            const int R = chunkManager->radius();
+// Generate meshes / rebuild emissive lights
+{
+    TRACY_CPU_ZONE("renderChunks::PrepareMeshesAndLights");
+    const int R = chunkManager->radius();
 
-            const int minCX = std::max(camCX - renderRadius, -R);
-            const int maxCX = std::min(camCX + renderRadius,  R);
-            const int minCY = std::max(camCY - renderRadius, -R);
-            const int maxCY = std::min(camCY + renderRadius,  R);
-            const int minCZ = std::max(camCZ - renderRadius, -R);
-            const int maxCZ = std::min(camCZ + renderRadius,  R);
+    const int minCX = std::max(camCX - renderRadius, -R);
+    const int maxCX = std::min(camCX + renderRadius,  R);
+    const int minCY = std::max(camCY - renderRadius, -R);
+    const int maxCY = std::min(camCY + renderRadius,  R);
+    const int minCZ = std::max(camCZ - renderRadius, -R);
+    const int maxCZ = std::min(camCZ + renderRadius,  R);
 
 
-            for (int cx = minCX; cx <= maxCX; ++cx)
-                for (int cy = minCY; cy <= maxCY; ++cy)
-                    for (int cz = minCZ; cz <= maxCZ; ++cz)
-                    {
-                        ChunkCoord coord{cx, cy, cz};
-                        Chunk* chunk = chunkManager->getChunk(coord);
-                        if (!chunk) continue;
+    for (int cx = minCX; cx <= maxCX; ++cx)
+        for (int cy = minCY; cy <= maxCY; ++cy)
+            for (int cz = minCZ; cz <= maxCZ; ++cz)
+            {
+                ChunkCoord coord{cx, cy, cz};
+                Chunk* chunk = chunkManager->getChunk(coord);
+                if (!chunk) continue;
 
-                        // Skip empty chunks (no geometry)
-                        if (chunk->isCleared) continue;
+                // Skip empty chunks (no geometry)
+                if (chunk->isCleared) continue;
 
-                       /* // Allocate GPU slot if needed and chunk has content
-                        if (chunk->gpuSlot == FixedGridChunkManager::INVALID_GPU_SLOT) {
-                            uint32_t slot = chunkManager->allocateGpuSlot(coord);
-                            if (slot == FixedGridChunkManager::INVALID_GPU_SLOT) {
-                                // No GPU slots available, skip this chunk for now
-                                continue;
-                            }
-                        }*/
+               /* // Allocate GPU slot if needed and chunk has content
+                if (chunk->gpuSlot == FixedGridChunkManager::INVALID_GPU_SLOT) {
+                    uint32_t slot = chunkManager->allocateGpuSlot(coord);
+                    if (slot == FixedGridChunkManager::INVALID_GPU_SLOT) {
+                        // No GPU slots available, skip this chunk for now
+                        continue;
+                    }
+                }*/
 /*
                         if (built < MAX_CHUNKS_PER_FRAME && (chunk->meshDirty || !chunk->gpuCache.isValid)) {
                             built++;
@@ -2532,6 +2657,7 @@ namespace gl3 {
 
             voxelShader->setMatrix("model", glm::mat4(1.0f));
             voxelShader->setMatrix("mvp", pv);
+
             voxelShader->setVec3("viewPos", cameraPos);
             voxelShader->setVec3("ambientColor", glm::vec3(0.85f));
 
@@ -2542,9 +2668,12 @@ namespace gl3 {
             voxelShader->setFloatArray("uMatRoughness", rough.data(), 64);
             voxelShader->setFloatArray("uMatSpecular",  spec.data(), 64);
             voxelShader->setFloatArray("uUVScale",      uvScale.data(), 64);
+            static float frameTime = 0.0f;
+            frameTime += deltaTime; // Accumulate time
+            voxelShader->setFloat("uTime", frameTime);
 
-            if (DebugMode1) voxelShader->setInt("debugMode", activeDebugMode % 5);
-            else voxelShader->setFloat("emission", 0.0f);
+            if (DebugMode1) voxelShader->setInt("debugMode", activeDebugMode % 7);
+
 
 
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 10, ssboLights);
@@ -2732,16 +2861,14 @@ namespace gl3 {
         voxelShader->setVec3("viewPos", cameraPos);
         voxelShader->setVec3("ambientColor", glm::vec3(0.85f));
 
-        // texture unit 0
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D_ARRAY, materialAlbedoArrayTexId);
-        voxelShader->setInt("uAlbedoArray", 0);
-
         voxelShader->setFloatArray("uMatRoughness", rough.data(), 64);
         voxelShader->setFloatArray("uMatSpecular",  spec.data(), 64);
         voxelShader->setFloatArray("uUVScale",      uvScale.data(), 64);
 
 
+        // texture unit 0
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, materialAlbedoArrayTexId);
         voxelShader->setInt("uBurnEnabled", 0);
         voxelShader->setFloat("uBurn", 0.0f);
         voxelShader->setVec3("uBurnCenter", glm::vec3(0.0f));
@@ -2778,6 +2905,8 @@ namespace gl3 {
             voxelShader->setMatrix("model", model);
             voxelShader->setMatrix("mvp", pv*model );
             voxelShader->setFloat("scale",spell.physicsBody->radius);
+            voxelShader->setInt("uAlbedoArray", 0);
+
 
             if (spell.burn.active) {
                 float u = burn01(spell.burn.t, spell.burn.duration);
@@ -2813,20 +2942,49 @@ namespace gl3 {
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
         glm::mat4 pv = projection * view;
 
+        voxelShader->setVec3("viewPos", cameraPos);
+        voxelShader->setVec3("ambientColor", glm::vec3(0.85f));
+
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, materialAlbedoArrayTexId);
+        voxelShader->setInt("uAlbedoArray", 0);
+
+        voxelShader->setFloatArray("uMatRoughness", rough.data(), 64);
+        voxelShader->setFloatArray("uMatSpecular",  spec.data(), 64);
+        voxelShader->setFloatArray("uUVScale",      uvScale.data(), 64);
+
         for (auto& e : enemyManager->all()) {
-            if (!e.renderMesh.isValid || e.renderMesh.vertexCount == 0) continue;
+            if (e.renderParts.empty()) continue;
 
-            glm::vec3 localCenter =
-                    0.5f * (glm::vec3(e.volume.dims) - glm::vec3(1.0f)) * e.volume.voxelSize;
+            glm::vec3 volumeCenterLocal = glm::vec3(16.0f, 16.0f, 16.0f) * VOXEL_SIZE;
 
-            glm::mat4 model = glm::translate(glm::mat4(1.0f), e.inst.position - localCenter);
-            // later: model *= glm::mat4_cast(e.inst.rotation);
+            glm::mat4 model = glm::translate(glm::mat4(1.0f), e.inst.position);
+
+            if (e.inst.rotation != glm::quat(1,0,0,0)) {
+                model *= glm::mat4_cast(e.inst.rotation);
+            }
+
+            model = glm::translate(model, -volumeCenterLocal);
 
             voxelShader->setMatrix("model", model);
             voxelShader->setMatrix("mvp", pv * model);
+            voxelShader->setFloat("emission", 0.3f);
+            voxelShader->setVec3("emissionColor", glm::vec3(0.4,0.0,0.4));
 
-            glBindVertexArray(e.renderMesh.vao);
-            glDrawArrays(GL_TRIANGLES, 0, (GLsizei)e.renderMesh.vertexCount);
+            voxelShader->setFloat("scale", e.inst.body ? e.inst.body->radius : e.inst.currentRadius);
+            glm::vec3 eyeCenterLocal = glm::vec3(16.0f, 16.0f, 16.0f) * VOXEL_SIZE
+                                       + glm::vec3(e.inst.currentRadius * 0.65f, 0.0f, 0.0f);
+            voxelShader->setVec3("uEyeCenterLocal", eyeCenterLocal / e.inst.currentRadius);
+            voxelShader->setVec3("uEyeForwardLocal", glm::vec3(1.0f, 0.0f, 0.0f));
+
+            for (auto& part : e.renderParts) {
+                if (!part.mesh.isValid || part.mesh.vertexCount == 0) continue;
+
+                glBindVertexArray(part.mesh.vao);
+                glDrawArrays(GL_TRIANGLES, 0, (GLsizei)part.mesh.vertexCount);
+            }
+
             glBindVertexArray(0);
         }
     }
@@ -2973,6 +3131,8 @@ namespace gl3 {
         TRACY_GPU_ZONE("ImpactEffects");
 
         if (!impactShader || impactParticles.empty()) return;
+
+        std::cout<<"Particles:"<< impactParticles.size()<<"\n";
 
         glm::vec3 cameraFront = getCameraFront();
         glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
@@ -3469,69 +3629,75 @@ namespace gl3 {
         glm::vec3 g(dx,dy,dz);
         float len = glm::length(g);
         if (len < 1e-6f) return glm::vec3(0.0f, 1.0f, 0.0f);
-        // density increases INTO solid => gradient points inward; we want outward normal
         return -glm::normalize(g);
         }
 
-    // -----------------------
-    // Camera update with collision-safe offset behind player
-    // -----------------------
+
     void Game::updateCamera() {
-        // Get player head/eye position
-        glm::vec3 headPos = characterController->getCameraPosition();
-        float distsq=glm::sqrt(headPos.x*headPos.x+headPos.y*headPos.y+headPos.z*headPos.z);
-       // std::cout<<"Distance: "<< distsq << "/"<< 750<<"\n";
-        if(distsq>750)
-        {
-            setPlayerHealth(getPlayerHealth()-0.2f);
-        }
+        glm::vec3 targetPos = characterController->getCameraPosition();
+        glm::vec3 targetUp  = glm::normalize(characterController->getUpDirection());
 
-        // Get character's current orientation
-        glm::vec3 characterUp = characterController->getUpDirection();
-
-        // Mouse input updates pitch/yaw as normal
         glm::vec2 mouseDelta = getMouseDelta();
-        if (!paused && glm::length(mouseDelta) > 0.001f) {
-            cameraRotation.y += mouseDelta.x * cameraSensitivity; // yaw
-            cameraRotation.x -= mouseDelta.y * cameraSensitivity; // pitch (NOTE: negated to fix inversion)
+        if (!paused) {
+            float yawAmount   = -mouseDelta.x * cameraSensitivity;
+            float pitchAmount = -mouseDelta.y * cameraSensitivity;
 
-            // Clamp pitch to prevent gimbal lock
-            cameraRotation.x = glm::clamp(cameraRotation.x, -89.0f, 89.0f);
+            // yaw around current camera up
+            if (std::abs(yawAmount) > 1e-6f) {
+                glm::quat qYaw = glm::angleAxis(glm::radians(yawAmount), cameraUp);
+                cameraForward = glm::normalize(qYaw * cameraForward);
+            }
+
+            cameraRight = glm::normalize(glm::cross(cameraForward, cameraUp));
+
+            // pitch around current camera right
+            if (std::abs(pitchAmount) > 1e-6f) {
+                glm::quat qPitch = glm::angleAxis(glm::radians(pitchAmount), cameraRight);
+                glm::vec3 candidateForward = glm::normalize(qPitch * cameraForward);
+
+                float d = glm::dot(candidateForward, cameraUp);
+                if (std::abs(d) < 0.98f) {
+                    cameraForward = candidateForward;
+                }
+            }
         }
 
-        // Build camera basis in CHARACTER'S local space
-        // Start with world forward based on yaw
-        float yawRad = glm::radians(cameraRotation.y);
-        glm::vec3 worldForward(
-                cos(yawRad),
-                0.0f,
-                sin(yawRad)
-        );
+        // roll-only align to targetUp
+        alignCameraRollToUp(targetUp, deltaTime);
 
-        // Project forward onto character's tangent plane (perpendicular to up)
-        glm::vec3 localForward = worldForward - characterUp * glm::dot(worldForward, characterUp);
-        if (glm::length(localForward) < 0.001f) {
-            // Edge case: looking straight up/down relative to surface
-            // Use a stable fallback
-            glm::vec3 worldRight = glm::vec3(-sin(yawRad), 0.0f, cos(yawRad));
-            localForward = glm::cross(characterUp, worldRight);
-        }
-        localForward = glm::normalize(localForward);
+        cameraRight = glm::normalize(glm::cross(cameraForward, cameraUp));
+        cameraUp    = glm::normalize(glm::cross(cameraRight, cameraForward));
 
-        // Calculate right vector in local space
-        glm::vec3 localRight = glm::normalize(glm::cross(localForward, characterUp));
+        cameraPos = getCollisionAdjustedCameraPosition(targetPos, targetPos);
+    }
 
-        // Apply pitch rotation using quaternion properly
-        float pitchRad = glm::radians(cameraRotation.x);
-        glm::quat pitchQuat = glm::angleAxis(pitchRad, localRight);
-        glm::vec3 cameraForward = pitchQuat * localForward;
+    void Game::alignCameraRollToUp(const glm::vec3& targetUp, float dt)
+    {
+        glm::vec3 f = glm::normalize(cameraForward);
+        glm::vec3 u = glm::normalize(cameraUp);
+        glm::vec3 t = glm::normalize(targetUp);
 
-        // Update camera position
-        cameraPos = characterController->getCameraPosition();
+        glm::vec3 uProj = u - f * glm::dot(u, f);
+        glm::vec3 tProj = t - f * glm::dot(t, f);
 
-        // Store for use in character controller update
-        this->cameraForward = cameraForward;
-        this->cameraRight = localRight;
+        float lu = glm::length(uProj);
+        float lt = glm::length(tProj);
+        if (lu < 1e-5f || lt < 1e-5f) return;
+
+        uProj /= lu;
+        tProj /= lt;
+
+        float cosA = glm::clamp(glm::dot(uProj, tProj), -1.0f, 1.0f);
+        float angle = std::acos(cosA);
+
+        float sign = (glm::dot(glm::cross(uProj, tProj), f) < 0.0f) ? -1.0f : 1.0f;
+        angle *= sign;
+
+        float maxStep = 3.0f * dt; // tune
+        float step = glm::clamp(angle, -maxStep, maxStep);
+
+        glm::quat q = glm::angleAxis(step, f);
+        cameraUp = glm::normalize(q * cameraUp);
     }
 
     void Game::setupSkybox() {
@@ -3811,9 +3977,17 @@ namespace gl3 {
                                       float speedWorld,
                                       glm::vec3 color)
     {
-        float searchRadius = radiusWorld * 2.5f;
-
+        float searchRadius = radiusWorld;
         FormationParams params = FormationParams::Sphere(start, radiusWorld);
+
+        spellSystem->castSphere(
+                params.center,
+                params.radius,
+                0,
+                speedWorld,
+                glm::normalize(target - start),
+                searchRadius
+        );
         //castSpellWithFormation(center, searchRadius, material, strength, params);
         //SpellCastRequest req = buildSpellCastRequestSnapshot(start, searchRadius, 0, 5, params);
         //req.physicsEnabled = true;
@@ -3839,13 +4013,13 @@ namespace gl3 {
         float combined = glm::clamp(strength01 * 0.7f + removal01 * 0.3f, 0.0f, 1.0f);
 
         if (combined < 0.25f) {
-            spawnImpactPresetSmall(hitPos, hitNormal, combined, tint);
+            //spawnImpactPresetSmall(hitPos, hitNormal, combined, tint);
             //spawnImpactPresetMedium(hitPos, hitNormal, combined, tint);
-            //spawnImpactPresetLarge(hitPos, hitNormal, combined, tint);
+            spawnImpactPresetLarge(hitPos, hitNormal, combined, tint);
         } else if (combined < 0.65f) {
             //spawnImpactPresetSmall(hitPos, hitNormal, combined, tint);
-            spawnImpactPresetMedium(hitPos, hitNormal, combined, tint);
-            //spawnImpactPresetLarge(hitPos, hitNormal, combined, tint);
+            //spawnImpactPresetMedium(hitPos, hitNormal, combined, tint);
+            spawnImpactPresetLarge(hitPos, hitNormal, combined, tint);
         } else {
             //spawnImpactPresetSmall(hitPos, hitNormal, combined, tint);
             //spawnImpactPresetMedium(hitPos, hitNormal, combined, tint);
@@ -3969,10 +4143,71 @@ namespace gl3 {
     }
 
     glm::vec3 Game::getCameraUp() const {
-        if (characterController) {
-            return characterController->getUpDirection();
+        return glm::normalize(cameraUp);
+    }
+
+    glm::vec3 Game::getCollisionAdjustedCameraPosition(const glm::vec3& desiredPos, const glm::vec3& targetPos) {
+        glm::vec3 direction = glm::normalize(desiredPos - targetPos);
+        float distance = glm::length(desiredPos - targetPos);
+
+        // Camera radius (eye size)
+        const float cameraRadius = 0.5f;
+        const float stepSize = VOXEL_SIZE * 0.1f;
+        int numSteps = static_cast<int>(distance / stepSize);
+
+        for (int i = 1; i <= numSteps; i++) {
+            float t = static_cast<float>(i) / static_cast<float>(numSteps);
+            glm::vec3 checkPos = targetPos + direction * (distance * t);
+
+            // Check sphere around camera position
+            if (sphereCollidesWithVoxels(checkPos, cameraRadius)) {
+                float safeT = glm::max(0.0f, static_cast<float>(i - 2) / static_cast<float>(numSteps));
+                glm::vec3 safePos = targetPos + direction * (distance * safeT);
+                return safePos;
+            }
         }
-        return glm::vec3(0.0f, 1.0f, 0.0f);
+
+        return desiredPos;
+    }
+
+    bool Game::sphereCollidesWithVoxels(const glm::vec3& center, float radius) const {
+        // Check voxels in bounding box around sphere
+        int minX = static_cast<int>(std::floor((center.x - radius) / (CHUNK_SIZE * VOXEL_SIZE)));
+        int maxX = static_cast<int>(std::floor((center.x + radius) / (CHUNK_SIZE * VOXEL_SIZE)));
+        int minY = static_cast<int>(std::floor((center.y - radius) / (CHUNK_SIZE * VOXEL_SIZE)));
+        int maxY = static_cast<int>(std::floor((center.y + radius) / (CHUNK_SIZE * VOXEL_SIZE)));
+        int minZ = static_cast<int>(std::floor((center.z - radius) / (CHUNK_SIZE * VOXEL_SIZE)));
+        int maxZ = static_cast<int>(std::floor((center.z + radius) / (CHUNK_SIZE * VOXEL_SIZE)));
+
+        for (int cx = minX; cx <= maxX; cx++) {
+            for (int cy = minY; cy <= maxY; cy++) {
+                for (int cz = minZ; cz <= maxZ; cz++) {
+                    Chunk* chunk = chunkManager->getChunk(ChunkCoord{cx, cy, cz});
+                    if (!chunk) continue;
+
+                    glm::vec3 chunkMin = glm::vec3(cx * CHUNK_SIZE * VOXEL_SIZE,
+                                                   cy * CHUNK_SIZE * VOXEL_SIZE,
+                                                   cz * CHUNK_SIZE * VOXEL_SIZE);
+
+                    // Check voxels in this chunk
+                    for (int ix = 0; ix < CHUNK_SIZE; ix++) {
+                        for (int iy = 0; iy < CHUNK_SIZE; iy++) {
+                            for (int iz = 0; iz < CHUNK_SIZE; iz++) {
+                                if (chunk->voxels[ix][iy][iz].density > 0.0f) {
+                                    glm::vec3 voxelCenter = chunkMin + glm::vec3(ix + 0.5f, iy + 0.5f, iz + 0.5f) * VOXEL_SIZE;
+                                    float distSq = glm::pow(glm::length(center - voxelCenter),2);
+                                    if (distSq < (radius + VOXEL_SIZE * 0.5f) * (radius + VOXEL_SIZE * 0.5f)) {
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return false;
     }
 
     void Game::initSpeedLinesShader() {
@@ -4027,7 +4262,7 @@ namespace gl3 {
         speedLinesShader->setVec3("uCameraPos", cameraPos);
 
         // RADIAL LINE SETTINGS
-        speedLinesShader->setFloat("uLineCount", 6.0f);        // Number of lines
+        speedLinesShader->setFloat("uLineCount", 10.0f);        // Number of lines
         speedLinesShader->setFloat("uLineWidth", 0.15f);       // Thickness
         speedLinesShader->setFloat("uLineSharpness", 0.95f);    // Edge sharpness (higher = sharper)
         speedLinesShader->setFloat("uInnerRadius", 0.35f);      // Clear center zone
@@ -4040,14 +4275,22 @@ namespace gl3 {
 
         if (characterController->getState().isSprinting) {
             lineColor = glm::vec3(0.3f, 0.7f, 1.0f); // Blue for sprint
-            speedLinesShader->setFloat("uLineCount", 15.0f); // More lines when sprinting
-            speedLinesShader->setFloat("uLineWidth", 0.12f); // Thicker
+            speedLinesShader->setFloat("uLineCount", 22.0f); // More lines when sprinting
+            speedLinesShader->setFloat("uLineWidth", 0.1f); // Thicker
+            speedLinesShader->setFloat("uInnerRadius", 0.25f);      // Clear center zone
+            speedLinesShader->setFloat("uLineOpacity", 0.9f);       // Overall line visibility
+
+
 
         }
         if (characterController->getState().isAirSlamming) {
-            lineColor = glm::vec3(1.0f, 1.0f, 0.0f); // Red for air slam
-            speedLinesShader->setFloat("uLineCount", 12.0f); // Even more lines
-            speedLinesShader->setFloat("uLineWidth", 0.2f); // Thicker
+            lineColor = glm::vec3(1.0f, 0.3f, 0.3f); // Red for air slam
+            speedLinesShader->setFloat("uLineCount", 18.0f); // Even more lines
+            speedLinesShader->setFloat("uLineWidth", 0.15f); // Thicker
+            speedLinesShader->setFloat("uInnerRadius", 0.30f);      // Clear center zone
+            speedLinesShader->setFloat("uLineOpacity", 0.8f);       // Overall line visibility
+
+
         }
 
         speedLinesShader->setVec3("uLineColor", lineColor);
@@ -4060,4 +4303,70 @@ namespace gl3 {
         glDepthMask(GL_TRUE);
         glEnable(GL_DEPTH_TEST);
     }
+
+    void Game::createPhysicsMeshData(gl3::PhysicsMeshData& out,
+                                     const std::vector<glm::vec3>& vertices,
+                                     const std::vector<glm::vec3>& normals,
+                                     const std::vector<glm::vec3>& colors,
+                                     const std::vector<glm::vec2>& uvs,
+                                     const std::vector<uint32_t>& flags)
+    {
+        if (vertices.empty()) return;
+
+        if (out.vao) { glDeleteVertexArrays(1, &out.vao); out.vao = 0; }
+        if (out.vbo) { glDeleteBuffers(1, &out.vbo); out.vbo = 0; }
+
+        out.vertices = vertices;
+        out.normals  = normals;
+        out.colors   = colors;
+        out.vertexCount = vertices.size();
+        out.isValid = true;
+
+        struct EnemyVertex {
+            glm::vec3 pos;
+            glm::vec3 normal;
+            glm::vec3 color;
+            glm::vec2 uv;
+            uint32_t flags;
+        };
+
+        std::vector<EnemyVertex> packed;
+        packed.reserve(vertices.size());
+
+        for (size_t i = 0; i < vertices.size(); ++i) {
+            EnemyVertex v{};
+            v.pos   = vertices[i];
+            v.normal = (i < normals.size()) ? normals[i] : glm::vec3(0,1,0);
+            v.color  = (i < colors.size())  ? colors[i]  : glm::vec3(1,0,1);
+            v.uv     = (i < uvs.size())     ? uvs[i]     : glm::vec2(0.0f);
+            v.flags  = (i < flags.size())   ? flags[i]   : (7u << 1u);
+            packed.push_back(v);
+        }
+
+        glGenVertexArrays(1, &out.vao);
+        glGenBuffers(1, &out.vbo);
+
+        glBindVertexArray(out.vao);
+        glBindBuffer(GL_ARRAY_BUFFER, out.vbo);
+        glBufferData(GL_ARRAY_BUFFER, packed.size() * sizeof(EnemyVertex), packed.data(), GL_STATIC_DRAW);
+
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(EnemyVertex), (void*)offsetof(EnemyVertex, pos));
+
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(EnemyVertex), (void*)offsetof(EnemyVertex, normal));
+
+        glEnableVertexAttribArray(2);
+        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(EnemyVertex), (void*)offsetof(EnemyVertex, color));
+
+        glEnableVertexAttribArray(3);
+        glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, sizeof(EnemyVertex), (void*)offsetof(EnemyVertex, uv));
+
+        glEnableVertexAttribArray(4);
+        glVertexAttribIPointer(4, 1, GL_UNSIGNED_INT, sizeof(EnemyVertex), (void*)offsetof(EnemyVertex, flags));
+
+        glBindVertexArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+
 }

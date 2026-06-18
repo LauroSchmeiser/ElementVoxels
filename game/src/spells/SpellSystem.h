@@ -23,7 +23,7 @@ namespace gl3 {
 
         void pumpAsyncResults();
 
-        void castSphere(const glm::vec3& center, float radius, uint64_t material, float strength);
+        void castSphere(const glm::vec3& center, float radius, uint64_t material, float strength, const glm::vec3& direction, float searchRadius);
         void castWall(const glm::vec3& center, const glm::vec3& normal,
                       float width, float height, float thickness,
                       uint64_t material, float strength);
@@ -37,6 +37,7 @@ namespace gl3 {
 
         SpellEffect* findSpellById(uint64_t id);
         const SpellEffect* findSpellById(uint64_t id) const;
+        void createPhysicsBodyForSpell(SpellEffect &spell);
 
     private:
         SpellWorldContext ctx;
@@ -183,8 +184,6 @@ namespace gl3 {
                              const WorldPlanet& formation,
                              uint64_t material,
                              const FormationParams& params);
-
-        void createPhysicsBodyForSpell(SpellEffect &spell);
 
         GpuTrianglesReadback readbackTrianglesMainThread(const SpellEffect &spell);
 

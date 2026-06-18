@@ -35,6 +35,9 @@ out vec4 FragColor;
 uniform vec3 ambientColor;
 uniform vec3 viewPos;
 
+uniform vec3 uEyeCenterLocal;
+uniform vec3 uEyeForwardLocal;
+
 uniform int  uOverlayEnabled;
 uniform vec3 uOverlayCenter;
 uniform float uOverlayRadius;
@@ -63,6 +66,8 @@ uniform float uUVScale[64];
 
 const float PI = 3.14159265;
 const float MIN_ALBEDO = 0.05;
+
+uniform float uTime;
 
 float burnHash13(vec3 p) {
     p = fract(p * 0.1031);
@@ -109,6 +114,21 @@ float burnBayer4(vec2 p) {
     return (float(m[idx]) + 0.5) / 16.0;
 }
 
+vec3 pulseWithTime(float time, vec3 baseColor, float speed, float intensity) {
+    float pulse = (sin(time * speed) + 1.0) / 2.0; // Oscillates between 0 and 1
+    float pulseFactor = 0.5 + (pulse * intensity); // Range depends on intensity
+    return baseColor * pulseFactor;
+}
+
+vec3 animatedPulse(float time, vec3 baseColor) {
+    // Multiple frequencies for complex effect
+    float pulse1 = sin(time * 3.0) * 0.3;
+    float pulse2 = sin(time * 7.0 + 1.2) * 0.2;
+    float pulse3 = sin(time * 0.5) * 0.15;
+    float combinedPulse = 0.8 + pulse1 + pulse2 + pulse3;
+    return baseColor * combinedPulse;
+}
+
 vec3 sampleTriplanarAlbedo(uint mat, vec3 worldPos, vec3 N)
 {
     vec3 w = abs(normalize(N));
@@ -128,9 +148,27 @@ vec3 sampleTriplanarAlbedo(uint mat, vec3 worldPos, vec3 N)
     return tx * w.x + ty * w.y + tz * w.z;
 }
 
-void main() {
-    if ((vFlags & 1u) != 0u) discard;
+float eyeRadius(vec3 localPos, vec3 eyeCenterLocal, vec3 eyeForwardLocal)
+{
+    vec3 eyeVec = localPos - eyeCenterLocal;
+    vec3 localDir = normalize(eyeVec);
 
+    float front = dot(localDir, normalize(eyeForwardLocal));
+    if (front <= 0.15) return 999.0;
+
+    vec3 F = normalize(eyeForwardLocal);
+    vec3 upRef = abs(F.y) > 0.9 ? vec3(1,0,0) : vec3(0,1,0);
+    vec3 right = normalize(cross(upRef, F));
+    vec3 up = normalize(cross(F, right));
+
+    vec2 uv = vec2(dot(localDir, up), dot(localDir, right)) / max(front, 0.15);
+    return length(uv);
+}
+
+void main() {
+    //if ((vFlags & 1u) != 0u) discard;
+
+    float alpha =1.0f;
     uint mat = (vFlags >> 1u) & 63u;
     vec3 N = normalize(normal);
 
@@ -152,36 +190,79 @@ void main() {
     ChunkLightIndexGpu info = chunkLights[vChunkSlot];
     uint n = min(info.count, MAX_LIGHTS);
 
-    for (uint i = 0u; i < n; ++i) {
-        VoxelLightGpu Lg = lights[info.indices[i]];
+    if(n>0)
+    {
+        for (uint i = 0u; i < n; ++i) {
+            VoxelLightGpu Lg = lights[info.indices[i]];
 
-        vec3 lightPos = Lg.posIntensity.xyz;
-        float lightIntensity = Lg.posIntensity.w;
-        vec3 lightColor = Lg.color.xyz;
+            vec3 lightPos = Lg.posIntensity.xyz;
+            float lightIntensity = Lg.posIntensity.w;
+            vec3 lightColor = Lg.color.xyz;
 
-        vec3 toLight = lightPos - fragPos;
-        float distSq = dot(toLight, toLight);
-        float dist = sqrt(distSq);
-        vec3 L = toLight / max(dist, 0.0);
+            vec3 toLight = lightPos - fragPos;
+            float distSq = dot(toLight, toLight);
+            float dist = sqrt(distSq);
+            vec3 L = toLight / max(dist, 0.0);
 
-        float NdotL = max(dot(N, L), 0.0);
-        float attenuation = 7.5 / (distSq + 1.0);
-        float intensity = lightIntensity * attenuation;
+            float NdotL = max(dot(N, L), 0.0);
+            float attenuation = 7.5 / (distSq + 1.0);
+            float intensity = lightIntensity * attenuation;
 
-        vec3 radiance = lightColor * intensity;
+            vec3 radiance = lightColor * intensity;
 
-        lightAccum += radiance * NdotL;
+            lightAccum += radiance * NdotL;
 
-        vec3 H = normalize(L + V);
-        float NdotH = max(dot(N, H), 0.0);
-        float spec = pow(NdotH, shininess) * specStrength * step(0.0, NdotL);
-        //spec=min(spec,0.1);
-        specAccum += radiance * spec;
+            vec3 H = normalize(L + V);
+            float NdotH = max(dot(N, H), 0.0);
+            float spec = pow(NdotH, shininess) * specStrength * step(0.0, NdotL);
+            specAccum += radiance * spec;
+        }
     }
+   /* else
+    {
+        lightAccum+=vec3(1,0.6,0)*1.5;
+    }*/
+    vec3 emiss = emission * emissionColor;
+
+    if (mat == 9u) {
+        vec3 worldPos = localPos / localScale;
+
+        // Create a flowing direction vector
+        vec3 flowDir = normalize(vec3(1.0, 1.0, 0.5));
+        float flowAmount = dot(worldPos, flowDir);
+
+        // Offset by time to create movement
+        float flowOffset = flowAmount * 0.8 - uTime * 0.25;
+
+        // Create flowing UVs
+        vec2 flowingUV = vec2(
+        flowOffset,
+        worldPos.z * 1.5 + uTime * 0.2
+        );
+
+        // For triplanar mapping with time offset
+        vec3 timeOffset = vec3(uTime * 0.2, uTime * 0.15, uTime * 0.1);
+        vec3 animatedAlbedo = sampleTriplanarAlbedo(mat, worldPos + timeOffset, N);
+
+        // Gentle pulsing (heartbeat-like but very soft)
+        float pulse = sin(uTime * 2.5) * 0.15 + 0.85;  // Range: 0.7 to 1.0
+        float glowPulse = sin(uTime * 2.0) * 0.2 + 0.9; // Range: 0.7 to 1.1
+
+        // Apply effects
+        albedo = animatedAlbedo * pulse;
+
+        // Add soft glowing emission that pulses with the texture movement
+        float emissionIntensity = 1.75 + (sin(uTime * 2.0) * 0.3);
+        emiss += vertexColor * emissionIntensity;
+    }
+
 
     vec3 diffuse = lightAccum * (albedo / PI);
     vec3 ambient = ambientColor * albedo;
-    vec3 emiss = emission * emissionColor;
+    if(ambient.x+ambient.y+ambient.z<0.2)
+    {
+        ambient=mix(vec3(1.0,0.0,0.0),vertexColor,0.75f);
+    }
 
     // Burn / disintegrate
     if (uBurnEnabled != 0) {
@@ -207,12 +288,44 @@ void main() {
 
         float edge = 1.0 - smoothstep(0.0, w, abs(field));
         emiss += edge * uBurnEmberColor;
+        alpha=0.75;
     }
 
     vec3 hdr = ambient + diffuse + specAccum + emiss;
+    if (mat == 8u)
+    {
+        float r = eyeRadius(
+        localPos / max(localScale, 1e-4),
+        uEyeCenterLocal,
+        normalize(uEyeForwardLocal)
+        );
+
+        // black center
+        float pupilMask = 1.0 - smoothstep(0.18, 0.30, r);
+
+        // black outline ring
+        float outer = 1.0 - smoothstep(4.0, 4.5, r);
+        float inner = 1.0 - smoothstep(1.9, 2.2, r);
+        float outlineMask = clamp(outer - inner, 0.0, 1.0);
+
+        float blackMask = max(pupilMask, outlineMask);
+
+        albedo = mix(albedo/1.5, albedo/3, blackMask);
+
+        diffuse = lightAccum * (albedo / PI);
+        ambient = ambientColor * albedo;
+        hdr = ambient + diffuse + specAccum + emiss;
+
+        if (albedo.x + albedo.y + albedo.z < 0.3)
+        {
+            hdr = vec3(0.0);
+        }
+
+        hdr *= 5.35;
+    }
     hdr= pow(hdr, vec3(1.0/0.5));
     vec3 color = hdr / (hdr + vec3(1.0));
-
+    //vec3 color=hdr;
     // Overlay
     if (uOverlayEnabled != 0) {
         float d = length(fragPos - uOverlayCenter);
@@ -223,5 +336,11 @@ void main() {
         color = mix(color, uOverlayColor, a);
     }
 
-    FragColor = vec4(color, 1.0);
+    /*if(texAlbedo.x+texAlbedo.y+texAlbedo.z<0.2)
+    {
+        ambient=vec3(0,0,1);
+    }*/
+
+    FragColor = vec4(color, alpha);
+
 }

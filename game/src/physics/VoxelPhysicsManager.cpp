@@ -367,7 +367,7 @@ namespace gl3 {
             glm::vec3 newTangentVel = tangentVel * (1.0f - body.friction);
 
             body.velocity = newNormalVel + newTangentVel;
-            body.velocity*=0.85f;
+            body.velocity*=(0.95f/glm::pow(body.mass,0.3f));
 
             if (glm::length(tangentVel) > 0.1f) {
                 glm::vec3 rotationAxis = glm::cross(normal, tangentVel);
@@ -432,8 +432,8 @@ namespace gl3 {
                 if (totalDist > 1e-6f) {
                     glm::vec3 dir = delta / totalDist;
 
-                    const float stepLen = 0.25f * VOXEL_SIZE;
-                    const int   maxSteps = 64;
+                    const float stepLen = 0.1f * VOXEL_SIZE;
+                    const int   maxSteps = 100;
 
                     int steps = (int)std::ceil(totalDist / stepLen);
                     steps = glm::clamp(steps, 1, maxSteps);
@@ -452,23 +452,31 @@ namespace gl3 {
 
                         ChunkCoord coord{cx, cy, cz};
                         Chunk* chunk = chunkManager->getChunk(coord);
-                        if (sphereIntersectsWorld(*body, p, n, pen)&&!chunk->inEmissiveList) {
+                        const float impactVfxBaseCooldown = 2.0f;
+
+                        if (sphereIntersectsWorld(*body, p, n, pen) && !chunk->inEmissiveList) {
                             body->position = p;
 
                             float impactSpeed = glm::length(body->velocity) * VOXEL_SIZE;
-                            resolveCollision(*body, n, pen, impactSpeed);
+                            glm::vec3 contactPoint = body->position - n * body->radius;
 
-                            /*if (voxelCollisionCallback && impactSpeed > 1.0f * VOXEL_SIZE) {
-                                voxelCollisionCallback(body, body->position, n, impactSpeed);
-                            }*/
                             if (voxelCollisionCallback && impactSpeed > 1.0f * VOXEL_SIZE && body->impactVfxCooldown <= 0.0f) {
-                                glm::vec3 contactPoint = body->position - n * body->radius;
+                                body->impactVfxCooldown = impactVfxBaseCooldown;
                                 voxelCollisionCallback(body, contactPoint, n, impactSpeed);
-                                body->impactVfxCooldown = 0.08f;
                             }
 
-                            hit = true;
-                            break;
+                            // Re-test after callback may have modified the voxel world.
+                            glm::vec3 newNormal;
+                            float newPenetration;
+                            if (sphereIntersectsWorld(*body, p, newNormal, newPenetration)) {
+                                resolveCollision(*body, newNormal, newPenetration, impactSpeed);
+                                hit = true;
+                                break;
+                            } else {
+                                // The callback carved/opened the surface, so allow the body to continue through.
+                                body->position = p;
+                                continue;
+                            }
                         } else if(sphereIntersectsWorld(*body, p, n, pen))
                         {
                             body->position = p;
@@ -713,6 +721,10 @@ namespace gl3 {
             bodyB.velocity += frictionImpulse / bodyB.mass;
         }
 
+        bodyA.velocity*=(0.95f/glm::pow(bodyA.mass,0.3f));
+        bodyB.velocity*=(0.95f/glm::pow(bodyB.mass,0.3f));
+
+
         glm::vec3 contactPoint = (bodyA.position + bodyB.position) * 0.5f;
         glm::vec3 rA = contactPoint - bodyA.position;
         glm::vec3 rB = contactPoint - bodyB.position;
@@ -720,7 +732,12 @@ namespace gl3 {
         bodyA.angularVelocity += glm::cross(rA, impulse) / (bodyA.mass * bodyA.radius);
         bodyB.angularVelocity -= glm::cross(rB, impulse) / (bodyB.mass * bodyB.radius);
 
-        if (bodyBodyCollisionCallback) {
+        const float impactVfxBaseCooldown = 2.0f;
+
+        if (bodyBodyCollisionCallback&&(bodyA.impactVfxCooldown<=0.0f||bodyB.impactVfxCooldown<=0.0f)) {
+            bodyA.impactVfxCooldown = impactVfxBaseCooldown;
+            bodyB.impactVfxCooldown = impactVfxBaseCooldown;
+
             float impactSpeed = glm::length(relativeVel);
             bodyBodyCollisionCallback(&bodyA, &bodyB, contactPoint, normal, impactSpeed);
         }

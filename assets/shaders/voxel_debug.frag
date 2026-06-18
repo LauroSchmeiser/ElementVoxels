@@ -92,5 +92,12 @@ void main() {
         FragColor=vec4(fragPos.x,fragPos.y,fragPos.z,1.0);
         return;
     }
+
+    if(debugMode >= 5)
+    {
+        FragColor=vec4(vertexColor,1.0);
+        return;
+    }
+
     FragColor = vec4(N * 0.5 + 0.5, 1.0);
 }

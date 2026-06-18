@@ -351,7 +351,8 @@ namespace gl3 {
                     state.velocity -= normal * velDotNormal;
                 }
 
-                if (playerBodyCollisionCallback && collidingBody) {
+                if (playerBodyCollisionCallback && collidingBody&&collidingBody->impactVfxCooldown<=0) {
+                    collidingBody->impactVfxCooldown=2.0f;
                     float playerSpeed = glm::length(state.velocity);
                     glm::vec3 contactPoint = state.position - normal * radius;
                     playerBodyCollisionCallback(collidingBody, contactPoint, normal, playerSpeed);

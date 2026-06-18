@@ -352,7 +352,8 @@ namespace gl3 {
     private:
         int R = 0;
         int dim = 0;
-        const int MAX_CALC_PER_FRAME = 4;
+        const int MAX_CALC_PER_FRAME = 3;
+        uint64_t frameCounter = 29; // Frame counter for light update staggering
         std::vector<Chunk> chunks;
         std::vector<ChunkCoord> dirtyChunks;
         std::vector<uint32_t> emissiveIndices;

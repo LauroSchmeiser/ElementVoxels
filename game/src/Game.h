@@ -38,6 +38,7 @@
 #include "spells/SpellSystem.h"
 #include "MainThreadDispatcher.h"
 #include "rendering/ChunkRenderer.h"
+#include "Entities/WaveManager.h"
 
 #undef NEAR
 #undef FAR
@@ -66,6 +67,13 @@ namespace gl3 {
 
         gl3::ImGuiLayer imguiLayer;
         glm::vec3 getCameraFront() const;
+
+        void createPhysicsMeshData(PhysicsMeshData &out,
+                                   const std::vector<glm::vec3> &vertices,
+                                   const std::vector<glm::vec3> &normals,
+                                   const std::vector<glm::vec3> &colors,
+                                   const std::vector<glm::vec2> &uvs,
+                                   const std::vector<uint32_t> &flags);
 
     private:
         ////basics (private):
@@ -664,7 +672,12 @@ namespace gl3 {
         glm::vec3 getCameraUp() const;
 
         glm::vec3 cameraForward;
+        glm::vec3 cameraUp;
+
         glm::vec3 cameraRight;
+        float cameraRoll = 0.0f;
+        float targetCameraRoll = 0.0f;
+        float cameraRollSpeed = 8.0f;
         const float cameraSensitivity=0.125f;
 
         std::unique_ptr<Shader> speedLinesShader;
@@ -674,5 +687,12 @@ namespace gl3 {
         void initSpeedLinesShader();
         void renderSpeedLines();
 
+        WaveManager waveManager;
+
+        glm::vec3 getCollisionAdjustedCameraPosition(const glm::vec3 &desiredPos, const glm::vec3 &targetPos);
+
+        bool sphereCollidesWithVoxels(const glm::vec3 &center, float radius) const;
+
+        void alignCameraRollToUp(const glm::vec3 &targetUp, float dt);
     };
 }

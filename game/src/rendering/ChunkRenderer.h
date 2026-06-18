@@ -4,6 +4,7 @@
 #include "marchingTables.h"
 #include "GpuStructsStd430.h"
 #include "Shader.h"
+#include "../../../extern/robin_hood.h"
 #include <iostream>
 
 
@@ -24,7 +25,7 @@ namespace gl3 {
         GLuint globalChunkVertexBuffer = 0;
 
         size_t CHUNK_MAX_VERTS = 0;
-        int MAX_CHUNKS_GPU = 0;
+        int MAX_CHUNKS_GPU = 1350;
 
         GLuint ssboLights = 0;
         GLuint ssboChunkLightIdx = 0;
@@ -45,6 +46,28 @@ namespace gl3 {
 
         GLuint globalChunkVAO = 0;
         GLuint chunkIndirectBuffer = 0;
+        const int LIGHT_UPDATE_INTERVAL=301;
+        std::vector<gl3::VoxelLight> mergedEmissiveLightPool;
+        void buildAndUploadChunkLightIndexBuffer(int camCX, int camCY, int camCZ, int renderRadius,uint64_t frameCounter);
+
+
+        void updateChunkLights(Chunk *chunk);
+
+        uint32_t lightIndexFromPtr(const VoxelLight *ptr) const;
+        const int MAX_LIGHTS = 4; // has to match marching cubes shader
+        const float LIGHT_RADIUS = 300.0f * CHUNK_SIZE*VOXEL_SIZE*2;
+        uint64_t frameCounter = 29; // Frame counter for light update staggering
+        const float LIGHT_RADIUS_SQ = LIGHT_RADIUS * LIGHT_RADIUS;
+        std::vector<const gl3::VoxelLight *> flatEmissiveLightList;
+
+        robin_hood::unordered_map<ChunkCoord, std::vector<VoxelLight *>, ChunkCoordHash> lightSpatialHash;
+
+
+        void updateLightSpatialHash();
+
+        void uploadMergedLightsToGPU();
+
+        void generateEmissiveBillboards(Chunk *chunk);
     };
 
 }

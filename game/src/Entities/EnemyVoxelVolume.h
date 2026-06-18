@@ -65,6 +65,25 @@ namespace gl3 {
                         at(x,y,z).density -= strength;
                     }
         }
+
+        void unionSphere(glm::vec3 centerLocal, float radiusWorld, glm::vec3 col, uint32_t material=0, uint8_t type=1) {
+            for (int z=0; z<dims.z; ++z)
+                for (int y=0; y<dims.y; ++y)
+                    for (int x=0; x<dims.x; ++x) {
+                        glm::vec3 p = glm::vec3(x,y,z) * voxelSize;
+                        float s = radiusWorld - glm::length(p - centerLocal);
+
+                        Corner& c = at(x,y,z);
+                        if (s > c.density) {
+                            c.density = s;
+                            if (s >= -1.0f) {
+                                c.color = col;
+                                c.material = material;
+                                c.type = type;
+                            }
+                        }
+                    }
+        }
     };
 
 } // namespace gl3

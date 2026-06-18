@@ -42,7 +42,10 @@ namespace gl3 {
                 4.0f * VOXEL_SIZE,
                 6.0f * VOXEL_SIZE,
                 8.0f * VOXEL_SIZE,
-                10.0f * VOXEL_SIZE
+                10.0f * VOXEL_SIZE,
+                20.0f * VOXEL_SIZE,
+                50.0f * VOXEL_SIZE,
+                100.0f * VOXEL_SIZE
         };
 
         for (float radius : commonRadii) {
@@ -141,17 +144,16 @@ namespace gl3 {
         updateSpells(dt);
     }
 
-    void SpellSystem::castSphere(const glm::vec3& center, float radius, uint64_t material, float strength)
+    void SpellSystem::castSphere(const glm::vec3& center, float radius, uint64_t material, float strength, const glm::vec3& direction, float searchRadius)
     {
         if (!spellCastAsync || !ctx.chunks) return;
-        float searchRadius = radius * 1.5f;
 
         FormationParams params = FormationParams::Sphere(center, radius);
 
         SpellCastRequest req = buildSpellCastRequestSnapshot(center, searchRadius, material, strength, params);
         req.physicsEnabled = true;
-        if (ctx.getCameraFront) req.launchDir = ctx.getCameraFront();
-        req.launchSpeed = strength * 20.0f * VOXEL_SIZE;
+        req.launchDir = direction;
+        req.launchSpeed = strength * 120.0f * VOXEL_SIZE;
         req.lifetime = 20.0f;
 
         spellCastAsync->enqueueOrReplaceQueued(std::move(req));
@@ -198,7 +200,7 @@ namespace gl3 {
         req.strength = strength;
         req.baseFormationParams = baseFormationParams;
 
-        auto chunks = ctx.chunks->getChunksInRadius(center, searchRadius);
+        auto chunks = ctx.chunks->getChunksInRadius(center, glm::sqrt(searchRadius));
         req.chunks.reserve(chunks.size());
 
         for (const auto& [coord, chunk] : chunks)
@@ -1601,11 +1603,13 @@ namespace gl3 {
 
         const glm::vec3 centerLocal = d.localCenterOffsetWorld;
 
-        for (auto& v : mesh.vertices) {
-            v -= centerLocal;
+        for (auto& p : mesh.parts) {
+            for (auto& v : p.vertices)
+            {
+                v -= centerLocal;
+            }
+            createPhysicsMeshData(d.mesh, p.vertices, p.normals, p.colors);
         }
-
-        createPhysicsMeshData(d.mesh, mesh.vertices, mesh.normals, mesh.colors);
         d.meshDirty = false;
     }
 
@@ -1670,7 +1674,7 @@ namespace gl3 {
         if (!ctx.chunks || !ctx.worldToChunk || !ctx.markChunkModified) return;
 
         const float effectiveRadius = spell.formationParams.getBoundingRadius();
-        const float removeMargin = VOXEL_SIZE * 1.25f;
+        const float removeMargin = VOXEL_SIZE * 1.5f;
         const float queryRadius = effectiveRadius + removeMargin;
 
         int minCX = ctx.worldToChunk(spell.center.x - queryRadius);

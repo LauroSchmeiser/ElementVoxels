@@ -21,7 +21,7 @@ namespace gl3 {
 
         // stats
         float maxHP = 100.0f;
-        float moveSpeed = 25.0f;
+        float moveSpeed = 50.0f;
 
         VoxelPhysicsBody::ShapeType shapeType = VoxelPhysicsBody::ShapeType::CAPSULE;
         glm::vec3 shapeExtents = glm::vec3(1.0f);
@@ -59,12 +59,13 @@ namespace gl3 {
         bool meshDirty = true;
         bool voxelsDirty = true;
 
-        const EnemyArchetype* type = nullptr;
+        EnemyArchetype type;
 
         float baseRadius = 2.5f * VOXEL_SIZE;
         float currentRadius = 2.5f * VOXEL_SIZE;
 
         bool pendingRemoval = false;
+
     };
 
 }

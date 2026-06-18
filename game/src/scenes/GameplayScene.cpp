@@ -17,17 +17,13 @@ namespace gl3 {
     }
 
     void GameplayScene::update(Game& game, float /*dt*/) {
-        // Toggle pause on ESC press (edge)
         const bool escDown = glfwGetKey(game.getWindow(), GLFW_KEY_ESCAPE) == GLFW_PRESS;
         if (escDown && !escWasDown) {
             game.togglePaused();
         }
         escWasDown = escDown;
 
-        // If paused: do NOT advance gameplay simulation/time
         if (game.isPaused()) {
-            // No updateGameplayFrame()
-            // (Still allow sceneManager changes from pause menu buttons)
             return;
         }
 
