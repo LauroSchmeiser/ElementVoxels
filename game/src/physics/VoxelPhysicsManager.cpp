@@ -494,7 +494,10 @@ namespace gl3 {
                             }*/
 
                             hit = true;
-                            removeBody(body->id);
+                            if(body->material<7)
+                            {
+                                removeBody(body->id);
+                            }
                         }
                     }
 

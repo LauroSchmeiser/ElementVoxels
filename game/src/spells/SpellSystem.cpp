@@ -533,7 +533,7 @@ namespace gl3 {
         if (spell.physicsBodyId != 0 && ctx.physics) {
             gl3::VoxelPhysicsBody* body = ctx.physics->getBodyById(spell.physicsBodyId);
 
-            if(body&&glm::length(body->velocity)<0.5f) {
+            if(body&&glm::length(body->velocity)<0.5f&&body->lifetime<=spell.creationTime) {
                 // Create formation before removing body
                 const float safeCollectedProxy = (float) spell.physicsMesh.vertexCount;
                 createSpellFormation(
@@ -1541,7 +1541,7 @@ namespace gl3 {
         glm::vec3 halfExtWorld(2.0f * VOXEL_SIZE);
 
         if (spell.formationParams.type == FormationType::SPHERE) {
-            halfExtWorld = glm::vec3(spell.formationParams.radius * 2.0f);
+            halfExtWorld = glm::vec3(spell.formationParams.radius);
         } else {
             float r = spell.formationParams.getBoundingRadius();
             halfExtWorld = glm::vec3(r);
@@ -1600,28 +1600,93 @@ namespace gl3 {
         TRACY_CPU_ZONE("RebuildMesh");
 
         gl3::LocalMesh mesh = gl3::buildMeshLocalMC(d.volume);
-
         const glm::vec3 centerLocal = d.localCenterOffsetWorld;
 
-        for (auto& p : mesh.parts) {
-            for (auto& v : p.vertices)
-            {
-                v -= centerLocal;
-            }
-            createPhysicsMeshData(d.mesh, p.vertices, p.normals, p.colors);
+        std::vector<glm::vec3> allVerts;
+        std::vector<glm::vec3> allNormals;
+        std::vector<glm::vec3> allColors;
+        std::vector<glm::vec2> allUvs;
+        std::vector<uint32_t> allFlags;
+
+        size_t totalVerts = 0;
+        for (const auto& p : mesh.parts) {
+            totalVerts += p.vertices.size();
         }
+
+        allVerts.reserve(totalVerts);
+        allNormals.reserve(totalVerts);
+        allColors.reserve(totalVerts);
+        allUvs.reserve(totalVerts);
+        allFlags.reserve(totalVerts);
+
+        for (const auto& p : mesh.parts) {
+            uint32_t fallbackFlags = (p.material << 1u);
+
+            for (size_t i = 0; i < p.vertices.size(); ++i) {
+                allVerts.push_back(p.vertices[i] - centerLocal);
+                allNormals.push_back(i < p.normals.size() ? p.normals[i] : glm::vec3(0.0f, 1.0f, 0.0f));
+                allColors.push_back(i < p.colors.size() ? p.colors[i] : glm::vec3(1.0f));
+                allUvs.push_back(i < p.uvs.size() ? p.uvs[i] : glm::vec2(0.0f));
+                allFlags.push_back(i < p.flags.size() ? p.flags[i] : fallbackFlags);
+            }
+        }
+
+        createPhysicsMeshData(
+                d.mesh,
+                allVerts,
+                allNormals,
+                allColors,
+                allUvs,
+                allFlags
+        );
+
         d.meshDirty = false;
     }
 
-    void SpellSystem::createPhysicsMeshData(PhysicsMeshData& mesh,
-                               const std::vector<glm::vec3>& vertices,
-                               const std::vector<glm::vec3>& normals,
-                               const std::vector<glm::vec3>& colors) {
+    void SpellSystem::createPhysicsMeshData(
+            PhysicsMeshData& mesh,
+            const std::vector<glm::vec3>& vertices,
+            const std::vector<glm::vec3>& normals,
+            const std::vector<glm::vec3>& colors,
+            const std::vector<glm::vec2>& uvs,
+            const std::vector<uint32_t>& flags)
+    {
         TRACY_CPU_ZONE("CreateMeshData");
+
+        if (vertices.empty()) {
+            mesh.isValid = false;
+            mesh.vertexCount = 0;
+            return;
+        }
 
         if (mesh.vao) {
             glDeleteVertexArrays(1, &mesh.vao);
+            mesh.vao = 0;
+        }
+        if (mesh.vbo) {
             glDeleteBuffers(1, &mesh.vbo);
+            mesh.vbo = 0;
+        }
+
+        struct InterleavedVertex {
+            glm::vec3 position;
+            glm::vec3 normal;
+            glm::vec3 color;
+            glm::vec2 uv;
+            uint32_t flags;
+        };
+
+        std::vector<InterleavedVertex> interleaved;
+        interleaved.reserve(vertices.size());
+
+        for (size_t i = 0; i < vertices.size(); ++i) {
+            InterleavedVertex v{};
+            v.position = vertices[i];
+            v.normal   = (i < normals.size()) ? normals[i] : glm::vec3(0.0f, 1.0f, 0.0f);
+            v.color    = (i < colors.size())  ? colors[i]  : glm::vec3(1.0f);
+            v.uv       = (i < uvs.size())     ? uvs[i]     : glm::vec2(0.0f);
+            v.flags    = (i < flags.size())   ? flags[i]   : 0u;
+            interleaved.push_back(v);
         }
 
         glGenVertexArrays(1, &mesh.vao);
@@ -1629,43 +1694,51 @@ namespace gl3 {
 
         glBindVertexArray(mesh.vao);
         glBindBuffer(GL_ARRAY_BUFFER, mesh.vbo);
-
-        struct InterleavedVertex {
-            glm::vec3 position;
-            glm::vec3 normal;
-            glm::vec3 color;
-        };
-
-        std::vector<InterleavedVertex> interleaved;
-        interleaved.reserve(vertices.size());
-        for (size_t i = 0; i < vertices.size(); ++i) {
-            interleaved.push_back({
-                                          vertices[i],
-                                          normals[i],
-                                          colors[i]
-                                  });
-        }
-
-        glBufferData(GL_ARRAY_BUFFER, interleaved.size() * sizeof(InterleavedVertex),
-                     interleaved.data(), GL_STATIC_DRAW);
+        glBufferData(GL_ARRAY_BUFFER,
+                     interleaved.size() * sizeof(InterleavedVertex),
+                     interleaved.data(),
+                     GL_STATIC_DRAW);
 
         glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(InterleavedVertex),
-                              (void*)offsetof(InterleavedVertex, position));
+        glVertexAttribPointer(
+                0, 3, GL_FLOAT, GL_FALSE,
+                sizeof(InterleavedVertex),
+                (void*)offsetof(InterleavedVertex, position)
+        );
 
         glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(InterleavedVertex),
-                              (void*)offsetof(InterleavedVertex, normal));
+        glVertexAttribPointer(
+                1, 3, GL_FLOAT, GL_FALSE,
+                sizeof(InterleavedVertex),
+                (void*)offsetof(InterleavedVertex, normal)
+        );
 
         glEnableVertexAttribArray(2);
-        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(InterleavedVertex),
-                              (void*)offsetof(InterleavedVertex, color));
+        glVertexAttribPointer(
+                2, 3, GL_FLOAT, GL_FALSE,
+                sizeof(InterleavedVertex),
+                (void*)offsetof(InterleavedVertex, color)
+        );
+
+        glEnableVertexAttribArray(3);
+        glVertexAttribPointer(
+                3, 2, GL_FLOAT, GL_FALSE,
+                sizeof(InterleavedVertex),
+                (void*)offsetof(InterleavedVertex, uv)
+        );
+
+        glEnableVertexAttribArray(4);
+        glVertexAttribIPointer(
+                4, 1, GL_UNSIGNED_INT,
+                sizeof(InterleavedVertex),
+                (void*)offsetof(InterleavedVertex, flags)
+        );
 
         glBindVertexArray(0);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
 
         mesh.isValid = true;
-        mesh.vertexCount = (int)vertices.size();
+        mesh.vertexCount = static_cast<int>(vertices.size());
     }
 
     void SpellSystem::removeFormationVoxels(SpellEffect& spell) {

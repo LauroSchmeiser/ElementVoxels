@@ -120,8 +120,8 @@ namespace gl3 {
         const float radiusSq = req.searchRadius * req.searchRadius;
 
         float voxelVolume = VOXEL_SIZE * VOXEL_SIZE * VOXEL_SIZE;
-        int maxVoxels = static_cast<int>((glm::pow(req.baseFormationParams.radius,2)) / voxelVolume);
-        maxVoxels = clampi(maxVoxels, 10, 200);
+        int maxVoxels = static_cast<int>((glm::pow(req.baseFormationParams.getBoundingRadius(),4)) / voxelVolume);
+        maxVoxels = clampi(maxVoxels, 10, 350);
 
         struct Candidate
         {
@@ -231,12 +231,13 @@ namespace gl3 {
         glm::vec3 avgColor(0.0f);
         {
             ZoneScopedN("SpellCastAsync::runJob::BuildVisualVoxels");
+            size_t visualSize= (candidates.size()/2);
+            visual.reserve(visualSize);
 
-            visual.reserve(candidates.size());
-
-            for (const auto& c : candidates)
+            for (size_t i = 0; i < visualSize; ++i)
             {
                 AnimatedVoxel av;
+                Candidate c= candidates.at(i);
                 av.currentPos = c.worldPos;
                 av.originalVoxelPos = c.worldPos;
                 av.color = c.color;
@@ -294,7 +295,7 @@ namespace gl3 {
                 }
                 case FormationType::WALL:
                 {
-                    float area = desiredVolumeWorld / (adjusted.sizeZ * packingEfficiency) * 20.0f;
+                    float area = desiredVolumeWorld / (adjusted.sizeZ * packingEfficiency) * 40.0f;
                     float side = std::sqrt(std::max(0.0f, area));
                     adjusted.sizeX = std::max(side, minWorldDim);
                     adjusted.sizeY = std::max(adjusted.sizeX * 0.75f, minWorldDim);

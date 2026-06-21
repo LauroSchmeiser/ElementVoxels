@@ -137,16 +137,18 @@ namespace gl3 {
             glm::vec3 dir = glm::normalize(playerPos - e.inst.position);
             RayCastResult hit= rayCastFromPosition(e.inst.position,dir,500);
             float radius= e.inst.type.radius * 1.25;
+            int material = 0;
             if(e.inst.type.radius==8.0f*VOXEL_SIZE)
             {
                 radius= 10.0f * VOXEL_SIZE;
+                material=9;
             }
             if (game && e.inst.cdRemaining[0] <= 0.0f&&glm::distance(hit.hitPosition,playerPos)<=10*CHUNK_SIZE*VOXEL_SIZE) {
                     glm::vec3 start = e.inst.position + dir * (e.inst.currentRadius + 1.0f * VOXEL_SIZE);
                     game->spawnEnemyLaunchSphere(start, playerPos,
                                                  radius,
                                                  10.0f/glm::sqrt(radius),
-                                                 glm::vec3(1.0f, 0.2f, 0.2f));
+                                                 glm::vec3(1.0f, 0.2f, 0.2f),material);
                     e.inst.cdRemaining[0] = e.inst.type.cooldownsSec[0];
             }
 

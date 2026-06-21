@@ -299,9 +299,9 @@ namespace gl3 {
         materials.params[8].specular  = 0.9f;
         materials.params[8].uvScale   = 3.9f;
 
-        materials.params[7].roughness = 0.85f;
-        materials.params[7].specular  = 0.2f;
-        materials.params[7].uvScale   = 0.75f;
+        materials.params[9].roughness = 0.85f;
+        materials.params[9].specular  = 0.2f;
+        materials.params[9].uvScale   = 0.125f;
 
         for (int i = 0; i < 64; ++i) {
             rough[i] = materials.params[i].roughness;
@@ -2690,6 +2690,7 @@ visibleSlots.clear();
             glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
             glBindVertexArray(0);
         }
+        appendSpellBillboards(emissiveBillboards);
 
         // Billboards
         if (!emissiveBillboards.empty() && !DebugMode1) {
@@ -2877,11 +2878,9 @@ visibleSlots.clear();
         voxelShader->setFloat("uBurnEdgeWidth", 0.12f);
         voxelShader->setVec3("uBurnEmberColor", glm::vec3(2.5f, 0.9f, 0.2f));
         voxelShader->setFloat("uBurnCharStrength", 0.85f);
-
-
-        static float time = 0;
-        time += deltaTime;
-
+        static float frameTime = 0.0f;
+        frameTime += deltaTime;
+        voxelShader->setFloat("uTime", frameTime);
 
         // Render each physics-enabled formation
         for (const auto& spell : spellSystem->spells()) {
@@ -2900,11 +2899,11 @@ visibleSlots.clear();
             glm::vec3 originWorld = spell.physicsBody->position;
             glm::mat4 model = glm::translate(glm::mat4(1.0f), originWorld);
 //            model *= glm::mat4_cast(rot);
-  //          model = glm::scale(model, glm::vec3(VOXEL_SIZE));  // Apply VOXEL_SIZE scaling
+            //          model = glm::scale(model, glm::vec3(VOXEL_SIZE));  // Apply VOXEL_SIZE scaling
 
             voxelShader->setMatrix("model", model);
             voxelShader->setMatrix("mvp", pv*model );
-            voxelShader->setFloat("scale",spell.physicsBody->radius);
+            voxelShader->setFloat("scale", 1.0f);
             voxelShader->setInt("uAlbedoArray", 0);
 
 
@@ -2929,6 +2928,7 @@ visibleSlots.clear();
             glBindVertexArray(0);
         }
     }
+
 
 
     void Game::renderEnemies() {
@@ -3975,15 +3975,19 @@ visibleSlots.clear();
                                       const glm::vec3& target,
                                       float radiusWorld,
                                       float speedWorld,
-                                      glm::vec3 color)
+                                      glm::vec3 color, int material)
     {
         float searchRadius = radiusWorld;
+        if(material==9)
+        {
+            searchRadius=glm::pow(searchRadius,3);
+        }
         FormationParams params = FormationParams::Sphere(start, radiusWorld);
 
         spellSystem->castSphere(
                 params.center,
                 params.radius,
-                0,
+                material,
                 speedWorld,
                 glm::normalize(target - start),
                 searchRadius
@@ -4369,4 +4373,42 @@ visibleSlots.clear();
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
 
+    void Game::appendSpellBillboards(std::vector<SunInstance>& out)
+    {
+        for (const auto& spell : spellSystem->spells()) {
+            if (!spell.isPhysicsEnabled || !spell.physicsBody) continue;
+
+            const auto& vol = spell.destruct.volume;
+            const glm::vec3 bodyPos = spell.physicsBody->position;
+            const glm::vec3 centerLocal = spell.destruct.localCenterOffsetWorld;
+
+            glm::vec3 sumPos(0.0f);
+            glm::vec3 sumColor(0.0f);
+            int count = 0;
+
+            for (int z = 0; z < vol.dims.z; ++z)
+                for (int y = 0; y < vol.dims.y; ++y)
+                    for (int x = 0; x < vol.dims.x; ++x) {
+                        const auto& c = vol.at(x,y,z);
+
+                        if (c.density < 0.0f) continue;
+                        if (c.material != 9u && c.type != 2u) continue;
+
+                        glm::vec3 localP = glm::vec3(x,y,z) * vol.voxelSize - centerLocal;
+                        glm::vec3 worldP = bodyPos + localP; // add rotation later if needed
+
+                        sumPos += worldP;
+                        sumColor += c.color;
+                        ++count;
+                    }
+
+            if (count > 0) {
+                SunInstance inst;
+                inst.position = sumPos / float(count);
+                inst.color = sumColor / float(count);
+                inst.scale = std::sqrt((float)count) * vol.voxelSize * 0.75f;
+                out.push_back(inst);
+            }
+        }
+    }
 }

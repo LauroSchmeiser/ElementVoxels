@@ -225,34 +225,22 @@ void main() {
     vec3 emiss = emission * emissionColor;
 
     if (mat == 9u) {
-        vec3 worldPos = localPos / localScale;
+        vec3 basePos = fragPos;
 
-        // Create a flowing direction vector
-        vec3 flowDir = normalize(vec3(1.0, 1.0, 0.5));
-        float flowAmount = dot(worldPos, flowDir);
-
-        // Offset by time to create movement
-        float flowOffset = flowAmount * 0.8 - uTime * 0.25;
-
-        // Create flowing UVs
-        vec2 flowingUV = vec2(
-        flowOffset,
-        worldPos.z * 1.5 + uTime * 0.2
+        // Keep the same texture scale/space as every other material
+        vec3 animatedAlbedo = sampleTriplanarAlbedo(
+        mat,
+        basePos + vec3(uTime * 0.3, uTime * 0.35, uTime * 0.25),
+        N
         );
 
-        // For triplanar mapping with time offset
-        vec3 timeOffset = vec3(uTime * 0.2, uTime * 0.15, uTime * 0.1);
-        vec3 animatedAlbedo = sampleTriplanarAlbedo(mat, worldPos + timeOffset, N);
+        float pulse = sin(uTime * 2.5) * 0.15 + 0.85;
 
-        // Gentle pulsing (heartbeat-like but very soft)
-        float pulse = sin(uTime * 2.5) * 0.15 + 0.85;  // Range: 0.7 to 1.0
-        float glowPulse = sin(uTime * 2.0) * 0.2 + 0.9; // Range: 0.7 to 1.1
-
-        // Apply effects
+        // preserve normal material look, just animate it a bit
         albedo = animatedAlbedo * pulse;
 
-        // Add soft glowing emission that pulses with the texture movement
-        float emissionIntensity = 1.75 + (sin(uTime * 2.0) * 0.3);
+        // emissive overlay on top
+        float emissionIntensity = 1.75 + sin(uTime * 2.0) * 0.3;
         emiss += vertexColor * emissionIntensity;
     }
 

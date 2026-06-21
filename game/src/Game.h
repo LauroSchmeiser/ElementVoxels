@@ -580,7 +580,7 @@ namespace gl3 {
                                     const glm::vec3& target,
                                     float radiusWorld,
                                     float speedWorld,
-                                    glm::vec3 color);
+                                    glm::vec3 color, int material);
 
 
         ///V-Effects::
@@ -694,5 +694,7 @@ namespace gl3 {
         bool sphereCollidesWithVoxels(const glm::vec3 &center, float radius) const;
 
         void alignCameraRollToUp(const glm::vec3 &targetUp, float dt);
+
+        void appendSpellBillboards(std::vector<SunInstance> &out);
     };
 }

@@ -92,10 +92,13 @@ namespace gl3 {
         };
         std::unordered_map<int, SphereMesh> sphereMeshCache;
 
-        void createPhysicsMeshData(PhysicsMeshData& mesh,
-                                                const std::vector<glm::vec3>& vertices,
-                                                const std::vector<glm::vec3>& normals,
-                                                const std::vector<glm::vec3>& colors);
+        void createPhysicsMeshData(
+                PhysicsMeshData& mesh,
+                const std::vector<glm::vec3>& vertices,
+                const std::vector<glm::vec3>& normals,
+                const std::vector<glm::vec3>& colors,
+                const std::vector<glm::vec2>& uvs,
+                const std::vector<uint32_t>& flags);
 
         void initSphereMeshCache();
 

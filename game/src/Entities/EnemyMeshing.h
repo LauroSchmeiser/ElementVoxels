@@ -13,10 +13,6 @@ namespace gl3 {
 
     inline EnemyMeshBuildResult     buildEnemyMeshMarchingCubesLocal(const LocalVoxelVolume& vol) {
         EnemyMeshBuildResult out;
-        // 1) iterate cells
-        // 2) sample densities
-        // 3) emit triangles
         return out;
     }
-
-} // namespace gl3
+}

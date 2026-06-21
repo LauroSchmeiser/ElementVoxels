@@ -89,8 +89,16 @@ namespace gl3 {
                         t = glm::clamp(t, 0.0f, 1.0f);
 
                         ev[ei] = lerp3(p[a], p[b], t);
-                        ec[ei] = lerp3(c[a], c[b], t);
-                        em[ei] = (t < 0.5f) ? m[a] : m[b];
+                        bool aInside = d[a] >= 0.0f;
+                        bool bInside = d[b] >= 0.0f;
+
+                        if (aInside && !bInside)      ec[ei] = c[a];
+                        else if (!aInside && bInside) ec[ei] = c[b];
+                        else                          ec[ei] = lerp3(c[a], c[b], t);
+
+                        if (aInside && !bInside)      em[ei] = m[a];
+                        else if (!aInside && bInside) em[ei] = m[b];
+                        else                          em[ei] = (t < 0.5f) ? m[a] : m[b];
                     }
 
                     int base = caseIndex * 16;
@@ -133,4 +141,4 @@ namespace gl3 {
         return out;
     }
 
-} // namespace gl3
+}
