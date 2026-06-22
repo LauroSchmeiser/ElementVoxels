@@ -12,6 +12,7 @@ namespace gl3 {
         marchingCubesShader = std::make_unique<Shader>("shaders/marching_cubes.comp");
         setupSSBOsAndTables();
         //MAX_CHUNKS_GPU = (int)chunkManager->maxChunksGpu();
+        setupLightSSBOs();
         setupChunkBatchBuffers(MAX_CHUNKS_GPU);
     }
 
@@ -346,21 +347,21 @@ namespace gl3 {
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
 
-    void ChunkRenderer::buildAndUploadChunkLightIndexBuffer(int camCX, int camCY, int camCZ, int renderRadius, uint64_t frameCounter)
+    void ChunkRenderer::buildAndUploadChunkLightIndexBuffer(int camCX, int camCY, int camCZ, int renderRadius)
     {
         static int lastUpdateFrame = -1;
         static int lastCamCX = camCX, lastCamCY = camCY, lastCamCZ = camCZ;
         static int lastRenderRadius = renderRadius;
 
         const int UPDATE_INTERVAL = 213;
-        const int CAM_MOVE_THRESHOLD = VOXEL_SIZE*CHUNK_SIZE;
+        const int CAM_MOVE_THRESHOLD = CHUNK_SIZE;
 
         bool needsUpdate = false;
 
         if ((std::abs(camCX - lastCamCX) >= CAM_MOVE_THRESHOLD ||
              std::abs(camCY - lastCamCY) >= CAM_MOVE_THRESHOLD ||
              std::abs(camCZ - lastCamCZ) >= CAM_MOVE_THRESHOLD ||
-             renderRadius != lastRenderRadius)&&(frameCounter - lastUpdateFrame >= UPDATE_INTERVAL)) {
+             renderRadius != lastRenderRadius)||(frameCounter - lastUpdateFrame >= UPDATE_INTERVAL)) {
             needsUpdate = true;
         }
 
@@ -418,12 +419,19 @@ namespace gl3 {
         chunk->gpuCache.nearbyLights.clear();
         chunk->gpuCache.nearbyLights.reserve(MAX_LIGHTS);
 
-        glm::vec3 chunkOrigin(
+        /*glm::vec3 chunkOrigin(
                 chunk->coord.x * DIM,
                 chunk->coord.y * DIM,
                 chunk->coord.z * DIM
         );
-        glm::vec3 chunkCenter = chunkOrigin + glm::vec3(DIM * 0.5f);
+        glm::vec3 chunkCenter = chunkOrigin + glm::vec3(DIM * 0.5f);*/
+
+        glm::vec3 chunkOrigin(
+                chunk->coord.x * CHUNK_SIZE * VOXEL_SIZE,
+                chunk->coord.y * CHUNK_SIZE * VOXEL_SIZE,
+                chunk->coord.z * CHUNK_SIZE * VOXEL_SIZE
+        );
+        glm::vec3 chunkCenter = chunkOrigin + glm::vec3(CHUNK_SIZE * VOXEL_SIZE * 0.5f);
 
         // Fast path
         if (flatEmissiveLightList.empty()) {
@@ -631,7 +639,20 @@ namespace gl3 {
             }
         }
 
+
         // Upload to SSBO for billboard rendering
         //uploadBillboardInstances(suns);
+    }
+    void ChunkRenderer::setupLightSSBOs()
+    {
+        glGenBuffers(1, &ssboLights);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboLights);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, 4096 * sizeof(VoxelLightGpu), nullptr, GL_DYNAMIC_DRAW); // capacity
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+        glGenBuffers(1, &ssboChunkLightIdx);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboChunkLightIdx);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, MAX_CHUNKS_GPU * sizeof(ChunkLightIndexGpu), nullptr, GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     }
 }

@@ -463,7 +463,7 @@ namespace gl3 {
         renderSpeedLines();
 
         // UI and other stuff AFTER post
-        DisplayFPSCount();
+        //DisplayFPSCount();
         renderGameplayUI();
     }
 
@@ -522,7 +522,6 @@ namespace gl3 {
                 //setupSSBOsAndTables();
                 //MAX_CHUNKS_GPU = (int)chunkManager->maxChunksGpu();
                 //setupChunkBatchBuffers(MAX_CHUNKS_GPU);
-                setupLightSSBOs();
                 preloadStage = PreloadStage::Boot_Materials;
                 return 0.30f;
 
@@ -603,7 +602,7 @@ namespace gl3 {
                         }
                     }
                 });
-                chunkRenderer->buildAndUploadChunkLightIndexBuffer(worldToChunk(cameraPos.x),worldToChunk(cameraPos.y),worldToChunk(cameraPos.z),RenderingRange,frameCounter);
+                chunkRenderer->buildAndUploadChunkLightIndexBuffer(worldToChunk(cameraPos.x),worldToChunk(cameraPos.y),worldToChunk(cameraPos.z),RenderingRange);
                 preloadStage = PreloadStage::Done;
                 return 0.92f;
 
@@ -699,7 +698,7 @@ namespace gl3 {
             ImGui::PushStyleColor(ImGuiCol_Text, textColor);
            //ImGui::Text("Enemies spawned: %d", waveManager.getSpawnedEnemies());
             //ImGui::Text("Enemies alive : %d", enemyManager->getEnemiesAlive());
-            for (int i = 0; i < enemyManager->getEnemiesAlive(); ++i) {
+           /* for (int i = 0; i < enemyManager->getEnemiesAlive(); ++i) {
                 glm::vec3 diff = (enemyManager->getEnemyPos(i)-cameraPos);
                 float dist = glm::sqrt(diff.x*diff.x+diff.y*diff.y+diff.z*diff.z);
               //  ImGui::Text("Enemy: %d", i+1);
@@ -707,7 +706,8 @@ namespace gl3 {
                 //ImGui::Text("Mesh valid : %d", enemyManager->getEnemyRenderingMesh(i));
                 ImGui::Text("HP : %f", enemyManager->getEnemyHP(i));
                 //ImGui::Text("Material : %f", enemyManager->getEnemyMat(i));
-            }
+
+            }*/
             ImGui::PopStyleColor();
 
             ImGui::End();
@@ -2023,98 +2023,6 @@ chunk->lightingDirty = false;
 chunkManager->updateEmissiveMembership(*chunk);
 }
 
-void Game::updateChunkLights(Chunk *chunk) {
-ZoneScoped;
-chunk->gpuCache.nearbyLights.clear();
-chunk->gpuCache.nearbyLights.reserve(MAX_LIGHTS);
-
-glm::vec3 chunkOrigin(
-        chunk->coord.x * DIM,
-        chunk->coord.y * DIM,
-        chunk->coord.z * DIM
-);
-glm::vec3 chunkCenter = chunkOrigin + glm::vec3(DIM * 0.5f);
-
-// Fast path
-if (flatEmissiveLightList.empty()) {
-    chunk->gpuCache.lastLightUpdateFrame = frameCounter;
-    return;
-}
-
-const float radiusSq = LIGHT_RADIUS_SQ;
-const int K = MAX_LIGHTS;
-
-// small stack arrays (K is tiny)
-std::array<const VoxelLight *, 8> bestPtrs{};   // pointer candidates
-std::array<float, 8> bestScore{};              // score = intensity / (distSq + 1)
-int bestCount = 0;
-
-// keep track of the current worst score index (min score)
-float worstScore = std::numeric_limits<float>::infinity();
-int worstIndex = -1;
-
-for (const VoxelLight *light: flatEmissiveLightList) {
-    glm::vec3 d = light->pos - chunkCenter;
-    float distSq = glm::dot(d, d);
-
-    if (distSq > radiusSq) continue; // skip out-of-range lights
-
-    // Score uses shader-like falloff (intensity divided by squared distance + 1)
-    // +1 avoids division by zero and keeps near-zero distance finite
-    float score = light->intensity / (distSq + 1.0f);
-
-    if (bestCount < K) {
-        // append
-        bestPtrs[bestCount] = light;
-        bestScore[bestCount] = score;
-        ++bestCount;
-
-        // find new worst
-        worstScore = bestScore[0];
-        worstIndex = 0;
-        for (int i = 1; i < bestCount; ++i) {
-            if (bestScore[i] < worstScore) {
-                worstScore = bestScore[i];
-                worstIndex = i;
-            }
-        }
-    } else {
-        // replace worst if this one has a higher score
-        if (score > worstScore) {
-            bestPtrs[worstIndex] = light;
-            bestScore[worstIndex] = score;
-
-            // recompute worst (small K)
-            worstScore = bestScore[0];
-            worstIndex = 0;
-            for (int i = 1; i < K; ++i) {
-                if (bestScore[i] < worstScore) {
-                    worstScore = bestScore[i];
-                    worstIndex = i;
-                }
-            }
-        }
-    }
-}
-
-// Move found lights into chunk->gpuCache.nearbyLights sorted by descending score
-if (bestCount > 0) {
-    std::vector<int> idx(bestCount);
-    for (int i = 0; i < bestCount; ++i) idx[i] = i;
-    // sort so highest score first
-    std::sort(idx.begin(), idx.end(), [&](int a, int b) {
-        return bestScore[a] > bestScore[b];
-    });
-
-    for (int i = 0; i < bestCount; ++i) {
-        chunk->gpuCache.nearbyLights.push_back(const_cast<VoxelLight *>(bestPtrs[idx[i]]));
-    }
-}
-
-chunk->gpuCache.lastLightUpdateFrame = frameCounter;
-}
-
-
 void Game::processEmissiveChunks() {
 chunkManager->forEachEmissiveChunk([this](Chunk *chunk) {
     // Process only emissive chunks
@@ -2138,103 +2046,6 @@ chunkManager->forEachEmissiveChunk([this](Chunk *chunk) {
 uint32_t Game::makeLightID(int cx, int cy, int cz) {
 // Simple hash function for light ID
 return ((cx & 0xFFF) << 20) | ((cy & 0xFFF) << 8) | (cz & 0xFF);
-}
-
-void Game::setupLightSSBOs()
-{
-glGenBuffers(1, &ssboLights);
-glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboLights);
-glBufferData(GL_SHADER_STORAGE_BUFFER, 4096 * sizeof(VoxelLightGpu), nullptr, GL_DYNAMIC_DRAW); // capacity
-glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-
-glGenBuffers(1, &ssboChunkLightIdx);
-glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboChunkLightIdx);
-glBufferData(GL_SHADER_STORAGE_BUFFER, MAX_CHUNKS_GPU * sizeof(ChunkLightIndexGpu), nullptr, GL_DYNAMIC_DRAW);
-glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-}
-
-inline uint32_t Game::lightIndexFromPtr(const VoxelLight* ptr) const {
-const VoxelLight* base = mergedEmissiveLightPool.data();
-return (uint32_t)(ptr - base);
-}
-
-void Game::uploadMergedLightsToGPU()
-{
-std::vector<VoxelLightGpu> gpu;
-gpu.resize(mergedEmissiveLightPool.size());
-
-for (size_t i = 0; i < mergedEmissiveLightPool.size(); ++i) {
-    const auto& L = mergedEmissiveLightPool[i];
-    gpu[i].posIntensity = glm::vec4(L.pos, L.intensity);
-    gpu[i].color        = glm::vec4(L.color, 0.0f);
-}
-
-glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboLights);
-glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, gpu.size() * sizeof(VoxelLightGpu), gpu.data());
-glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-}
-
-void Game::buildAndUploadChunkLightIndexBuffer(int camCX, int camCY, int camCZ, int renderRadius)
-{
-static int lastUpdateFrame = -1;
-static int lastCamCX = camCX, lastCamCY = camCY, lastCamCZ = camCZ;
-static int lastRenderRadius = renderRadius;
-
-const int UPDATE_INTERVAL = 213;
-const int CAM_MOVE_THRESHOLD = VOXEL_SIZE*CHUNK_SIZE;
-
-bool needsUpdate = false;
-
-if ((std::abs(camCX - lastCamCX) >= CAM_MOVE_THRESHOLD ||
-    std::abs(camCY - lastCamCY) >= CAM_MOVE_THRESHOLD ||
-    std::abs(camCZ - lastCamCZ) >= CAM_MOVE_THRESHOLD ||
-    renderRadius != lastRenderRadius)&&(frameCounter - lastUpdateFrame >= UPDATE_INTERVAL)) {
-    needsUpdate = true;
-}
-
-if (!needsUpdate) {
-    return; // Skip update this frame
-}
-
-lastUpdateFrame = frameCounter;
-lastCamCX = camCX;
-lastCamCY = camCY;
-lastCamCZ = camCZ;
-lastRenderRadius = renderRadius;
-
-std::vector<ChunkLightIndexGpu> chunkIdx(MAX_CHUNKS_GPU);
-for (auto& e : chunkIdx) {
-    e.count = 0;
-    for (int i = 0; i < 4; ++i) e.indices[i] = 0;
-}
-
-for (int cx = camCX - renderRadius; cx <= camCX + renderRadius; ++cx) {
-    for (int cy = camCY - renderRadius; cy <= camCY + renderRadius; ++cy) {
-        for (int cz = camCZ - renderRadius; cz <= camCZ + renderRadius; ++cz) {
-            Chunk* chunk = chunkManager->getChunk({cx,cy,cz});
-            if (!chunk) continue;
-            if (!chunk->gpuCache.isValid) continue;
-
-            if (frameCounter - chunk->gpuCache.lastLightUpdateFrame > LIGHT_UPDATE_INTERVAL ||
-                chunk->gpuCache.nearbyLights.empty()) {
-                updateChunkLights(chunk);
-            }
-
-            auto& dst = chunkIdx[chunk->gpuSlot];
-            int num = std::min((int)chunk->gpuCache.nearbyLights.size(), MAX_LIGHTS);
-            dst.count = (uint32_t)num;
-
-            for (int i = 0; i < num; ++i) {
-                const VoxelLight* L = chunk->gpuCache.nearbyLights[i];
-                dst.indices[i] = lightIndexFromPtr(L);
-            }
-        }
-    }
-}
-
-glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboChunkLightIdx);
-glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, chunkIdx.size() * sizeof(ChunkLightIndexGpu), chunkIdx.data());
-glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
 
 
@@ -2311,7 +2122,7 @@ if(frameCounter % 311 == 0)
     const int camCY = worldToChunk(cameraPos.y);
     const int camCZ = worldToChunk(cameraPos.z);
     const int renderRadius = RenderingRange;
-    chunkRenderer->buildAndUploadChunkLightIndexBuffer(camCX, camCY, camCZ, renderRadius,frameCounter);
+    chunkRenderer->buildAndUploadChunkLightIndexBuffer(camCX, camCY, camCZ, renderRadius);
 }
 
 if(getPlayerHealth()<=0)
@@ -2562,7 +2373,7 @@ glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
 glm::mat4 pv = projection * view;
 
 frameCounter++;
-
+chunkRenderer->frameCounter +=1;
 emissiveBillboards.clear();
 usedLightIDs.clear();
 
@@ -2696,9 +2507,8 @@ visibleSlots.clear();
             if (DebugMode1) voxelShader->setInt("debugMode", activeDebugMode % 7);
 
 
-
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 10, ssboLights);
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 11, ssboChunkLightIdx);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 10, chunkRenderer->ssboLights);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 11, chunkRenderer->ssboChunkLightIdx);
 
             glBindVertexArray(chunkRenderer->globalChunkVAO);
             glBindBuffer(GL_DRAW_INDIRECT_BUFFER, chunkRenderer->chunkIndirectBuffer);
@@ -3291,32 +3101,6 @@ visibleSlots.clear();
         chunk->meshDirty = false;
     }
 
-    bool Game::tryResolveChunkVertexCount(Chunk* chunk)
-    {
-        if (!chunk->gpuCache.hasPendingCount || !chunk->gpuCache.counterFence)
-            return false;
-
-        // Non-blocking poll:
-        GLenum res = glClientWaitSync(chunk->gpuCache.counterFence, 0, 0);
-        if (res == GL_TIMEOUT_EXPIRED)
-            return false;
-
-        // Fence signaled (or already signaled). Read the 4 bytes.
-        glDeleteSync(chunk->gpuCache.counterFence);
-        chunk->gpuCache.counterFence = 0;
-        chunk->gpuCache.hasPendingCount = false;
-
-        glBindBuffer(GL_COPY_READ_BUFFER, chunk->gpuCache.counterReadbackBuffer);
-        void* ptr = glMapBufferRange(GL_COPY_READ_BUFFER, 0, sizeof(uint32_t), GL_MAP_READ_BIT);
-        if (ptr) {
-            chunk->gpuCache.vertexCount = *reinterpret_cast<uint32_t*>(ptr);
-            glUnmapBuffer(GL_COPY_READ_BUFFER);
-        }
-        glBindBuffer(GL_COPY_READ_BUFFER, 0);
-
-        return true;
-    }
-
 
 // debug version: if doColorByDensity==true, set per-voxel color from density (visualize SDF)
     void Game::uploadVoxelChunk(const Chunk &chunk, const glm::vec3 *overrideColor) {
@@ -3423,65 +3207,7 @@ visibleSlots.clear();
         // IMPORTANT: padded voxel index (0,0,0) corresponds to world (chunkOrigin - voxelSize)
         computeShader.setVec3("gridOrigin", chunkOrigin - glm::vec3(gl3::VOXEL_SIZE));
     }
-    void Game::setupChunkBatchBuffers(int maxChunksGpu)
-    {
-        MAX_CHUNKS_GPU = maxChunksGpu;
-        CHUNK_MAX_VERTS = (DIM - 1) * (DIM - 1) * (DIM - 1) * 5 * 3;
 
-        const int MAX_VERTS_PER_CHUNK = 8000;
-        CHUNK_MAX_VERTS = std::min(
-                (int)chunkMaxVertices(DIM),
-                MAX_VERTS_PER_CHUNK
-        );
-
-        // Global vertex buffer
-        glGenBuffers(1, &globalChunkVertexBuffer);
-        glBindBuffer(GL_ARRAY_BUFFER, globalChunkVertexBuffer);
-        glBufferData(GL_ARRAY_BUFFER,
-                     MAX_CHUNKS_GPU * CHUNK_MAX_VERTS * sizeof(OutVertexStd430),
-                     nullptr,
-                     GL_DYNAMIC_DRAW);
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-        // Indirect command buffer
-        glGenBuffers(1, &chunkIndirectBuffer);
-
-        std::vector<DrawArraysIndirectCommand> cmds(MAX_CHUNKS_GPU);
-        for (uint32_t s = 0; s < (uint32_t)MAX_CHUNKS_GPU; ++s) {
-            cmds[s].count = 0;
-            cmds[s].instanceCount = 1;
-            cmds[s].first = s * (uint32_t)CHUNK_MAX_VERTS;
-            cmds[s].baseInstance = s;
-        }
-
-        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, chunkIndirectBuffer);
-        glBufferData(GL_DRAW_INDIRECT_BUFFER,
-                     cmds.size() * sizeof(DrawArraysIndirectCommand),
-                     cmds.data(),
-                     GL_DYNAMIC_DRAW);
-        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
-
-        // VAO setup
-        glGenVertexArrays(1, &globalChunkVAO);
-        glBindVertexArray(globalChunkVAO);
-
-        glBindBuffer(GL_ARRAY_BUFFER, globalChunkVertexBuffer);
-
-        constexpr GLsizei stride = sizeof(OutVertexStd430);
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void*)offsetof(OutVertexStd430, pos));
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void*)offsetof(OutVertexStd430, normal));
-        glEnableVertexAttribArray(2);
-        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, stride, (void*)offsetof(OutVertexStd430, color));
-        glEnableVertexAttribArray(3);
-        glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, stride, (void*)offsetof(OutVertexStd430, uv));
-        glEnableVertexAttribArray(4);
-        glVertexAttribIPointer(4, 1, GL_UNSIGNED_INT, stride, (void*)offsetof(OutVertexStd430, flags));
-
-        glBindVertexArray(0);
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-    }
 ////----Helper Functions------------------------------------------------------------------------------------------------------------------------
     Game::RayCastResult Game::rayCastFromCamera(float maxDistance) {
         RayCastResult result;
@@ -4063,8 +3789,8 @@ visibleSlots.clear();
         flash.color = glm::vec4(1.0f, 0.30f, 0.18f, 0.85f); // red flash
         flash.age = 0.0f;
         flash.lifetime = glm::mix(0.10f, 0.14f, strength01);
-        flash.startSize = 0.9f * VOXEL_SIZE;
-        flash.endSize = glm::mix(2.4f, 3.0f, strength01) * VOXEL_SIZE;
+        flash.startSize = 1.2f * VOXEL_SIZE;
+        flash.endSize = glm::mix(2.4f, 4.4f, strength01) * VOXEL_SIZE;
         flash.rotation = ((float)rand() / (float)RAND_MAX) * glm::two_pi<float>();
         flash.rotationSpeed = (((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f) * 1.5f;
         flash.kind = 1;
@@ -4107,8 +3833,8 @@ visibleSlots.clear();
         flash.color = glm::vec4(1.0f, 0.28f, 0.16f, 0.90f); // red flash
         flash.age = 0.0f;
         flash.lifetime = 0.13f;
-        flash.startSize = 1.2f * VOXEL_SIZE;
-        flash.endSize = 4.2f * VOXEL_SIZE;
+        flash.startSize = 2.2f * VOXEL_SIZE;
+        flash.endSize = 6.2f * VOXEL_SIZE;
         flash.rotation = ((float)rand() / (float)RAND_MAX) * glm::two_pi<float>();
         flash.rotationSpeed = (((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f) * 1.8f;
         flash.kind = 1;
@@ -4151,8 +3877,8 @@ visibleSlots.clear();
         flash.color = glm::vec4(1.0f, 0.24f, 0.14f, 0.98f); // red flash
         flash.age = 0.0f;
         flash.lifetime = 0.16f;
-        flash.startSize = 1.6f * VOXEL_SIZE;
-        flash.endSize = 5.8f * VOXEL_SIZE;
+        flash.startSize = 2.6f * VOXEL_SIZE;
+        flash.endSize = 8.8f * VOXEL_SIZE;
         flash.rotation = ((float)rand() / (float)RAND_MAX) * glm::two_pi<float>();
         flash.rotationSpeed = (((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f) * 2.0f;
         flash.kind = 1;

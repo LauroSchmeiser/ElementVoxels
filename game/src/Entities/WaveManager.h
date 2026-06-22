@@ -9,7 +9,7 @@ namespace gl3 {
     struct WaveConfig {
         uint32_t waveNumber = 0;
         uint32_t totalEnemies = 0;
-        uint32_t maxConcurrentEnemies = 3;
+        uint32_t maxConcurrentEnemies = 5;
         bool isBossWave = false;
 
         float minEnemyRadius = 2.0f;

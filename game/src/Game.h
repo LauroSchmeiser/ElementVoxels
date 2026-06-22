@@ -648,18 +648,6 @@ namespace gl3 {
         int activeSpellMat=0;
 
 
-        void setupChunkBatchBuffers(int maxChunksGpu);
-
-        bool tryResolveChunkVertexCount(Chunk *chunk);
-
-        void setupLightSSBOs();
-
-        uint32_t lightIndexFromPtr(const VoxelLight *ptr) const;
-
-        void uploadMergedLightsToGPU();
-
-        void buildAndUploadChunkLightIndexBuffer(int camCX, int camCY, int camCZ, int renderRadius);
-
         std::vector<DrawArraysIndirectCommand> visibleDrawCmds;
         std::vector<uint32_t> visibleSlots;
 

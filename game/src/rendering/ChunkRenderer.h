@@ -27,9 +27,6 @@ namespace gl3 {
         size_t CHUNK_MAX_VERTS = 0;
         int MAX_CHUNKS_GPU = 1350;
 
-        GLuint ssboLights = 0;
-        GLuint ssboChunkLightIdx = 0;
-
         void setupSSBOsAndTables();
         bool tryResolveChunkVertexCount(Chunk* chunk);
         void uploadVoxelChunk(const Chunk &chunk, const glm::vec3 *overrideColor);
@@ -48,7 +45,7 @@ namespace gl3 {
         GLuint chunkIndirectBuffer = 0;
         const int LIGHT_UPDATE_INTERVAL=301;
         std::vector<gl3::VoxelLight> mergedEmissiveLightPool;
-        void buildAndUploadChunkLightIndexBuffer(int camCX, int camCY, int camCZ, int renderRadius,uint64_t frameCounter);
+        void buildAndUploadChunkLightIndexBuffer(int camCX, int camCY, int camCZ, int renderRadius);
 
 
         void updateChunkLights(Chunk *chunk);
@@ -56,7 +53,7 @@ namespace gl3 {
         uint32_t lightIndexFromPtr(const VoxelLight *ptr) const;
         const int MAX_LIGHTS = 4; // has to match marching cubes shader
         const float LIGHT_RADIUS = 300.0f * CHUNK_SIZE*VOXEL_SIZE*2;
-        uint64_t frameCounter = 29; // Frame counter for light update staggering
+        uint64_t frameCounter = 180;
         const float LIGHT_RADIUS_SQ = LIGHT_RADIUS * LIGHT_RADIUS;
         std::vector<const gl3::VoxelLight *> flatEmissiveLightList;
 
@@ -68,6 +65,11 @@ namespace gl3 {
         void uploadMergedLightsToGPU();
 
         void generateEmissiveBillboards(Chunk *chunk);
+
+        GLuint ssboLights = 0;
+        GLuint ssboChunkLightIdx = 0;
+
+        void setupLightSSBOs();
     };
 
 }

@@ -95,7 +95,7 @@ namespace gl3 {
             spawnBoss();
         } else {
             config.waveNumber = currentWave;
-            config.totalEnemies = 2 + (currentWave - 1);
+            config.totalEnemies = 2 + (currentWave - 1)*2;
             config.isBossWave = false;
             enemiesToSpawn = config.totalEnemies;
         }
@@ -115,7 +115,7 @@ namespace gl3 {
         basic.moveSpeed = 30.0f;
         basic.shapeType = VoxelPhysicsBody::ShapeType::SPHERE;
         basic.mass = 50.0f;
-        basic.radius = 3.5f * VOXEL_SIZE;
+        basic.radius = 2.5f * VOXEL_SIZE;
         basic.cooldownsSec = { 4.0f, 0.0f, 0.0f };
 
         static EnemyArchetype dasher;

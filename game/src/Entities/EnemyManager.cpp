@@ -33,16 +33,6 @@ namespace gl3 {
                              type.radius * 0.65f,  // Larger bulge
                              glm::vec3(0.75f, 0.70f, 0.0f), 8, 1);
 
-/*// More prominent brow ridge
-        e.volume.unionSphere(centerLocal + glm::vec3(0, type.radius * 0.25f, type.radius * 0.55f),
-                             type.radius * 0.28f,
-                             glm::vec3(0.40f, 0.25f, 0.28f), 7, 1);
-
-// Lower eyelid more pronounced
-        e.volume.unionSphere(centerLocal + glm::vec3(0, -type.radius * 0.22f, type.radius * 0.52f),
-                             type.radius * 0.24f,
-                             glm::vec3(0.40f, 0.25f, 0.28f), 7, 1);*/
-
 // Small stalk/tendril roots
         glm::vec3 eyeDir = glm::vec3(1.0f, 0.0f, 0.0f);
         int rerollCount=0;
@@ -53,14 +43,14 @@ namespace gl3 {
 
             glm::vec3 root = centerLocal + dir * (type.radius * 0.95f);
 
-            if (rerollCount<6&&glm::dot(dir, eyeDir) > 0.3f)
+            if (rerollCount<4&&glm::dot(dir, eyeDir) > 0.3f)
             {
                 i--;
                 rerollCount++;
                 continue;
             }
 
-            const int segments = 20;
+            const int segments = 12;
             for (int s = 0; s < segments; ++s) {
                 float t = float(s) / float(segments - 1);
 
@@ -85,7 +75,7 @@ namespace gl3 {
         EnemyRuntime& ref = enemies.back();
 
         ensurePhysicsBody(ref);
-        rebuildMeshIfNeeded(ref);
+        //rebuildMeshIfNeeded(ref);
 
         return ref;
     }

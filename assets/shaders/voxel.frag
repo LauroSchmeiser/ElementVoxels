@@ -202,7 +202,7 @@ void main() {
             vec3 toLight = lightPos - fragPos;
             float distSq = dot(toLight, toLight);
             float dist = sqrt(distSq);
-            vec3 L = toLight / max(dist, 0.0);
+            vec3 L = toLight / max(dist,  1e-4);
 
             float NdotL = max(dot(N, L), 0.0);
             float attenuation = 7.5 / (distSq + 1.0);
@@ -218,10 +218,10 @@ void main() {
             specAccum += radiance * spec;
         }
     }
-   /* else
+    else
     {
-        lightAccum+=vec3(1,0.6,0)*1.5;
-    }*/
+        lightAccum=vec3(1.0,0,0);
+    }
     vec3 emiss = emission * emissionColor;
 
     if (mat == 9u) {
@@ -247,10 +247,6 @@ void main() {
 
     vec3 diffuse = lightAccum * (albedo / PI);
     vec3 ambient = ambientColor * albedo;
-    if(ambient.x+ambient.y+ambient.z<0.2)
-    {
-        ambient=mix(vec3(1.0,0.0,0.0),vertexColor,0.75f);
-    }
 
     // Burn / disintegrate
     if (uBurnEnabled != 0) {
