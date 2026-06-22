@@ -66,6 +66,8 @@ namespace gl3 {
 
         bool pendingRemoval = false;
 
+        float dashTimeRemaining = 0.0f;
+        glm::vec3 dashDirection {0.0f, 0.0f, 0.0f};
     };
 
 }

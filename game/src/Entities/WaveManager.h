@@ -17,7 +17,7 @@ namespace gl3 {
 
         // Boss settings
         float bossRadius = 8.0f;
-        float bossHealth = 5000.0f;
+        float bossHealth = 7000.0f;
     };
 
     class WaveManager {

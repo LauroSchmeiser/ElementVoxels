@@ -111,12 +111,22 @@ namespace gl3 {
 
         static EnemyArchetype basic;
         basic.name = "Basic";
-        basic.maxHP = 100.0f;
-        basic.moveSpeed = 20.0f;
+        basic.maxHP = 1000.0f;
+        basic.moveSpeed = 30.0f;
         basic.shapeType = VoxelPhysicsBody::ShapeType::SPHERE;
         basic.mass = 50.0f;
-        basic.radius = 2.5f * VOXEL_SIZE;
-        basic.cooldownsSec = { 2.0f, 0.0f, 0.0f };
+        basic.radius = 3.5f * VOXEL_SIZE;
+        basic.cooldownsSec = { 4.0f, 0.0f, 0.0f };
+
+        static EnemyArchetype dasher;
+        dasher.name = "Dasher";
+        dasher.maxHP = 500.0f;
+        dasher.moveSpeed = 50.0f;
+        dasher.shapeType = VoxelPhysicsBody::ShapeType::SPHERE;
+        dasher.mass = 10.0f;
+        dasher.radius = 2.0f * VOXEL_SIZE;
+        dasher.cooldownsSec = { 0.0f, 3.0f, 0.0f };
+
 
         enemyManager->spawn(basic, spawnPos);
         enemiesSpawned++;
@@ -130,10 +140,12 @@ namespace gl3 {
         EnemyArchetype bossArchetype;
         bossArchetype.name = "Boss";
         bossArchetype.maxHP = config.bossHealth;
-        bossArchetype.moveSpeed = 30.0f;
+        bossArchetype.moveSpeed = 40.0f;
         bossArchetype.radius = config.bossRadius * VOXEL_SIZE;
         bossArchetype.shapeType = VoxelPhysicsBody::ShapeType::SPHERE;
         bossArchetype.mass = 50.0f;
+        bossArchetype.cooldownsSec = { 8.0f, 0.0f, 0.0f };
+
 
         EnemyRuntime& boss = enemyManager->spawn(bossArchetype, spawnPos);
         bossId = boss.inst.id;

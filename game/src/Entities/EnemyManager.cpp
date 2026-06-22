@@ -119,37 +119,88 @@ namespace gl3 {
         for (size_t i = 0; i < enemies.size(); /*manual*/) {
             EnemyRuntime& e = enemies[i];
 
-            if (e.inst.body && e.inst.hp > 0.0f) {
-                glm::vec3 toP = playerPos - e.inst.body->position;
-                float d = glm::length(toP);
-                if (d > 0.001f) {
-                    glm::vec3 dir = toP / d;
-                    e.inst.body->velocity = dir * e.inst.type.moveSpeed;
+            glm::vec3 toPlayer = playerPos - e.inst.position;
+            float distToPlayer = glm::length(toPlayer);
+            glm::vec3 dir = (distToPlayer > 0.001f) ? (toPlayer / distToPlayer) : glm::vec3(1,0,0);
 
-                    glm::quat targetRot = rotateFromTo(glm::vec3(1,0,0), dir);
+            // reduce only cooldowns for abilities this archetype actually has
+            for (size_t s = 0; s < e.inst.cdRemaining.size(); ++s) {
+                if (e.inst.type.cooldownsSec[s] > 0.0f) {
+                    e.inst.cdRemaining[s] -= dt;
+                }
+            }
+
+            // update dash timer
+            if (e.inst.dashTimeRemaining > 0.0f) {
+                e.inst.dashTimeRemaining -= dt;
+            }
+
+            if (e.inst.body && e.inst.hp > 0.0f) {
+                glm::vec3 moveDir = dir;
+                float moveSpeed = e.inst.type.moveSpeed;
+
+                // If currently dashing, keep using stored dash direction and boosted speed
+                if (e.inst.dashTimeRemaining > 0.0f) {
+                    if (glm::length(e.inst.dashDirection) > 0.001f) {
+                        moveDir = glm::normalize(e.inst.dashDirection);
+                    }
+                    moveSpeed *= 7.0f; // dash multiplier
+                }
+
+                e.inst.body->velocity = moveDir * moveSpeed;
+
+                if (glm::length(moveDir) > 0.001f) {
+                    glm::quat targetRot = rotateFromTo(glm::vec3(1,0,0), moveDir);
                     e.inst.rotation = glm::slerp(e.inst.rotation, targetRot, 0.08f);
                     e.inst.body->orientation = e.inst.rotation;
-                }            }
-
-            if (e.inst.body) e.inst.position = e.inst.body->position;
-
-            e.inst.cdRemaining[0]-=0.5f*dt;
-            glm::vec3 dir = glm::normalize(playerPos - e.inst.position);
-            RayCastResult hit= rayCastFromPosition(e.inst.position,dir,500);
-            float radius= e.inst.type.radius * 1.25;
-            int material = 0;
-            if(e.inst.type.radius==8.0f*VOXEL_SIZE)
-            {
-                radius= 10.0f * VOXEL_SIZE;
-                material=9;
+                }
             }
-            if (game && e.inst.cdRemaining[0] <= 0.0f&&glm::distance(hit.hitPosition,playerPos)<=10*CHUNK_SIZE*VOXEL_SIZE) {
+
+            if (e.inst.body) {
+                e.inst.position = e.inst.body->position;
+            }
+
+            RayCastResult hit = rayCastFromPosition(e.inst.position, dir, 500.0f);
+
+            // Ability slot 0: projectile
+            if (e.inst.type.cooldownsSec[0] > 0.0f) {
+                float radius = e.inst.type.radius * 1.5f;
+                int material = 0;
+
+                if (e.inst.type.radius == 8.0f * VOXEL_SIZE) {
+                    radius = 10.0f * VOXEL_SIZE;
+                    material = 9;
+                }
+
+                if (game &&
+                    e.inst.cdRemaining[0] <= 0.0f &&
+                    glm::distance(hit.hitPosition, playerPos) <= 10 * CHUNK_SIZE * VOXEL_SIZE) {
+
                     glm::vec3 start = e.inst.position + dir * (e.inst.currentRadius + 1.0f * VOXEL_SIZE);
-                    game->spawnEnemyLaunchSphere(start, playerPos,
-                                                 radius,
-                                                 10.0f/glm::sqrt(radius),
-                                                 glm::vec3(1.0f, 0.2f, 0.2f),material);
+                    game->spawnEnemyLaunchSphere(
+                            start,
+                            playerPos,
+                            radius,
+                            12.0f / glm::sqrt(radius),
+                            glm::vec3(1.0f, 0.2f, 0.2f),
+                            material
+                    );
+
                     e.inst.cdRemaining[0] = e.inst.type.cooldownsSec[0];
+                }
+            }
+
+            // Ability slot 1: dash
+            if (e.inst.type.cooldownsSec[1] > 0.0f) {
+                if (game &&
+                    e.inst.cdRemaining[1] <= 0.0f &&
+                    distToPlayer <= 10 * CHUNK_SIZE * VOXEL_SIZE) {
+
+                    // dash toward player's last known direction at trigger moment
+                    e.inst.dashDirection = dir;
+                    e.inst.dashTimeRemaining = 1.0f; // short burst duration
+                    e.inst.cdRemaining[1] = e.inst.type.cooldownsSec[1];
+                }
             }
 
             rebuildMeshIfNeeded(e);
@@ -159,6 +210,7 @@ namespace gl3 {
             for (const auto& part : e.renderParts) {
                 totalVerts += part.mesh.vertexCount;
             }
+
             if (e.inst.hp <= 0.0f || totalVerts < kTooSmallVtx) {
                 destroyEnemy(i);
                 continue;

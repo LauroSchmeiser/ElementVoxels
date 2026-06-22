@@ -533,7 +533,7 @@ namespace gl3 {
         if (spell.physicsBodyId != 0 && ctx.physics) {
             gl3::VoxelPhysicsBody* body = ctx.physics->getBodyById(spell.physicsBodyId);
 
-            if(body&&glm::length(body->velocity)<0.5f&&body->lifetime<=spell.creationTime) {
+            if(body&&glm::length(body->velocity)<0.5f||spell.lifetime > 0&& spell.creationTime > spell.lifetime) {
                 // Create formation before removing body
                 const float safeCollectedProxy = (float) spell.physicsMesh.vertexCount;
                 createSpellFormation(

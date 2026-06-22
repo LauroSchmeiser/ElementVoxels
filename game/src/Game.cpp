@@ -1746,6 +1746,17 @@ namespace gl3 {
     {
         if (!body) return;
 
+        for(auto &enemy: enemyManager->all())
+        {
+            if(body==enemy.inst.body)
+            {
+                setPlayerHealth(getPlayerHealth() - 10);
+
+                body->position-=body->velocity*glm::vec3(3);
+                return;
+            }
+        }
+
         const glm::vec3 playerPos = cameraPos;
 
         const float velLen = glm::length(body->velocity);
@@ -2338,6 +2349,16 @@ if(getPlayerHealth()<=0)
             //cameraRotation = glm::vec2(pitch, yaw);
         }
 });
+    for(auto &spell: spellSystem->spells())
+    {
+        if(spell.physicsBody&&spell.physicsBody->material==9) {
+            glm::vec3 dist = (cameraPos - spell.physicsBody->position);
+            float distsq = glm::sqrt(dist.x * dist.x + dist.y * dist.y + dist.z * dist.z);
+            if (distsq < spell.radius * spell.radius) {
+                setPlayerHealth(getPlayerHealth() - 0.025f * distsq);
+            }
+        }
+    }
 }
 
 emissiveUpdateCounter++;
@@ -3977,10 +3998,10 @@ visibleSlots.clear();
                                       float speedWorld,
                                       glm::vec3 color, int material)
     {
-        float searchRadius = radiusWorld;
+        float searchRadius = radiusWorld*2;
         if(material==9)
         {
-            searchRadius=glm::pow(searchRadius,3);
+            searchRadius=glm::pow(radiusWorld,3);
         }
         FormationParams params = FormationParams::Sphere(start, radiusWorld);
 
@@ -4017,18 +4038,14 @@ visibleSlots.clear();
         float combined = glm::clamp(strength01 * 0.7f + removal01 * 0.3f, 0.0f, 1.0f);
 
         if (combined < 0.25f) {
-            //spawnImpactPresetSmall(hitPos, hitNormal, combined, tint);
-            //spawnImpactPresetMedium(hitPos, hitNormal, combined, tint);
-            spawnImpactPresetLarge(hitPos, hitNormal, combined, tint);
+            // LIGHT: flash only (no smoke)
+            spawnImpactPresetSmall(hitPos, hitNormal, combined, tint);
         } else if (combined < 0.65f) {
-            //spawnImpactPresetSmall(hitPos, hitNormal, combined, tint);
-            //spawnImpactPresetMedium(hitPos, hitNormal, combined, tint);
-            spawnImpactPresetLarge(hitPos, hitNormal, combined, tint);
+            // MEDIUM: larger flash + light smoke
+            spawnImpactPresetMedium(hitPos, hitNormal, combined, tint);
         } else {
-            //spawnImpactPresetSmall(hitPos, hitNormal, combined, tint);
-            //spawnImpactPresetMedium(hitPos, hitNormal, combined, tint);
+            // STRONG: largest flash + strong smoke
             spawnImpactPresetLarge(hitPos, hitNormal, combined, tint);
-
         }
     }
 
@@ -4037,28 +4054,21 @@ visibleSlots.clear();
                                       float strength01,
                                       const glm::vec3& tint)
     {
-        const int count = 6 + (int)(strength01 * 6.0f);
+        (void)tint; // unused for flash-only small preset
 
-        for (int i = 0; i < count; ++i) {
-            float rx = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f;
-            float ry = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f;
-            float rz = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f;
-
-            glm::vec3 randDir = glm::normalize(glm::vec3(rx, ry, rz) + hitNormal * 1.5f);
-
-            ImpactParticle p;
-            p.position = hitPos + hitNormal * (0.9f * VOXEL_SIZE);
-            p.velocity = randDir * glm::mix(1.0f, 3.5f, strength01) * VOXEL_SIZE;
-            p.color = glm::vec4(tint, 0.0125f);
-            p.age = 0.0f;
-            p.lifetime = glm::mix(0.25f, 0.55f, strength01);
-            p.startSize = 0.35f * VOXEL_SIZE;
-            p.endSize = glm::mix(1.2f, 2.6f, strength01) * VOXEL_SIZE;
-            p.rotation = ((float)rand() / (float)RAND_MAX) * glm::two_pi<float>();
-            p.rotationSpeed = (((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f) * 2.0f;
-            p.kind = 0;
-            impactParticles.push_back(p);
-        }
+        // LIGHT: flash only, no smoke
+        ImpactParticle flash;
+        flash.position = hitPos + hitNormal * (0.9f * VOXEL_SIZE);
+        flash.velocity = glm::vec3(0.0f);
+        flash.color = glm::vec4(1.0f, 0.30f, 0.18f, 0.85f); // red flash
+        flash.age = 0.0f;
+        flash.lifetime = glm::mix(0.10f, 0.14f, strength01);
+        flash.startSize = 0.9f * VOXEL_SIZE;
+        flash.endSize = glm::mix(2.4f, 3.0f, strength01) * VOXEL_SIZE;
+        flash.rotation = ((float)rand() / (float)RAND_MAX) * glm::two_pi<float>();
+        flash.rotationSpeed = (((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f) * 1.5f;
+        flash.kind = 1;
+        impactParticles.push_back(flash);
     }
 
     void Game::spawnImpactPresetMedium(const glm::vec3& hitPos,
@@ -4066,40 +4076,41 @@ visibleSlots.clear();
                                        float strength01,
                                        const glm::vec3& tint)
     {
-        const int smokeCount = 14 + (int)(strength01 * 10.0f);
+        // MEDIUM: light smoke
+        const int smokeCount = 8 + (int)(strength01 * 6.0f);
 
         for (int i = 0; i < smokeCount; ++i) {
             float rx = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f;
             float ry = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f;
             float rz = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f;
 
-            glm::vec3 randDir = glm::normalize(glm::vec3(rx, ry, rz) + hitNormal * 1.8f);
+            glm::vec3 randDir = glm::normalize(glm::vec3(rx, ry, rz) + hitNormal * 1.7f);
 
             ImpactParticle p;
-            p.position = hitPos + hitNormal * (1.1f * VOXEL_SIZE);
-            p.velocity = randDir * glm::mix(2.0f, 5.0f, strength01) * VOXEL_SIZE;
-            p.color = glm::vec4(tint * 0.95f, 0.025f);
+            p.position = hitPos + hitNormal * (1.0f * VOXEL_SIZE);
+            p.velocity = randDir * glm::mix(1.8f, 4.2f, strength01) * VOXEL_SIZE;
+            p.color = glm::vec4(tint * 0.95f, 0.018f); // light smoke alpha
             p.age = 0.0f;
-            p.lifetime = glm::mix(0.45f, 1.5f, strength01);
-            p.startSize = 0.45f * VOXEL_SIZE;
-            p.endSize = glm::mix(2.0f, 4.5f, strength01) * VOXEL_SIZE;
+            p.lifetime = glm::mix(0.40f, 0.95f, strength01);
+            p.startSize = 0.40f * VOXEL_SIZE;
+            p.endSize = glm::mix(1.8f, 3.6f, strength01) * VOXEL_SIZE;
             p.rotation = ((float)rand() / (float)RAND_MAX) * glm::two_pi<float>();
-            p.rotationSpeed = (((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f) * 2.5f;
+            p.rotationSpeed = (((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f) * 2.2f;
             p.kind = 0;
             impactParticles.push_back(p);
         }
 
-        // add quick flash
+        // MEDIUM: larger red flash
         ImpactParticle flash;
-        flash.position = hitPos + hitNormal * (1.1f * VOXEL_SIZE);
+        flash.position = hitPos + hitNormal * (1.0f * VOXEL_SIZE);
         flash.velocity = glm::vec3(0.0f);
-        flash.color = glm::vec4(1.0f, 0.85f, 0.55f, 0.80f);
+        flash.color = glm::vec4(1.0f, 0.28f, 0.16f, 0.90f); // red flash
         flash.age = 0.0f;
-        flash.lifetime = 0.2f;
-        flash.startSize = 1.0f * VOXEL_SIZE;
-        flash.endSize = 3.5f * VOXEL_SIZE;
-        flash.rotation = 0.0f;
-        flash.rotationSpeed = 0.0f;
+        flash.lifetime = 0.13f;
+        flash.startSize = 1.2f * VOXEL_SIZE;
+        flash.endSize = 4.2f * VOXEL_SIZE;
+        flash.rotation = ((float)rand() / (float)RAND_MAX) * glm::two_pi<float>();
+        flash.rotationSpeed = (((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f) * 1.8f;
         flash.kind = 1;
         impactParticles.push_back(flash);
     }
@@ -4109,7 +4120,8 @@ visibleSlots.clear();
                                       float strength01,
                                       const glm::vec3& tint)
     {
-        const int smokeCount = 26 + (int)(strength01 * 24.0f);
+        // STRONG: strong smoke
+        const int smokeCount = 24 + (int)(strength01 * 20.0f);
 
         for (int i = 0; i < smokeCount; ++i) {
             float rx = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f;
@@ -4121,7 +4133,7 @@ visibleSlots.clear();
             ImpactParticle p;
             p.position = hitPos + hitNormal * (0.6f * VOXEL_SIZE);
             p.velocity = randDir * glm::mix(3.0f, 7.5f, strength01) * VOXEL_SIZE;
-            p.color = glm::vec4(tint * 0.9f, 0.05f);
+            p.color = glm::vec4(tint * 0.9f, 0.05f); // strong smoke alpha
             p.age = 0.0f;
             p.lifetime = glm::mix(0.75f, 1.6f, strength01);
             p.startSize = 0.6f * VOXEL_SIZE;
@@ -4132,16 +4144,17 @@ visibleSlots.clear();
             impactParticles.push_back(p);
         }
 
+        // STRONG: biggest red flash
         ImpactParticle flash;
         flash.position = hitPos;
         flash.velocity = glm::vec3(0.0f);
-        flash.color = glm::vec4(1.0f, 0.75f, 0.45f, 0.95f);
+        flash.color = glm::vec4(1.0f, 0.24f, 0.14f, 0.98f); // red flash
         flash.age = 0.0f;
         flash.lifetime = 0.16f;
-        flash.startSize = 1.5f * VOXEL_SIZE;
-        flash.endSize = 5.5f * VOXEL_SIZE;
-        flash.rotation = 0.0f;
-        flash.rotationSpeed = 0.0f;
+        flash.startSize = 1.6f * VOXEL_SIZE;
+        flash.endSize = 5.8f * VOXEL_SIZE;
+        flash.rotation = ((float)rand() / (float)RAND_MAX) * glm::two_pi<float>();
+        flash.rotationSpeed = (((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f) * 2.0f;
         flash.kind = 1;
         impactParticles.push_back(flash);
     }

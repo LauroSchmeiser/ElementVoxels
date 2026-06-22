@@ -75,7 +75,7 @@ void main()
         // Fade over lifetime, but stay readable longer
         alpha *= smoothstep(1.0, 0.15, uLife01);
         alpha *= 0.95;
-        alpha=clamp(alpha,0.5,1.0);
+        alpha=clamp(alpha,0.05,1.0);
 
 
         if (alpha < 0.02)
