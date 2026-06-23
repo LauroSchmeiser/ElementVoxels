@@ -139,6 +139,7 @@ namespace gl3 {
 
     void SpellSystem::update(float dt)
     {
+        if (isShuttingDown()) return;
         TRACY_CPU_ZONE("SpellSystem:update()");
         pumpAsyncResults();
         updateSpells(dt);
@@ -236,6 +237,7 @@ namespace gl3 {
     {
         TRACY_CPU_ZONE("SpellSystem:pumpResults()");
 
+        if (isShuttingDown()) return;
         if (!spellCastAsync) return;
 
         SpellCastResult r;
@@ -507,7 +509,7 @@ namespace gl3 {
                 body = ctx.physics->getBodyById(spellIt->physicsBodyId);
             }
 
-            if (spellIt->physicsBodyId != 0 && glm::length(spellIt->physicsBody->velocity) < 0.5f) {
+            if (spellIt->physicsBodyId != 0 && body && glm::length(body->velocity) < 0.5f){
                 spellIt->markForRemoval = true;
             }
 
@@ -533,7 +535,8 @@ namespace gl3 {
         if (spell.physicsBodyId != 0 && ctx.physics) {
             gl3::VoxelPhysicsBody* body = ctx.physics->getBodyById(spell.physicsBodyId);
 
-            if(body&&glm::length(body->velocity)<0.5f||spell.lifetime > 0&& spell.creationTime > spell.lifetime) {
+            if(body && (glm::length(body->velocity) < 0.5f ||
+                        (spell.lifetime > 0 && spell.creationTime > spell.lifetime))) {
                 // Create formation before removing body
                 const float safeCollectedProxy = (float) spell.physicsMesh.vertexCount;
                 createSpellFormation(
@@ -583,6 +586,7 @@ namespace gl3 {
 
     void SpellSystem::queueAsyncFormationCreation(const SpellEffect& s, float arrivalRatio)
     {
+        if (isShuttingDown()) return;
         // Copy what we need
         const glm::vec3 center = s.center;
         const uint64_t material = s.targetMaterial;
@@ -615,7 +619,7 @@ namespace gl3 {
                    {
                        // If SpellSystem was destroyed/reset -> do nothing
                        auto self = weakSelf.lock();
-                       if (!self) return;
+                       if (!self || self->isShuttingDown()) return;
 
                        WorldPlanet formation;
                        formation.worldPos = center;
@@ -629,7 +633,7 @@ namespace gl3 {
                                    [weakSelf, formation, material, paramsCopy]() mutable
                                    {
                                        auto self2 = weakSelf.lock();
-                                       if (!self2) return;
+                                       if (!self2 || self2->isShuttingDown()) return;
                                        self2->carveFormationWithSDF(formation, material, paramsCopy);
                                    }
                            );
@@ -642,6 +646,7 @@ namespace gl3 {
     {
         TRACY_CPU_ZONE("SpellSystem:Async Physics()");
 
+        if (isShuttingDown()) return;
         if (!ctx.mainThreadDispatcher) {
             // If you don't have a dispatcher, safest is: do it synchronously on main thread.
             // (Or just return.)
@@ -652,7 +657,7 @@ namespace gl3 {
         const uint64_t spellId = s.ID;
 
         ctx.mainThreadDispatcher([this, spellId]() {
-
+            if (isShuttingDown()) return;
             // Find the live spell object
             SpellEffect* live = nullptr;
             for (auto& sp : activeSpells) {
@@ -669,7 +674,7 @@ namespace gl3 {
             // BACKGROUND THREAD: CPU-only heavy work
             std::async(std::launch::async,
                        [this, spellId, tri = std::move(tri), effectiveRadius]() mutable {
-
+                           if (isShuttingDown()) return;
                            glm::vec3 extents;
 
                            if (!tri.vertsLocal.empty()) {
@@ -689,6 +694,7 @@ namespace gl3 {
 
                            if (ctx.mainThreadDispatcher) {
                                ctx.mainThreadDispatcher([this, spellId, extents]() {
+                                   if (isShuttingDown()) return;
                                    SpellEffect* live2 = nullptr;
                                    for (auto& sp : activeSpells) {
                                        if (sp.ID == spellId) { live2 = &sp; break; }
@@ -741,6 +747,7 @@ namespace gl3 {
     {
         TRACY_CPU_ZONE("SpellSystem:process Async Formations()");
 
+        if (isShuttingDown()) return;
         std::lock_guard<std::mutex> lock(queueMutex);
 
         // We need to process the queue differently since AsyncFormationRequest is now movable only
@@ -808,6 +815,7 @@ namespace gl3 {
     {
         TRACY_CPU_ZONE("SpellSystem: Process Async Physics()");
 
+        if (isShuttingDown()) return;
         std::lock_guard<std::mutex> lock(physicsResultMutex);
 
         std::vector<SpellEffect> resultsToMerge;
@@ -967,7 +975,9 @@ namespace gl3 {
         for (uint64_t id : spell.animatedVoxelIDs) {
             auto it = animatedVoxelIndexMap.find(id);
             if (it != animatedVoxelIndexMap.end()) {
-                const AnimatedVoxel& voxel = animatedVoxels[it->second];
+                size_t idx = it->second;
+                if (idx >= animatedVoxels.size()) continue;
+                const AnimatedVoxel& voxel = animatedVoxels[idx];
                 TargetKey key{
                         static_cast<int64_t>(std::round(voxel.targetPos.x / VOXEL_SIZE)),
                         static_cast<int64_t>(std::round(voxel.targetPos.y / VOXEL_SIZE)),

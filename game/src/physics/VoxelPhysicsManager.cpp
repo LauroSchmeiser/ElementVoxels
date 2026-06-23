@@ -385,6 +385,8 @@ namespace gl3 {
         // integrate + voxel collisions + lifetime
         size_t i = 0;
         while (i < bodies.size()) {
+            bool removedCurrentBody = false;
+
             VoxelPhysicsBody* body = bodies[i].get();
 
             // Lifetime check
@@ -494,11 +496,17 @@ namespace gl3 {
                             }*/
 
                             hit = true;
-                            if(body->material<7)
-                            {
-                                removeBody(body->id);
+                            if (body->material < 7) {
+                                removedBodies.push_back(body->id);
+                                bodies[i] = std::move(bodies.back());
+                                bodies.pop_back();
+                                removedCurrentBody = true;
+                                break;
                             }
                         }
+                    }
+                    if (removedCurrentBody) {
+                        continue;
                     }
 
                     if (!hit) {

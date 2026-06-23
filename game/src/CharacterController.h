@@ -92,6 +92,8 @@ namespace gl3 {
 
         bool isSurfaceAdhered() const { return state.isSurfaceAdhered; }
 
+        void resolveCameraCollision(glm::vec3& cameraPos, float eyeRadius) const;
+
     private:
         // Collision detection
         bool checkCollision(const glm::vec3& testPosition,
@@ -173,9 +175,15 @@ namespace gl3 {
         glm::vec3 getGravityDirection() const { return settings.gravityDir; }
         glm::vec3 getUpDirection() const;
 
-
+        float getRadius() const { return radius; }
     private:
         PlayerBodyCollisionCallback playerBodyCollisionCallback;
+        bool depenetrateSphere(glm::vec3& center, float sphereRadius, int maxIterations = 8) const;
+        void enforceCameraClearance();
+    private:
+        bool checkCameraCollision(const glm::vec3& cameraPos, float eyeRadius,
+                                  glm::vec3& outNormal, float& outPenetration) const;
 
+        void enforceCameraClearanceAggressive();
     };
 }

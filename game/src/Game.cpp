@@ -555,6 +555,10 @@ namespace gl3 {
 
             case PreloadStage::Run_SpellSystem:
                 preloadStageName = "Setting up magic System...";
+                if (spellSystem) {
+                    spellSystem->clear();
+                    spellSystem.reset();
+                }
                 setupSpellContext();
                 preloadStage = PreloadStage::Run_Controls;
                 return 0.70f;
@@ -1886,96 +1890,6 @@ lastFrameTime = frameTime;
 
 //------Lighting-Code---------------------------------------------------------------------------------------------------------------------------
 
-// Replace updateGlobalLightGrid with a spatial hash approach and a flat list and performs
-// a simple greedy merging of lights that are close to each other.
-void Game::updateLightSpatialHash() {
-ZoneScoped;
-lightSpatialHash.clear();
-flatEmissiveLightList.clear();
-mergedEmissiveLightPool.clear();
-
-// 1) Gather raw pointers (lights stored inside chunks) and fill spatial-hash as before
-std::vector<const VoxelLight *> rawLights;
-chunkManager->forEachEmissiveChunk([this, &rawLights](Chunk *chunk) {
-    for (auto &light: chunk->emissiveLights) {
-        // coarse bucket size (same as before)
-        ChunkCoord gridCell{
-                (int) std::floor(light.pos.x / (DIM * 2)),
-                (int) std::floor(light.pos.y / (DIM * 2)),
-                (int) std::floor(light.pos.z / (DIM * 2))
-        };
-        lightSpatialHash[gridCell].push_back(&light);
-        rawLights.push_back(&light);
-    }
-});
-
-// 2) If no lights, done
-if (rawLights.empty()) {
-    std::cout << "Light spatial hash updated: 0 grid cells; 0 emissive blobs\n";
-    return;
-}
-
-// 3) Simple greedy clustering (merge lights that are spatially close)
-// Tune this merge radius. Using CHUNK_SIZE * 1.5 means lights that spill over
-// into adjacent chunks are folded into a single logical emitter.
-const float MERGE_RADIUS = DIM * 12.0f;
-const float MERGE_RADIUS_SQ = MERGE_RADIUS * MERGE_RADIUS;
-
-std::vector<char> used(rawLights.size(), 0);
-for (size_t i = 0; i < rawLights.size(); ++i) {
-    if (used[i]) continue;
-    used[i] = 1;
-
-    // accumulate weighted by intensity (so stronger lights dominate)
-    float totalIntensity = 0.0f;
-    glm::vec3 accumPos(0.0f);
-    glm::vec3 accumColor(0.0f);
-    uint32_t mergedId = rawLights[i]->id; // base id
-    int amountMerged = 0;
-
-    // merge any other lights that lie within MERGE_RADIUS of rawLights[i]
-    for (size_t j = i; j < rawLights.size(); ++j) {
-        if (used[j]) continue;
-        float d2 = glm::dot(rawLights[i]->pos - rawLights[j]->pos, rawLights[i]->pos - rawLights[j]->pos);
-        if (d2 <= MERGE_RADIUS_SQ) {
-            used[j] = 1;
-            const VoxelLight *L = rawLights[j];
-            float w = glm::max(1.0f, L->intensity); // weight (avoid zero)
-            accumPos += L->pos * w;
-            accumColor += L->color * w;
-            totalIntensity += L->intensity;
-            amountMerged++;
-            // You can combine ids in a deterministic way if needed; keep first for now
-        }
-    }
-
-    // construct merged light (fallbacks)
-    VoxelLight merged;
-    if (totalIntensity > 0.0f) {
-        merged.intensity = (totalIntensity / amountMerged);
-        merged.pos = accumPos / (totalIntensity > 0.0f ? totalIntensity : 1.0f);
-        merged.color = accumColor / (totalIntensity > 0.0f ? totalIntensity : 1.0f);
-    } else {
-        // fallback: single entry (should not typically occur)
-        merged = *rawLights[i];
-    }
-    merged.id = mergedId;
-
-    // store into pool and push pointer into flat list
-    mergedEmissiveLightPool.push_back(merged);
-}
-
-// 4) Build final flat list of pointers into mergedEmissiveLightPool
-flatEmissiveLightList.reserve(mergedEmissiveLightPool.size());
-for (auto &m: mergedEmissiveLightPool) {
-    flatEmissiveLightList.push_back(&m);
-}
-
-std::cout << "Light spatial hash updated: " << lightSpatialHash.size()
-          << " grid cells; raw=" << rawLights.size()
-          << " merged=" << mergedEmissiveLightPool.size() << " emissive blobs\n";
-}
-
 void Game::rebuildChunkLights(const ChunkCoord &coord) {
 ZoneScoped;
 Chunk *chunk = chunkManager->getChunk(coord);
@@ -2808,6 +2722,7 @@ visibleSlots.clear();
                                        + glm::vec3(e.inst.currentRadius * 0.65f, 0.0f, 0.0f);
             voxelShader->setVec3("uEyeCenterLocal", eyeCenterLocal / e.inst.currentRadius);
             voxelShader->setVec3("uEyeForwardLocal", glm::vec3(1.0f, 0.0f, 0.0f));
+            voxelShader->setFloat("uTime", (float)glfwGetTime());
 
             for (auto& part : e.renderParts) {
                 if (!part.mesh.isValid || part.mesh.vertexCount == 0) continue;
@@ -3415,7 +3330,36 @@ visibleSlots.clear();
         cameraRight = glm::normalize(glm::cross(cameraForward, cameraUp));
         cameraUp    = glm::normalize(glm::cross(cameraRight, cameraForward));
 
-        cameraPos = getCollisionAdjustedCameraPosition(targetPos, targetPos);
+        // Start with the character's camera position
+        glm::vec3 desiredCameraPos = characterController->getCameraPosition();
+
+        // If there's a distance offset, try to maintain it with collision
+        const float cameraDistance = 0.0f;
+        if (cameraDistance > 0.0f) {
+            desiredCameraPos = targetPos - cameraForward * cameraDistance;
+        }
+
+        // Apply camera collision resolution
+        float eyeRadius = glm::max(VOXEL_SIZE * 0.12f,
+                                   characterController->getRadius() * 0.35f);
+
+        // Use the character controller's camera collision resolution
+        // You'll need to make this method public or add a getter
+        characterController->resolveCameraCollision(desiredCameraPos, eyeRadius);
+
+        // Smooth camera movement
+        float smoothTime = 0.1f;
+
+        float smoothFactor = 1.0f - exp(-deltaTime / smoothTime);
+        cameraPos = cameraPos + (desiredCameraPos - cameraPos) * smoothFactor;
+
+        // Final safety check - if camera is inside geometry, push it out
+        float sdf = sampleDensityAtWorld( cameraPos);
+        if (sdf > 0.0f) {
+            // Emergency push out
+            glm::vec3 normal = sampleNormalAtWorld( cameraPos);
+            cameraPos += normal * (sdf + VOXEL_SIZE * 0.05f);
+        }
     }
 
     void Game::alignCameraRollToUp(const glm::vec3& targetUp, float dt)
@@ -3889,69 +3833,6 @@ visibleSlots.clear();
         return glm::normalize(cameraUp);
     }
 
-    glm::vec3 Game::getCollisionAdjustedCameraPosition(const glm::vec3& desiredPos, const glm::vec3& targetPos) {
-        glm::vec3 direction = glm::normalize(desiredPos - targetPos);
-        float distance = glm::length(desiredPos - targetPos);
-
-        // Camera radius (eye size)
-        const float cameraRadius = 0.5f;
-        const float stepSize = VOXEL_SIZE * 0.1f;
-        int numSteps = static_cast<int>(distance / stepSize);
-
-        for (int i = 1; i <= numSteps; i++) {
-            float t = static_cast<float>(i) / static_cast<float>(numSteps);
-            glm::vec3 checkPos = targetPos + direction * (distance * t);
-
-            // Check sphere around camera position
-            if (sphereCollidesWithVoxels(checkPos, cameraRadius)) {
-                float safeT = glm::max(0.0f, static_cast<float>(i - 2) / static_cast<float>(numSteps));
-                glm::vec3 safePos = targetPos + direction * (distance * safeT);
-                return safePos;
-            }
-        }
-
-        return desiredPos;
-    }
-
-    bool Game::sphereCollidesWithVoxels(const glm::vec3& center, float radius) const {
-        // Check voxels in bounding box around sphere
-        int minX = static_cast<int>(std::floor((center.x - radius) / (CHUNK_SIZE * VOXEL_SIZE)));
-        int maxX = static_cast<int>(std::floor((center.x + radius) / (CHUNK_SIZE * VOXEL_SIZE)));
-        int minY = static_cast<int>(std::floor((center.y - radius) / (CHUNK_SIZE * VOXEL_SIZE)));
-        int maxY = static_cast<int>(std::floor((center.y + radius) / (CHUNK_SIZE * VOXEL_SIZE)));
-        int minZ = static_cast<int>(std::floor((center.z - radius) / (CHUNK_SIZE * VOXEL_SIZE)));
-        int maxZ = static_cast<int>(std::floor((center.z + radius) / (CHUNK_SIZE * VOXEL_SIZE)));
-
-        for (int cx = minX; cx <= maxX; cx++) {
-            for (int cy = minY; cy <= maxY; cy++) {
-                for (int cz = minZ; cz <= maxZ; cz++) {
-                    Chunk* chunk = chunkManager->getChunk(ChunkCoord{cx, cy, cz});
-                    if (!chunk) continue;
-
-                    glm::vec3 chunkMin = glm::vec3(cx * CHUNK_SIZE * VOXEL_SIZE,
-                                                   cy * CHUNK_SIZE * VOXEL_SIZE,
-                                                   cz * CHUNK_SIZE * VOXEL_SIZE);
-
-                    // Check voxels in this chunk
-                    for (int ix = 0; ix < CHUNK_SIZE; ix++) {
-                        for (int iy = 0; iy < CHUNK_SIZE; iy++) {
-                            for (int iz = 0; iz < CHUNK_SIZE; iz++) {
-                                if (chunk->voxels[ix][iy][iz].density > 0.0f) {
-                                    glm::vec3 voxelCenter = chunkMin + glm::vec3(ix + 0.5f, iy + 0.5f, iz + 0.5f) * VOXEL_SIZE;
-                                    float distSq = glm::pow(glm::length(center - voxelCenter),2);
-                                    if (distSq < (radius + VOXEL_SIZE * 0.5f) * (radius + VOXEL_SIZE * 0.5f)) {
-                                        return true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        return false;
-    }
 
     void Game::initSpeedLinesShader() {
         try {

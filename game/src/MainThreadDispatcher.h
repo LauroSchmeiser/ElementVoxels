@@ -7,7 +7,7 @@
 
 class MainThreadDispatcher {
 private:
-    std::mutex mutex;
+    mutable std::mutex mutex;
 
     struct TaskItem {
         uint64_t epoch;
@@ -18,7 +18,10 @@ private:
     uint64_t currentEpoch = 1;
 
 public:
-    uint64_t epoch() const { return currentEpoch; }
+    uint64_t epoch() const {
+        std::lock_guard<std::mutex> lock(mutex);
+        return currentEpoch;
+    }
 
     void bumpEpochAndClear() {
         std::lock_guard<std::mutex> lock(mutex);

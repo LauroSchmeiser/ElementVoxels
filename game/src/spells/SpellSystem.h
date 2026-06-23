@@ -200,6 +200,10 @@ namespace gl3 {
 
         void carveSphereInChunk(Chunk *chunk, const glm::vec3 &chunkOrigin, const glm::vec3 &center, float radius,
                                 const WorldPlanet &formation, uint64_t material);
+
+        inline bool isShuttingDown() const noexcept {
+            return shuttingDown.load(std::memory_order_relaxed);
+        }
     };
 
 }

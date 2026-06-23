@@ -245,7 +245,6 @@ namespace gl3 {
                                               : getUpDirection();
         glm::vec3 down = -up;
 
-        // Calculate tangent vectors for radial checks
         glm::vec3 tangentA;
         if (std::abs(up.y) < 0.99f)
             tangentA = glm::normalize(glm::cross(up, glm::vec3(0,1,0)));
@@ -254,11 +253,10 @@ namespace gl3 {
 
         glm::vec3 tangentB = glm::normalize(glm::cross(up, tangentA));
 
-        // Check from bottom sphere center
         float halfSegment = glm::max(0.0f, (currentHeight * 0.5f) - radius);
         glm::vec3 bottomSphereCenter = state.position - up * halfSegment;
 
-        const float groundCheckDistance = radius * 0.35f; // Check slightly below bottom
+        const float groundCheckDistance = radius * 0.35f;
         const float sideOffset = radius * 0.6f;
 
         glm::vec3 testPoints[] = {
@@ -275,10 +273,9 @@ namespace gl3 {
         for (const glm::vec3& p : testPoints) {
             float sdf = sampleDensityAtWorld(chunkManager, p);
 
-            // If the point is inside or very close to the surface
             if (sdf > -VOXEL_SIZE * 0.1f) {
                 glm::vec3 normal = sampleNormalAtWorld(chunkManager, p);
-                if (glm::dot(normal, up) > 0.25f) { // Slightly more lenient
+                if (glm::dot(normal, up) > 0.25f) {
                     ++groundHits;
                     if (groundHits >= requiredHits) return true;
                 }
@@ -314,15 +311,12 @@ namespace gl3 {
                     state.velocity -= normal * velDotNormal;
                 }
 
-                // FIXED: Calculate proper contact point on the capsule surface
                 glm::vec3 up = getUpDirection();
                 float halfSegment = glm::max(0.0f, (currentHeight * 0.5f) - radius);
 
-                // Project normal onto the capsule to find contact point
                 glm::vec3 bottomSphereCenter = state.position - up * halfSegment;
                 glm::vec3 topSphereCenter = state.position + up * halfSegment;
 
-                // Find closest point on capsule segment to collision normal direction
                 glm::vec3 capsuleDir = topSphereCenter - bottomSphereCenter;
                 float capsuleLength = glm::length(capsuleDir);
 
@@ -591,6 +585,9 @@ namespace gl3 {
         // Resolve collisions
         resolveCollisions();
 
+        enforceCameraClearance();
+        enforceCameraClearanceAggressive();
+
         updateOrientation(deltaTime);
 
         if (state.isSurfaceAdhered) {
@@ -760,7 +757,7 @@ namespace gl3 {
 
             // Move sample to exact surface (where SDF = radius)
             float correction = sdf - radius;
-            bestPoint -= normal * correction;
+            //bestPoint -= normal * correction;
 
             outPoint = bestPoint;
             outNormal = bestNormal;
@@ -823,8 +820,7 @@ namespace gl3 {
             return;
         }
 
-        // MUCH WEAKER pull to prevent fighting with player movement
-        state.velocity += down * settings.adhesionAcceleration * deltaTime * 0.2f; // 20% strength
+        state.velocity += down * settings.adhesionAcceleration * deltaTime * 0.25f; // 25% strength
     }
 
     void CharacterController::updateOrientation(float deltaTime) {
@@ -867,4 +863,139 @@ namespace gl3 {
         state.currentUp = blended;
     }
 
+    bool CharacterController::depenetrateSphere(glm::vec3& center, float sphereRadius, int maxIterations) const {
+        if (!chunkManager) return false;
+
+        bool movedAny = false;
+        const float skin = VOXEL_SIZE * 0.02f;
+        const float maxPushPerIter = VOXEL_SIZE * 0.75f;
+
+        for (int i = 0; i < maxIterations; ++i) {
+            float sdf = sampleDensityAtWorld(chunkManager, center);
+            float pen = sdf - sphereRadius;
+
+            if (pen <= skin) break;
+
+            glm::vec3 n = sampleNormalAtWorld(chunkManager, center);
+            float nLen = glm::length(n);
+            if (nLen < 1e-6f) n = getUpDirection();
+            else n /= nLen;
+
+            float push = glm::min(pen + skin, maxPushPerIter);
+            center += n * push;
+            movedAny = true;
+        }
+
+        return movedAny;
+    }
+
+    void CharacterController::enforceCameraClearance() {
+        glm::vec3 up = getUpDirection();
+        float eyeOffset = getEyeHeight();
+
+        // Use smaller radius for head to allow closer to surfaces
+        const float eyeRadius = glm::max(VOXEL_SIZE * 0.12f, radius * 0.35f);
+
+        // Get current camera position
+        glm::vec3 eye = state.position + up * eyeOffset;
+        glm::vec3 originalEye = eye;
+
+        // Resolve camera collision
+        resolveCameraCollision(eye, eyeRadius);
+
+        // Only adjust character position if camera was pushed significantly
+        float pushDist = glm::length(eye - originalEye);
+        if (pushDist > VOXEL_SIZE * 0.02f) {
+            // Calculate how much we need to move the character to maintain eye offset
+            // But only if it doesn't push the character into new collisions
+
+            // Option 1: Pull character back to keep camera in position
+            // This is safer but might cause slight disconnection from surfaces
+            glm::vec3 newPosition = eye - up * eyeOffset;
+
+            // Check if new position is valid (not inside geometry)
+            float sdf = sampleDensityAtWorld(chunkManager, newPosition);
+            if (sdf < radius * 0.5f) { // Not deeply inside voxels
+                state.position = newPosition;
+            } else {
+                // Option 2: Only move partially
+                glm::vec3 partialMove = (newPosition - state.position) * 0.3f;
+                state.position += partialMove;
+            }
+        }
+    }
+
+    bool CharacterController::checkCameraCollision(const glm::vec3& cameraPos, float eyeRadius,
+                                                   glm::vec3& outNormal, float& outPenetration) const {
+        if (!chunkManager) return false;
+
+        float sdf = sampleDensityAtWorld(chunkManager, cameraPos);
+        float pen = sdf - eyeRadius;
+
+        if (pen <= 0.0f) return false;
+
+        glm::vec3 normal = sampleNormalAtWorld(chunkManager, cameraPos);
+        float nLen = glm::length(normal);
+        if (nLen < 1e-6f) {
+            normal = getUpDirection();
+            nLen = 1.0f;
+        }
+        normal /= nLen;
+
+        outNormal = normal;
+        outPenetration = pen;
+        return true;
+    }
+
+    void CharacterController::resolveCameraCollision(glm::vec3& cameraPos, float eyeRadius) const {
+        const int maxIterations = 20;
+        const float skinWidth = VOXEL_SIZE * 0.04f;
+
+        for (int i = 0; i < maxIterations; i++) {
+            glm::vec3 normal;
+            float penetration;
+
+            if (!checkCameraCollision(cameraPos, eyeRadius, normal, penetration)) {
+                break;
+            }
+
+            // Push camera out
+            float push = penetration + skinWidth;
+            cameraPos += normal * push;
+
+            // Prevent infinite loops
+            if (i == maxIterations - 1) break;
+        }
+    }
+
+    void CharacterController::enforceCameraClearanceAggressive() {
+        glm::vec3 up = getUpDirection();
+        float eyeOffset = getEyeHeight();
+
+        const float eyeRadius = glm::max(VOXEL_SIZE * 0.12f, radius * 0.35f);
+        glm::vec3 eye = state.position + up * eyeOffset;
+
+        // Check if camera is deeply inside geometry
+        float sdf = sampleDensityAtWorld(chunkManager, eye);
+        if (sdf > eyeRadius * 0.8f) {
+            // Deep penetration - push camera and character
+            glm::vec3 normal = sampleNormalAtWorld(chunkManager, eye);
+            float penetration = sdf - eyeRadius;
+
+            // Push camera
+            eye += normal * (penetration + VOXEL_SIZE * 0.05f);
+
+            // Also push character to maintain relationship
+            glm::vec3 newPos = eye - up * eyeOffset;
+
+            // Only push character if it's safe
+            float charSdf = sampleDensityAtWorld(chunkManager, newPos);
+            if (charSdf < radius * 0.5f) {
+                state.position = newPos;
+            } else {
+                // Partial push
+                state.position += (newPos - state.position) * 0.2f;
+            }
+        }
+    }
 }

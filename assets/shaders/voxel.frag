@@ -27,6 +27,8 @@ in vec3 normal;
 in vec2 vUV;
 in vec3 localPos;
 in float localScale;
+in float time;
+
 flat in uint vFlags;
 flat in uint vChunkSlot;
 
@@ -66,8 +68,6 @@ uniform float uUVScale[64];
 
 const float PI = 3.14159265;
 const float MIN_ALBEDO = 0.05;
-
-uniform float uTime;
 
 float burnHash13(vec3 p) {
     p = fract(p * 0.1031);
@@ -230,17 +230,17 @@ void main() {
         // Keep the same texture scale/space as every other material
         vec3 animatedAlbedo = sampleTriplanarAlbedo(
         mat,
-        basePos + vec3(uTime * 0.3, uTime * 0.35, uTime * 0.25),
+        basePos + vec3(time * 0.3, time * 0.35, time * 0.25),
         N
         );
 
-        float pulse = sin(uTime * 2.5) * 0.15 + 0.85;
+        float pulse = sin(time * 2.5) * 0.15 + 0.85;
 
         // preserve normal material look, just animate it a bit
         albedo = animatedAlbedo * pulse;
 
         // emissive overlay on top
-        float emissionIntensity = 1.75 + sin(uTime * 2.0) * 0.3;
+        float emissionIntensity = 1.75 + sin(time * 2.0) * 0.3;
         emiss += vertexColor * emissionIntensity;
     }
 

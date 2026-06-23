@@ -677,10 +677,6 @@ namespace gl3 {
 
         WaveManager waveManager;
 
-        glm::vec3 getCollisionAdjustedCameraPosition(const glm::vec3 &desiredPos, const glm::vec3 &targetPos);
-
-        bool sphereCollidesWithVoxels(const glm::vec3 &center, float radius) const;
-
         void alignCameraRollToUp(const glm::vec3 &targetUp, float dt);
 
         void appendSpellBillboards(std::vector<SunInstance> &out);

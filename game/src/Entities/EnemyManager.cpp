@@ -33,12 +33,13 @@ namespace gl3 {
                              type.radius * 0.65f,  // Larger bulge
                              glm::vec3(0.75f, 0.70f, 0.0f), 8, 1);
 
-// Small stalk/tendril roots
+        // Small stalk/tendril roots
         glm::vec3 eyeDir = glm::vec3(1.0f, 0.0f, 0.0f);
         int rerollCount=0;
-        for (int i = 0; i < 6; ++i) {
-            std::mt19937 rng(std::random_device{}());
-            std::uniform_real_distribution<float> distDir(-1.0f, 1.0f);
+
+        std::mt19937 rng(std::random_device{}());
+        std::uniform_real_distribution<float> distDir(-1.0f, 1.0f);
+        for (int i = 0; i < 10; ++i) {
             glm::vec3 dir = glm::normalize(glm::vec3(distDir(rng),distDir(rng),distDir(rng)));
 
             glm::vec3 root = centerLocal + dir * (type.radius * 0.95f);
@@ -50,11 +51,11 @@ namespace gl3 {
                 continue;
             }
 
-            const int segments = 12;
+            const int segments = 8;
             for (int s = 0; s < segments; ++s) {
                 float t = float(s) / float(segments - 1);
 
-                float dist = glm::mix(type.radius * 0.10f, type.radius * 1.15f, t);
+                float dist = glm::mix(type.radius * 0.20f, type.radius * 1.15f, t);
                 float segRadius = glm::mix(type.radius * 0.30f, type.radius * 0.20f, t);
 
                 glm::vec3 segPos = root + dir * dist;
