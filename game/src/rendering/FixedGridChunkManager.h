@@ -82,6 +82,9 @@ namespace gl3 {
             return slot;
         }
 
+        bool hasDirtyChunks() const { return !dirtyChunks.empty(); }
+
+
         void freeGpuSlot(const ChunkCoord& coord) {
             Chunk* chunk = getChunk(coord);
             if (!chunk || chunk->gpuSlot == INVALID_GPU_SLOT) return;
@@ -352,7 +355,7 @@ namespace gl3 {
     private:
         int R = 0;
         int dim = 0;
-        const int MAX_CALC_PER_FRAME = 3;
+        const int MAX_CALC_PER_FRAME = 5;
         uint64_t frameCounter = 29; // Frame counter for light update staggering
         std::vector<Chunk> chunks;
         std::vector<ChunkCoord> dirtyChunks;

@@ -26,21 +26,6 @@
 namespace gl3 {
 
 ////-----Basics---------------------------------------------------------------------------------------------------------------------------------
-    struct CpuTimer {
-        const char* name;
-        std::chrono::high_resolution_clock::time_point start;
-
-        CpuTimer(const char* n) : name(n), start(std::chrono::high_resolution_clock::now()) {}
-        ~CpuTimer() {
-            auto end = std::chrono::high_resolution_clock::now();
-            double ms = std::chrono::duration<double, std::milli>(end - start).count();
-            std::cout << name << ": " << ms << " ms\n";
-        }
-    };
-
-    // Put near top of Game.cpp (static in translation unit)
-    static GLuint gPreviewCubeVAO = 0;
-    static GLuint gPreviewCubeVBO = 0;
 
     void Game::ensurePreviewCube() {
         if (previewCubeVAO != 0) return;
@@ -189,13 +174,6 @@ namespace gl3 {
         postShader = std::make_unique<Shader>("shaders/post_fullscreen.vert", "shaders/post_fog_glow.frag");
 
 
-        try {
-            voxelSplatShader = std::make_unique<Shader>("shaders/metaball_splat.comp");
-        } catch (std::exception &e) {
-            std::cerr << "Failed to create metaballSplatShader: " << e.what() << std::endl;
-        }
-
-
         //Sound Setup
         audio.init();
         audio.setGlobalVolume(0.1f);
@@ -215,65 +193,111 @@ namespace gl3 {
 
     Game::~Game() {
         imguiLayer.shutdown();
+        if (impactNoiseTexId != 0) {
+            glDeleteTextures(1, &impactNoiseTexId);
+            impactNoiseTexId = 0;
+        }
+        if (materialAlbedoArrayTexId != 0) {
+            glDeleteTextures(1, &materialAlbedoArrayTexId);
+            materialAlbedoArrayTexId = 0;
+        }
+        if (materialHeightArrayTexId != 0) {
+            glDeleteTextures(1, &materialHeightArrayTexId);
+            materialHeightArrayTexId = 0;
+        }
+        if (materialAOArrayTexId != 0) {
+            glDeleteTextures(1, &materialAOArrayTexId);
+            materialAOArrayTexId = 0;
+        }
+        if (materialNormalArrayTexId != 0) {
+            glDeleteTextures(1, &materialNormalArrayTexId);
+            materialNormalArrayTexId = 0;
+        }
+        if (materialRoughArrayTexId != 0) {
+            glDeleteTextures(1, &materialRoughArrayTexId);
+            materialRoughArrayTexId = 0;
+        }
         glfwTerminate();
-    }
-
-
-    void Game::initGameplayIfNeeded() {
-        if (gameplayInitialized) return;
-        initGameplaySystems();
-        gameplayInitialized = true;
-    }
-
-    void Game::initGameplaySystems() {
-        ////Initialization-Steps
-        setupSkybox();
-        bakeNebulaCubemap(512);
-        setupSSBOsAndTables();
-        setupPhysics();
-        setupControls();
-        setupInput();
-        generateChunks();
-        setupCamera();
-        setupVEffects();
-        //fillMaterialTable();
     }
 
     void Game::fillMaterialTable()
     {
-        std::vector<std::string> mats;
-        mats.push_back(gl3::resolveAssetPath("textures/cobble.jpg").string());
-        mats.push_back(gl3::resolveAssetPath("textures/wood.jpg").string());
-        //mats.push_back(gl3::resolveAssetPath("textures/cobble.jpg").string());
+        using MS = gl3::MaterialSystem;
+        constexpr int M = MS::kMaxMaterials;
 
-        mats.push_back(gl3::resolveAssetPath("textures/water.png").string());
-        mats.push_back(gl3::resolveAssetPath("textures/dirt.jpg").string());
-        mats.push_back(gl3::resolveAssetPath("textures/water2.jpg").string());
-        mats.push_back(gl3::resolveAssetPath("textures/metal.jpg").string());
-        mats.push_back(gl3::resolveAssetPath("textures/cobble.jpg").string());
-        mats.push_back(gl3::resolveAssetPath("textures/flesh.jpg").string());
-        mats.push_back(gl3::resolveAssetPath("textures/EyeMaterial_new.png").string());
-        mats.push_back(gl3::resolveAssetPath("textures/lava.jpg").string());
+        // One path per material id (empty string = use fallback layer)
+        std::array<std::string, M> albedoPaths{};
+        std::array<std::string, M> normalPaths{};
+        std::array<std::string, M> roughPaths{};
+        std::array<std::string, M> aoPaths{};
+        std::array<std::string, M> heightPaths{};
+
+        albedoPaths[0] = gl3::resolveAssetPath("textures/cobble.jpg").string();
+
+        albedoPaths[1] = gl3::resolveAssetPath("textures/aerial_rocks_02_diff_4k.jpg").string();
+        normalPaths[1] = gl3::resolveAssetPath("textures/aerial_rocks_02_nor_gl_4k.png").string();
+        roughPaths[1]  = gl3::resolveAssetPath("textures/aerial_rocks_02_rough_4k.jpg").string();
+        heightPaths[1] = gl3::resolveAssetPath("textures/aerial_rocks_02_disp_4k.png").string();
+
+        albedoPaths[2] = gl3::resolveAssetPath("textures/aerial_rocks_04_diff_4k.jpg").string();
+        normalPaths[2] = gl3::resolveAssetPath("textures/aerial_rocks_04_nor_gl_4k.png").string();
+        roughPaths[2]  = gl3::resolveAssetPath("textures/aerial_rocks_04_rough_4k.jpg").string();
+        heightPaths[2] = gl3::resolveAssetPath("textures/aerial_rocks_04_disp_4k.png").string();
+
+        albedoPaths[3] = gl3::resolveAssetPath("textures/ground_0035_color_1k.jpg").string();
+        aoPaths[3] = gl3::resolveAssetPath("textures/ground_0035_ao_1k.jpg").string();
+        normalPaths[3] = gl3::resolveAssetPath("textures/ground_0035_normal_opengl_1k.png").string();
+        roughPaths[3] = gl3::resolveAssetPath("textures/ground_0035_roughness_1k.jpg").string();
+        heightPaths[3] = gl3::resolveAssetPath("textures/ground_0035_height_1k.png").string();
+
+        albedoPaths[4] = gl3::resolveAssetPath("textures/marble_rock_03_diff_4k.jpg").string();
+        normalPaths[4] = gl3::resolveAssetPath("textures/marble_rock_03_nor_gl_4k.png").string();
+        roughPaths[4]  = gl3::resolveAssetPath("textures/marble_rock_03_rough_4k.png").string();
+        heightPaths[4] = gl3::resolveAssetPath("textures/marble_rock_03_disp_4k.png").string();
+
+        albedoPaths[5] = gl3::resolveAssetPath("textures/rock_0001_color_1k.jpg").string();
+        normalPaths[5] = gl3::resolveAssetPath("textures/rock_0001_normal_opengl_1k.png").string();
+        roughPaths[5]  = gl3::resolveAssetPath("textures/rock_0001_roughness_1k.jpg").string();
+        //aoPaths[5] = gl3::resolveAssetPath("textures/rock_0001_ao_1k.jpg").string();;
+        heightPaths[5] = gl3::resolveAssetPath("textures/rock_0001_height_1k.png").string();
+
+        albedoPaths[6] = gl3::resolveAssetPath("textures/water.png").string();
+
+        albedoPaths[7] = gl3::resolveAssetPath("textures/flesh.jpg").string();
+        normalPaths[7] = gl3::resolveAssetPath("textures/flesh_normal_opengl_1k.png").string();
+        roughPaths[7]  = gl3::resolveAssetPath("textures/flesh_roughness_1k.jpg").string();
+        aoPaths[7] = gl3::resolveAssetPath("textures/flesh_ao_1k.jpg").string();;
+        heightPaths[7] = gl3::resolveAssetPath("textures/flesh_height_1k.png").string();
+
+        albedoPaths[8] = gl3::resolveAssetPath("textures/EyeMaterial_new.png").string();
+
+        albedoPaths[9] = gl3::resolveAssetPath("textures/lava.jpg").string();
+        normalPaths[9] = gl3::resolveAssetPath("textures/lava_NormalGL.jpg").string();
+        roughPaths[9] = gl3::resolveAssetPath("textures/lava_Roughness.jpg").string();
+        heightPaths[9] = gl3::resolveAssetPath("textures/lava_Displacement.jpg").string();
 
 
+        // Build all arrays with fallback for empty entries
+        materials.initAllTextureArraysFromFiles(
+                albedoPaths, normalPaths, roughPaths, aoPaths, heightPaths
+        );
 
-        //mats.push_back(gl3::resolveAssetPath("textures/gem.jpg").string());
-
-
-        materials.initTextureArrayFromFiles(mats);
         materialAlbedoArrayTexId = materials.albedoArrayTex;
+        materialNormalArrayTexId = materials.normalArrayTex;
+        materialRoughArrayTexId  = materials.roughArrayTex;
+        materialAOArrayTexId     = materials.aoArrayTex;
+        materialHeightArrayTexId = materials.heightArrayTex;
 
-        materials.params[0].roughness = 1.0f;
-        materials.params[0].specular  = 0.05f;
-        materials.params[0].uvScale   = 0.05f;
+        // Your existing scalar params unchanged
+        materials.params[0].roughness = 1.0f; materials.params[0].specular = 0.05f; materials.params[0].uvScale = 0.05f;
 
-        materials.params[1].roughness = 0.5f;
-        materials.params[1].specular  = 0.15f;
+        materials.params[1].roughness = 1.0f;
+        materials.params[1].specular  = 0.05f;
         materials.params[1].uvScale   = 0.05f;
 
-        materials.params[2].roughness = 0.05f;
-        materials.params[2].specular  = 0.5f;
-        materials.params[2].uvScale   = 0.02f;
+        materials.params[2].roughness = 1.0f;
+        materials.params[2].specular  = 0.05f;
+        materials.params[2].uvScale   = 0.05f;
 
         materials.params[3].roughness = 1.0f;
         materials.params[3].specular  = 0.05f;
@@ -281,11 +305,11 @@ namespace gl3 {
 
         materials.params[4].roughness = 1.0f;
         materials.params[4].specular  = 0.05f;
-        materials.params[4].uvScale   = 0.005f;
+        materials.params[4].uvScale   = 0.05f;
 
         materials.params[5].roughness = 1.0f;
         materials.params[5].specular  = 0.05f;
-        materials.params[5].uvScale   = 0.005f;
+        materials.params[5].uvScale   = 0.05f;
 
         materials.params[6].roughness = 1.0f;
         materials.params[6].specular  = 0.05f;
@@ -293,7 +317,7 @@ namespace gl3 {
 
         materials.params[7].roughness = 0.85f;
         materials.params[7].specular  = 0.2f;
-        materials.params[7].uvScale   = 0.5f;
+        materials.params[7].uvScale   = 0.125f;
 
         materials.params[8].roughness = 0.05f;
         materials.params[8].specular  = 0.9f;
@@ -303,9 +327,9 @@ namespace gl3 {
         materials.params[9].specular  = 0.2f;
         materials.params[9].uvScale   = 0.125f;
 
-        for (int i = 0; i < 64; ++i) {
-            rough[i] = materials.params[i].roughness;
-            spec[i]  = materials.params[i].specular;
+        for (int i = 0; i < M; ++i) {
+            rough[i]   = materials.params[i].roughness; // float array
+            spec[i]    = materials.params[i].specular;
             uvScale[i] = materials.params[i].uvScale;
         }
     }
@@ -540,6 +564,8 @@ namespace gl3 {
             case PreloadStage::Boot_VEffects:
                 preloadStageName = "Finalizing effects...";
                 setupVEffects();
+                createImpactNoiseTexture();
+                initImpactInstancing();
                 bootLoaded = true;
 
                 preloadStage = doNewRun ? PreloadStage::Run_Physics : PreloadStage::Done;
@@ -590,25 +616,48 @@ namespace gl3 {
                 return 0.92f;
 
             case PreloadStage::Run_Lighting:
-                preloadStageName = "Setting up lighting...";
+            {
+                preloadStageName = "Building meshes & lighting...";
+                chunkManager->forEachChunk([&](gl3::Chunk* chunk) {
+                    if (!chunk) return;
+                    if (!chunk->lightingDirty) return;
+                    rebuildChunkLights(chunk->coord);   // fills chunk->emissiveLights
+                    chunk->lightingDirty = false;
+                });
+                // 1) Keep merged light pool fresh
                 chunkRenderer->updateLightSpatialHash();
                 chunkRenderer->uploadMergedLightsToGPU();
-                chunkManager->forEachChunk([&](gl3::Chunk* chunk)
-                {rebuildChunkLights(chunk->coord);
-                    chunk->lightingDirty = false;
-                    for (const auto& light : chunk->emissiveLights) {
-                        if (usedLightIDs.insert(light.id).second) {
-                            SunInstance inst;
-                            inst.position = light.pos;
-                            inst.scale = std::sqrt(light.intensity) * 0.5f;
-                            inst.color = light.color * 1.0f;
-                            emissiveBillboards.push_back(inst);
-                        }
-                    }
+
+                // 2) Drain dirty chunks during loading (this is the important part)
+                // Uses your existing budgeted manager path (MAX_CALC_PER_FRAME in manager)
+                chunkManager->rebuildDirtyChunks([this](Chunk* chunk) {
+                    chunkRenderer->generateChunkMesh(chunk);
+                }, cameraPos);
+
+                // 3) Rebuild light-index buffer for current camera neighborhood
+                chunkRenderer->buildAndUploadChunkLightIndexBuffer(
+                        worldToChunk(cameraPos.x),
+                        worldToChunk(cameraPos.y),
+                        worldToChunk(cameraPos.z),
+                        RenderingRange
+                );
+
+                emissiveBillboards.clear();
+                usedLightIDs.clear();
+                chunkManager->forEachChunk([&](gl3::Chunk* chunk) {
+                    if (!chunk) return;
+                    if (chunk->isCleared) return;
+                    chunkRenderer->collectEmissiveBillboards(emissiveBillboards, usedLightIDs,chunk);
                 });
-                chunkRenderer->buildAndUploadChunkLightIndexBuffer(worldToChunk(cameraPos.x),worldToChunk(cameraPos.y),worldToChunk(cameraPos.z),RenderingRange);
+
+                // 4) Stay in this stage until no dirty chunks remain
+                if (chunkManager->hasDirtyChunks()) {
+                    return 0.92f; // keep loading screen up
+                }
+
                 preloadStage = PreloadStage::Done;
-                return 0.92f;
+                return 0.99f;
+            }
 
             case PreloadStage::Done:
             default:
@@ -769,7 +818,7 @@ namespace gl3 {
                 if (ImGui::Button("Exit to Desktop", btnSize)) {
                     glfwSetWindowShouldClose(getWindow(), true);
                 }
-                ImGui::End();    waveManager.init(enemyManager.get());
+                ImGui::End();
             }
         }
 
@@ -1207,7 +1256,7 @@ namespace gl3 {
             }*/
             glm::vec3 tint = glm::vec3(0.45f, 0.45f, 0.45f);
             glm::vec3 variance = glm::vec3(dist(rng));
-            tint+=(spell->formationColor/glm::vec3(5));
+            tint+=(spell->formationColor/glm::vec3(10));
             tint+=variance;
 
             spawnImpactEffect(hitPos, hitNormal, impactSpeed, removedVoxelEstimate, tint);
@@ -1357,6 +1406,79 @@ namespace gl3 {
         return mesh;
     }
 
+    void Game::initImpactInstancing()
+    {
+        glBindVertexArray(impactQuadVAO);
+
+        glGenBuffers(1, &impactInstanceVBO);
+        glBindBuffer(GL_ARRAY_BUFFER, impactInstanceVBO);
+        glBufferData(GL_ARRAY_BUFFER,
+                     kMaxImpactInstances * sizeof(ImpactInstanceGPU),
+                     nullptr,
+                     GL_STREAM_DRAW);
+
+        // layout(location = 2) vec4 iPosSize;
+        glEnableVertexAttribArray(2);
+        glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(ImpactInstanceGPU), (void*)offsetof(ImpactInstanceGPU, pos_size));
+        glVertexAttribDivisor(2, 1);
+
+        // layout(location = 3) vec4 iColor;
+        glEnableVertexAttribArray(3);
+        glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, sizeof(ImpactInstanceGPU), (void*)offsetof(ImpactInstanceGPU, color));
+        glVertexAttribDivisor(3, 1);
+
+        // layout(location = 4) vec4 iRotLifeKind;
+        glEnableVertexAttribArray(4);
+        glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, sizeof(ImpactInstanceGPU), (void*)offsetof(ImpactInstanceGPU, rot_life_kind));
+        glVertexAttribDivisor(4, 1);
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glBindVertexArray(0);
+    }
+
+    void Game::createImpactNoiseTexture()
+    {
+        if (impactNoiseTexId != 0) return;
+
+        const int W = 128;
+        const int H = 128;
+
+        std::vector<unsigned char> pixels(W * H);
+
+        auto hash = [](uint32_t x) -> uint32_t {
+            x ^= x >> 16;
+            x *= 0x7feb352dU;
+            x ^= x >> 15;
+            x *= 0x846ca68bU;
+            x ^= x >> 16;
+            return x;
+        };
+
+        for (int y = 0; y < H; ++y) {
+            for (int x = 0; x < W; ++x) {
+                uint32_t h = hash((uint32_t)x * 73856093u ^ (uint32_t)y * 19349663u ^ 0xA53C49E5u);
+                unsigned char n = (unsigned char)(h & 0xFF);
+                pixels[y * W + x] = n;
+            }
+        }
+
+        glGenTextures(1, &impactNoiseTexId);
+        glBindTexture(GL_TEXTURE_2D, impactNoiseTexId);
+
+        // R8 single-channel noise
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, W, H, 0, GL_RED, GL_UNSIGNED_BYTE, pixels.data());
+
+        // Tileable behavior for scrolling UVs
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+
+        // Linear is fine for smoke
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+        glGenerateMipmap(GL_TEXTURE_2D);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
 ////----Debugging Code--------------------------------------------------------------------------------------------------------------------------
 
     void Game::DisplayFPSCount()
@@ -1378,49 +1500,6 @@ namespace gl3 {
     }
 
 ////----Initialization Code---------------------------------------------------------------------------------------------------------------------
-
-    void Game::setupSSBOsAndTables() {
-        ZoneScoped;
-        // Prepare SSBOs and static tables
-
-        // 0: voxels SSBO
-        glGenBuffers(1, &ssboVoxels);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboVoxels);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, voxelCount * sizeof(CpuVoxelStd430), nullptr, GL_DYNAMIC_DRAW);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssboVoxels); // bind to 0
-
-        // 1: edge table SSBO
-        glGenBuffers(1, &ssboEdgeTable);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboEdgeTable);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(edgeTableCPU), edgeTableCPU, GL_STATIC_DRAW);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ssboEdgeTable);
-
-        // 2: tri table SSBO
-        glGenBuffers(1, &ssboTriTable);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboTriTable);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(triTableCPU), triTableCPU, GL_STATIC_DRAW);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, ssboTriTable);
-
-        // 3: atomic counter (SSBO containing uint vertexCounter)
-        glGenBuffers(1, &ssboCounter);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
-        unsigned int zero = 0;
-        glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(unsigned int), &zero, GL_DYNAMIC_DRAW);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, ssboCounter);
-
-      /*  // 4: triangles SSBO (output)
-        glGenBuffers(1, &ssboTriangles);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboTriangles);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, maxVerts * sizeof(OutVertex), nullptr, GL_DYNAMIC_DRAW);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, ssboTriangles);*/
-
-        //5 particle ssbo
-      //  glGenBuffers(1, &particleSSBO);
-
-        //6 fieldbits ssbo
-     //   glGenBuffers(1, &fieldBitsSSBO);
-
-    }
 
     void Game::setupInput() {
         // Track all keys we'll use
@@ -1471,16 +1550,16 @@ namespace gl3 {
 
     void Game::generateChunks() {
         TRACY_CPU_ZONE("Game::generateChunks");
+        int FilledChunks = 0;
         std::mt19937 rng(std::random_device{}());
 
-        // world max coordinate inside grid (world units)
         float chunkWorld = CHUNK_SIZE * VOXEL_SIZE;
         float worldMax = chunkManager->radius() * chunkWorld;
 
         std::uniform_real_distribution<float> distPos(-worldMax * 0.9f, worldMax * 0.9f);
         std::uniform_real_distribution<float> distScale(0.5f, 3.0f);
         std::uniform_real_distribution<float> distColor(0.3f, 1.0f);
-        std::uniform_real_distribution<float> distMat(0.0f, 0.9f);
+        std::uniform_real_distribution<float> distMat(0.0f, 5.9f);
 
         std::vector<WorldPlanet> worldPlanets;
 
@@ -1496,7 +1575,7 @@ namespace gl3 {
         p.radius = distScale(rng) * CHUNK_SIZE;
         p.color = glm::vec3(distColor(rng), distColor(rng), distColor(rng));
         p.type = 1; // solid
-        p.material=(int)distMat(rng);
+        p.material= 7;
         if(p.material==7)
         {
             p.color= glm::vec3(1.0, 0.0, 1.0);
@@ -1515,8 +1594,8 @@ namespace gl3 {
             p.radius = distScale(rng) * CHUNK_SIZE;
             p.color = glm::vec3(distColor(rng), distColor(rng), distColor(rng));
             p.type = 1; // solid
-           // p.material=(int)distMat(rng);
-           p.material=0;
+            p.material=(int)distMat(rng);
+            //p.material=0;
             worldPlanets.push_back(p);
         }
 
@@ -1808,20 +1887,20 @@ namespace gl3 {
 
             float craterStrength = glm::sqrt((hitSpeed * mass)) / 30.0f;
             float spellRadius = glm::max(spell->physicsBody->radius, 0.001f);
-            createCraterAtPosition(hitPos, craterStrength, spellRadius);
+           // createCraterAtPosition(hitPos, craterStrength, spellRadius);
 
             // Estimate removed voxels from crater strength
-            float removedVoxelEstimate = craterStrength * 40.0f;
+            //float removedVoxelEstimate = craterStrength * 40.0f;
 
             glm::vec3 tint = spell->formationColor;
             if (glm::length(tint) < 0.001f) {
                 tint = glm::vec3(0.45f, 0.45f, 0.45f);
             }
             glm::vec3 variance = glm::vec3(dist(rng));
-            tint+=(spell->formationColor/glm::vec3(5));
+            tint+=(spell->formationColor/glm::vec3(10));
             tint+=variance;
 
-            spawnImpactEffect(hitPos, hitNormal, hitSpeed, removedVoxelEstimate, tint);
+            spawnImpactEffect(hitPos, hitNormal, hitSpeed, 100, tint);
         }
     }
 
@@ -1842,20 +1921,20 @@ namespace gl3 {
                 float craterStrength = glm::sqrt((impactSpeed * mass)) / 30.0f;
                 float spellRadius = glm::max(spell->physicsBody->radius, 0.001f);
 
-                createCraterAtPosition(hitPos, craterStrength, spellRadius);
+                //createCraterAtPosition(hitPos, craterStrength, spellRadius);
 
                 // Estimate removed voxels from crater strength
-                float removedVoxelEstimate = craterStrength * 40.0f;
+                //float removedVoxelEstimate = craterStrength * 40.0f;
 
                 glm::vec3 tint = spell->formationColor;
                 if (glm::length(tint) < 0.001f) {
                     tint = glm::vec3(0.45f, 0.45f, 0.45f);
                 }
                 glm::vec3 variance = glm::vec3(dist(rng));
-                tint+=(spell->formationColor/glm::vec3(5));
+                tint+=(spell->formationColor/glm::vec3(10));
                 tint+=variance;
 
-                spawnImpactEffect(hitPos, hitNormal, impactSpeed, removedVoxelEstimate, tint);
+                spawnImpactEffect(hitPos, hitNormal, impactSpeed, 100, tint);
             }
             spellId = (uint64_t)(uintptr_t)bodyB->userData;
             if (auto* spell = spellSystem->findSpellById(spellId)) {
@@ -1864,20 +1943,20 @@ namespace gl3 {
                 float craterStrength = glm::sqrt((impactSpeed * mass)) / 30.0f;
                 float spellRadius = glm::sqrt(glm::max(spell->physicsBody->radius, 0.001f));
 
-                createCraterAtPosition(hitPos, craterStrength, spellRadius);
+               // createCraterAtPosition(hitPos, craterStrength, spellRadius);
 
                 // Estimate removed voxels from crater strength
-                float removedVoxelEstimate = craterStrength * 40.0f;
+               // float removedVoxelEstimate = craterStrength * 40.0f;
 
                 glm::vec3 tint = spell->formationColor;
                 if (glm::length(tint) < 0.001f) {
                     tint = glm::vec3(0.45f, 0.45f, 0.45f);
                 }
                 glm::vec3 variance = glm::vec3(dist(rng));
-                tint+=(spell->formationColor/glm::vec3(5));
+                tint+=(spell->formationColor/glm::vec3(10));
                 tint+=variance;
 
-                spawnImpactEffect(hitPos, hitNormal, impactSpeed, removedVoxelEstimate, tint);
+                spawnImpactEffect(hitPos, hitNormal, impactSpeed, 100, tint);
             }
 
 }
@@ -2003,10 +2082,15 @@ void Game::update() {
 TRACY_CPU_ZONE("Game::update()");
 
 // Update merged lights occasionally (CPU) + upload to GPU
-if (frameCounter % 240 == 0) {
-    TRACY_CPU_ZONE("renderChunks::updateLightSpatialHash");
+if (frameCounter % 283 == 0) {
     chunkRenderer->updateLightSpatialHash();
+}
+if(frameCounter%261==0)
+{
     chunkRenderer->uploadMergedLightsToGPU();
+}
+if (frameCounter % 247 == 0) {
+    TRACY_CPU_ZONE("renderChunks::updateLightSpatialHash");
     chunkManager->forEachChunk([&](gl3::Chunk* chunk)
                                {rebuildChunkLights(chunk->coord);
                                    chunk->lightingDirty = false;
@@ -2351,15 +2435,7 @@ visibleSlots.clear();
                         }
 */
 
-                        for (const auto& light : chunk->emissiveLights) {
-                            if (usedLightIDs.insert(light.id).second) {
-                                SunInstance inst;
-                                inst.position = light.pos;
-                                inst.scale = std::sqrt(light.intensity) * 0.5f;
-                                inst.color = light.color * 1.0f;
-                                emissiveBillboards.push_back(inst);
-                            }
-                        }
+                        chunkRenderer->collectEmissiveBillboards(emissiveBillboards, usedLightIDs,chunk);
 
                         if (!chunk->gpuCache.isValid) continue;
 
@@ -2401,6 +2477,13 @@ visibleSlots.clear();
                 voxelShader->setInt("uOverlayEnabled", 0);
             }
 
+            voxelShader->setFloat("scale", 1.0f);
+
+            voxelShader->setFloat("uNormalYFlip", 0.0f);
+            voxelShader->setFloat("uNormalStrength", 1.0f);
+            voxelShader->setFloat("uHeightScale", 1.0f);
+            voxelShader->setFloat("uAOStrength", 0.5f);
+
             voxelShader->setMatrix("model", glm::mat4(1.0f));
             voxelShader->setMatrix("mvp", pv);
 
@@ -2411,12 +2494,30 @@ visibleSlots.clear();
             glBindTexture(GL_TEXTURE_2D_ARRAY, materialAlbedoArrayTexId);
             voxelShader->setInt("uAlbedoArray", 0);
 
+
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D_ARRAY, materialNormalArrayTexId);
+            voxelShader->setInt("uNormalArray", 1);
+
+            glActiveTexture(GL_TEXTURE2);
+            glBindTexture(GL_TEXTURE_2D_ARRAY, materialRoughArrayTexId);
+            voxelShader->setInt("uRoughArray", 2);
+
+            glActiveTexture(GL_TEXTURE3);
+            glBindTexture(GL_TEXTURE_2D_ARRAY, materialAOArrayTexId);
+            voxelShader->setInt("uAOArray", 3);
+
+            glActiveTexture(GL_TEXTURE4);
+            glBindTexture(GL_TEXTURE_2D_ARRAY, materialHeightArrayTexId);
+            voxelShader->setInt("uHeightArray", 4);
+
+
             voxelShader->setFloatArray("uMatRoughness", rough.data(), 64);
             voxelShader->setFloatArray("uMatSpecular",  spec.data(), 64);
             voxelShader->setFloatArray("uUVScale",      uvScale.data(), 64);
             static float frameTime = 0.0f;
             frameTime += deltaTime; // Accumulate time
-            voxelShader->setFloat("uTime", frameTime);
+            voxelShader->setFloat("uTime", frameTime/1.5f);
 
             if (DebugMode1) voxelShader->setInt("debugMode", activeDebugMode % 7);
 
@@ -2607,14 +2708,38 @@ visibleSlots.clear();
         voxelShader->setVec3("viewPos", cameraPos);
         voxelShader->setVec3("ambientColor", glm::vec3(0.85f));
 
+        voxelShader->setFloat("scale", 1.0f);
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, materialAlbedoArrayTexId);
+        voxelShader->setInt("uAlbedoArray", 0);
+
+
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, materialNormalArrayTexId);
+        voxelShader->setInt("uNormalArray", 1);
+
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, materialRoughArrayTexId);
+        voxelShader->setInt("uRoughArray", 2);
+
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, materialAOArrayTexId);
+        voxelShader->setInt("uAOArray", 3);
+
+        glActiveTexture(GL_TEXTURE4);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, materialHeightArrayTexId);
+        voxelShader->setInt("uHeightArray", 4);
+
         voxelShader->setFloatArray("uMatRoughness", rough.data(), 64);
         voxelShader->setFloatArray("uMatSpecular",  spec.data(), 64);
         voxelShader->setFloatArray("uUVScale",      uvScale.data(), 64);
 
+        voxelShader->setFloat("uNormalYFlip", 0.0f);
+        voxelShader->setFloat("uNormalStrength", 1.0f);
+        voxelShader->setFloat("uHeightScale", 1.0f);
+        voxelShader->setFloat("uAOStrength", 1.0f);
 
-        // texture unit 0
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D_ARRAY, materialAlbedoArrayTexId);
         voxelShader->setInt("uBurnEnabled", 0);
         voxelShader->setFloat("uBurn", 0.0f);
         voxelShader->setVec3("uBurnCenter", glm::vec3(0.0f));
@@ -2648,9 +2773,6 @@ visibleSlots.clear();
 
             voxelShader->setMatrix("model", model);
             voxelShader->setMatrix("mvp", pv*model );
-            voxelShader->setFloat("scale", 1.0f);
-            voxelShader->setInt("uAlbedoArray", 0);
-
 
             if (spell.burn.active) {
                 float u = burn01(spell.burn.t, spell.burn.duration);
@@ -2695,9 +2817,31 @@ visibleSlots.clear();
         glBindTexture(GL_TEXTURE_2D_ARRAY, materialAlbedoArrayTexId);
         voxelShader->setInt("uAlbedoArray", 0);
 
+
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, materialNormalArrayTexId);
+        voxelShader->setInt("uNormalArray", 1);
+
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, materialRoughArrayTexId);
+        voxelShader->setInt("uRoughArray", 2);
+
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, materialAOArrayTexId);
+        voxelShader->setInt("uAOArray", 3);
+
+        glActiveTexture(GL_TEXTURE4);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, materialHeightArrayTexId);
+        voxelShader->setInt("uHeightArray", 4);
+
         voxelShader->setFloatArray("uMatRoughness", rough.data(), 64);
         voxelShader->setFloatArray("uMatSpecular",  spec.data(), 64);
         voxelShader->setFloatArray("uUVScale",      uvScale.data(), 64);
+
+        voxelShader->setFloat("uNormalYFlip", 0.0f);
+        voxelShader->setFloat("uNormalStrength", 1.0f);
+        voxelShader->setFloat("uHeightScale", 1.0f);
+        voxelShader->setFloat("uAOStrength", 1.0f);
 
         for (auto& e : enemyManager->all()) {
             if (e.renderParts.empty()) continue;
@@ -2823,12 +2967,10 @@ visibleSlots.clear();
         spellPreviewShader->setVec3("uHighColor", glm::vec3(0.2f, 1.0f, 0.2f));
 
         spellPreviewShader->setMatrix("pv", pv);
-        spellPreviewShader->setFloat("uVoxelSize", VOXEL_SIZE);
-        spellPreviewShader->setFloat("uFormationAlpha", 0.35f);
+       spellPreviewShader->setFloat("uFormationAlpha", 0.35f);
 
         if (previewMode == 0) {
             spellPreviewShader->setInt("uPreviewMode", 0);
-            spellPreviewShader->setFloat("uFormationRadius", formationRadius);
             spellPreviewShader->setVec3("uWallSize", glm::vec3(1.0f));
 
             glm::mat4 model(1.0f);
@@ -2841,7 +2983,6 @@ visibleSlots.clear();
             glBindVertexArray(0);
         } else {
             spellPreviewShader->setInt("uPreviewMode", 1);
-            spellPreviewShader->setFloat("uFormationRadius", 1.0f);
             spellPreviewShader->setVec3("uWallSize", glm::vec3(wallParams.sizeX, wallParams.sizeY, wallParams.sizeZ));
 
             glm::vec3 forward = glm::normalize(wallParams.normal);
@@ -2877,9 +3018,6 @@ visibleSlots.clear();
         TRACY_GPU_ZONE("ImpactEffects");
 
         if (!impactShader || impactParticles.empty()) return;
-
-        std::cout<<"Particles:"<< impactParticles.size()<<"\n";
-
         glm::vec3 cameraFront = getCameraFront();
         glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
         glm::vec3 cameraRight = glm::normalize(glm::cross(cameraFront, worldUp));
@@ -2889,6 +3027,28 @@ visibleSlots.clear();
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
         glm::vec3 camUp = getCameraUp();
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
+
+        impactInstancesCPU.clear();
+        impactInstancesCPU.reserve(std::min(impactParticles.size(), kMaxImpactInstances));
+
+        for (const auto& p : impactParticles) {
+            if (!p.active) continue;
+            if (impactInstancesCPU.size() >= kMaxImpactInstances) break;
+
+            float t = glm::clamp(p.age / glm::max(0.0001f, p.lifetime), 0.0f, 1.0f);
+            float size = glm::mix(p.startSize, p.endSize, t);
+
+            glm::vec4 color = p.color;
+            color.a *= (1.0f - t);
+
+            ImpactInstanceGPU inst{};
+            inst.pos_size = glm::vec4(p.position, size);
+            inst.color = color;
+            inst.rot_life_kind = glm::vec4(p.rotation, t, float((int)p.kind), 0.0f);
+            impactInstancesCPU.push_back(inst);
+        }
+
+        if (impactInstancesCPU.empty()) return;
 
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -2901,226 +3061,24 @@ visibleSlots.clear();
         impactShader->setVec3("uCameraRight", cameraRight);
         impactShader->setVec3("uCameraUp", cameraUp);
 
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, impactNoiseTexId);
+        impactShader->setInt("uNoiseTex", 0);
+
         glBindVertexArray(impactQuadVAO);
 
-        for (const auto& p : impactParticles) {
-            if (!p.active) continue;
+        glBindBuffer(GL_ARRAY_BUFFER, impactInstanceVBO);
+        glBufferSubData(GL_ARRAY_BUFFER, 0,
+                        impactInstancesCPU.size() * sizeof(ImpactInstanceGPU),
+                        impactInstancesCPU.data());
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-            float t = glm::clamp(p.age / glm::max(0.0001f, p.lifetime), 0.0f, 1.0f);
-            float size = glm::mix(p.startSize, p.endSize, t);
-
-            glm::vec4 color = p.color;
-            color.a *= (1.0f - t);
-
-            impactShader->setVec3("uWorldPos", p.position);
-            impactShader->setFloat("uSize", size);
-            impactShader->setFloat("uRotation", p.rotation);
-            impactShader->setVec4("uColor", color);
-            impactShader->setInt("uKind", (int)p.kind);
-            impactShader->setFloat("uLife01", t);
-
-            glDrawArrays(GL_TRIANGLES, 0, 6);
-        }
+        glDrawArraysInstanced(GL_TRIANGLES, 0, 6, (GLsizei)impactInstancesCPU.size());
 
         glBindVertexArray(0);
 
         glDepthMask(GL_TRUE);
         glDisable(GL_BLEND);
-    }
-//------Marching Cubes-Code---------------------------------------------------------------------------------------------------------------------
-
-    void Game::generateChunkMesh(Chunk* chunk)
-    {
-        if (!chunk) return;
-
-        if (chunk->gpuSlot >= (uint32_t)MAX_CHUNKS_GPU) {
-            std::cout << "BAD SLOT: " << chunk->gpuSlot << " MAX=" << MAX_CHUNKS_GPU << "\n";
-            return;
-        }
-
-        if (chunk->isCleared) {
-            DrawArraysIndirectCommand cmd{};
-            cmd.count = 0;
-            chunk->gpuCache.vertexCount = 0;
-            cmd.instanceCount = 1;
-            cmd.first = chunk->gpuSlot * (uint32_t)CHUNK_MAX_VERTS;
-            cmd.baseInstance = chunk->gpuSlot;
-
-            glBindBuffer(GL_DRAW_INDIRECT_BUFFER, chunkIndirectBuffer);
-            glBufferSubData(GL_DRAW_INDIRECT_BUFFER,
-                            chunk->gpuSlot * sizeof(DrawArraysIndirectCommand),
-                            sizeof(DrawArraysIndirectCommand),
-                            &cmd);
-            glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
-
-            chunk->gpuCache.isValid = true;
-            chunk->meshDirty = false;
-            return;
-        }
-
-        // TODO: optional CPU early-out: if no solid, also set cmd.count=0 as above and return.
-
-        glm::vec3 chunkOrigin(
-                chunk->coord.x * CHUNK_SIZE * gl3::VOXEL_SIZE,
-                chunk->coord.y * CHUNK_SIZE * gl3::VOXEL_SIZE,
-                chunk->coord.z * CHUNK_SIZE * gl3::VOXEL_SIZE
-        );
-
-        marchingCubesShader->use();
-
-        uploadVoxelChunk(*chunk, nullptr);
-
-        resetAtomicCounter();
-        setComputeUniforms(chunkOrigin, *marchingCubesShader);
-
-        marchingCubesShader->setUInt("uChunkSlot", chunk->gpuSlot);
-        marchingCubesShader->setUInt("uChunkMaxVerts", (uint32_t)CHUNK_MAX_VERTS);
-
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssboVoxels);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ssboEdgeTable);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, ssboTriTable);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, ssboCounter);
-
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, globalChunkVertexBuffer);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, chunkIndirectBuffer);
-
-        int cellsPerAxis = DIM - 1;
-        int groups = (cellsPerAxis + 7) / 8;
-        glDispatchCompute(groups, groups, groups);
-
-        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT |
-                        GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT |
-                        GL_COMMAND_BARRIER_BIT);
-
-        // readback vertexCounter (4 bytes)
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
-        uint32_t produced = 0;
-        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(uint32_t), &produced);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-
-        DrawArraysIndirectCommand cmd{};
-        cmd.count = produced;
-        chunk->gpuCache.vertexCount = produced;
-        cmd.instanceCount = 1;
-        cmd.first = chunk->gpuSlot * (uint32_t)CHUNK_MAX_VERTS;
-        cmd.baseInstance = chunk->gpuSlot;
-
-        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, chunkIndirectBuffer);
-        glBufferSubData(GL_DRAW_INDIRECT_BUFFER,
-                        chunk->gpuSlot * sizeof(DrawArraysIndirectCommand),
-                        sizeof(DrawArraysIndirectCommand),
-                        &cmd);
-        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
-
-        chunk->gpuCache.isValid = true;
-        chunk->meshDirty = false;
-    }
-
-
-// debug version: if doColorByDensity==true, set per-voxel color from density (visualize SDF)
-    void Game::uploadVoxelChunk(const Chunk &chunk, const glm::vec3 *overrideColor) {
-        const int localDIM = DIM; // Should be CHUNK_SIZE + 2 for padding
-        const size_t total = size_t(localDIM) * localDIM * localDIM;
-        std::vector<CpuVoxelStd430> voxels;
-        voxels.resize(total);
-
-        for (int x = -1; x <= CHUNK_SIZE; ++x) {
-            for (int y = -1; y <= CHUNK_SIZE; ++y) {
-                for (int z = -1; z <= CHUNK_SIZE; ++z) {
-                    int idxX = x + 1;
-                    int idxY = y + 1;
-                    int idxZ = z + 1;
-                    int idx = idxX + idxY * localDIM + idxZ * localDIM * localDIM;
-
-                    const Voxel *srcVoxel = nullptr;
-
-                    // Check if we need to sample from neighbor
-                    if (x == -1 || x == CHUNK_SIZE ||
-                        y == -1 || y == CHUNK_SIZE ||
-                        z == -1 || z == CHUNK_SIZE) {
-
-                        // Get neighbor chunk
-                        ChunkCoord neighborCoord = chunk.coord;
-                        int localX = x;
-                        int localY = y;
-                        int localZ = z;
-
-                        // Adjust for each axis
-                        if (x == -1) {
-                            neighborCoord.x -= 1;
-                            localX = CHUNK_SIZE - 1;
-                        } else if (x == CHUNK_SIZE) {
-                            neighborCoord.x += 1;
-                            localX = 0;
-                        }
-
-                        if (y == -1) {
-                            neighborCoord.y -= 1;
-                            localY = CHUNK_SIZE - 1;
-                        } else if (y == CHUNK_SIZE) {
-                            neighborCoord.y += 1;
-                            localY = 0;
-                        }
-
-                        if (z == -1) {
-                            neighborCoord.z -= 1;
-                            localZ = CHUNK_SIZE - 1;
-                        } else if (z == CHUNK_SIZE) {
-                            neighborCoord.z += 1;
-                            localZ = 0;
-                        }
-
-                        Chunk *neighbor = chunkManager->getChunk(neighborCoord);
-                        if (neighbor && localX >= -1 && localX <= CHUNK_SIZE &&
-                            localY > -1 && localY <= CHUNK_SIZE &&
-                            localZ > -1 && localZ <= CHUNK_SIZE) {
-                            srcVoxel = &neighbor->voxels[localX][localY][localZ];
-                        }
-                    }
-
-                    // If no neighbor data, use current chunk or default
-                    if (!srcVoxel) {
-                        // Clamp to valid range for current chunk
-                        int clampX = glm::clamp(x, 0, CHUNK_SIZE);
-                        int clampY = glm::clamp(y, 0, CHUNK_SIZE);
-                        int clampZ = glm::clamp(z, 0, CHUNK_SIZE);
-                        srcVoxel = &chunk.voxels[clampX][clampY][clampZ];
-                    }
-
-                    // Copy data
-                    voxels[idx].density = srcVoxel->density;
-                    voxels[idx].pad0 = voxels[idx].pad1 = voxels[idx].pad2 = 0.0f;
-                    glm::vec3 col = overrideColor ? *overrideColor : srcVoxel->color;
-
-                    voxels[idx].color[0] = col.r;
-                    voxels[idx].color[1] = col.g;
-                    voxels[idx].color[2] = col.b;
-                    voxels[idx].color[3] = 1.0f;
-                    voxels[idx].type = srcVoxel->type;
-                    voxels[idx].material=srcVoxel->material;
-                }
-            }
-        }
-
-        // Upload to SSBO
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboVoxels);
-        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, voxels.size() * sizeof(CpuVoxelStd430), voxels.data());
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-    }
-
-    void Game::resetAtomicCounter() {
-        unsigned int zero = 0;
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
-        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(unsigned int), &zero);
-    }
-
-    void Game::setComputeUniforms(const glm::vec3& chunkOrigin, Shader& computeShader) {
-        computeShader.use();
-        computeShader.setFloat("voxelSize", gl3::VOXEL_SIZE);
-        computeShader.setIVec3("voxelGridDim", glm::ivec3(DIM, DIM, DIM));
-
-        // IMPORTANT: padded voxel index (0,0,0) corresponds to world (chunkOrigin - voxelSize)
-        computeShader.setVec3("gridOrigin", chunkOrigin - glm::vec3(gl3::VOXEL_SIZE));
     }
 
 ////----Helper Functions------------------------------------------------------------------------------------------------------------------------
@@ -3699,23 +3657,25 @@ visibleSlots.clear();
                                  float removedVoxelEstimate,
                                  const glm::vec3& tint)
     {
+        std::cout<<impactParticles.size()<<" Particles\n";
+
         // Normalize impact into 0..1-ish range
-        float strength01 = glm::clamp(impactSpeed / (12.0f * VOXEL_SIZE), 0.0f, 1.0f);
+        float strength01 = glm::clamp(glm::sqrt(impactSpeed) / (30.0f * VOXEL_SIZE), 0.0f, 1.0f);
 
         // Let voxel removal contribute too
-        float removal01 = glm::clamp(removedVoxelEstimate / 80.0f, 0.0f, 1.0f);
+        float removal01 = glm::clamp(removedVoxelEstimate / 100.0f, 0.0f, 1.0f);
 
         float combined = glm::clamp(strength01 * 0.7f + removal01 * 0.3f, 0.0f, 1.0f);
 
-        if (combined < 0.25f) {
+        if (strength01 < 0.25f) {
             // LIGHT: flash only (no smoke)
-            spawnImpactPresetSmall(hitPos, hitNormal, combined, tint);
-        } else if (combined < 0.65f) {
+            spawnImpactPresetLarge(hitPos, hitNormal, strength01, tint);
+        } else if (strength01 < 0.65f) {
             // MEDIUM: larger flash + light smoke
-            spawnImpactPresetMedium(hitPos, hitNormal, combined, tint);
+            spawnImpactPresetLarge(hitPos, hitNormal, strength01, tint);
         } else {
             // STRONG: largest flash + strong smoke
-            spawnImpactPresetLarge(hitPos, hitNormal, combined, tint);
+            spawnImpactPresetLarge(hitPos, hitNormal, strength01, tint);
         }
     }
 
@@ -3732,9 +3692,9 @@ visibleSlots.clear();
         flash.velocity = glm::vec3(0.0f);
         flash.color = glm::vec4(1.0f, 0.30f, 0.18f, 0.85f); // red flash
         flash.age = 0.0f;
-        flash.lifetime = glm::mix(0.10f, 0.14f, strength01);
-        flash.startSize = 1.2f * VOXEL_SIZE;
-        flash.endSize = glm::mix(2.4f, 4.4f, strength01) * VOXEL_SIZE;
+        flash.lifetime = glm::mix(0.10f, 0.2f, strength01);
+        flash.startSize = 2.4f * VOXEL_SIZE;
+        flash.endSize = glm::mix(3.4f, 3.4f, strength01) * VOXEL_SIZE;
         flash.rotation = ((float)rand() / (float)RAND_MAX) * glm::two_pi<float>();
         flash.rotationSpeed = (((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f) * 1.5f;
         flash.kind = 1;
@@ -3776,9 +3736,9 @@ visibleSlots.clear();
         flash.velocity = glm::vec3(0.0f);
         flash.color = glm::vec4(1.0f, 0.28f, 0.16f, 0.90f); // red flash
         flash.age = 0.0f;
-        flash.lifetime = 0.13f;
-        flash.startSize = 2.2f * VOXEL_SIZE;
-        flash.endSize = 6.2f * VOXEL_SIZE;
+        flash.lifetime = 0.3f;
+        flash.startSize = 4.2f * VOXEL_SIZE;
+        flash.endSize = 5.2f * VOXEL_SIZE;
         flash.rotation = ((float)rand() / (float)RAND_MAX) * glm::two_pi<float>();
         flash.rotationSpeed = (((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f) * 1.8f;
         flash.kind = 1;
@@ -3791,7 +3751,7 @@ visibleSlots.clear();
                                       const glm::vec3& tint)
     {
         // STRONG: strong smoke
-        const int smokeCount = 24 + (int)(strength01 * 20.0f);
+        const int smokeCount = 5;
 
         for (int i = 0; i < smokeCount; ++i) {
             float rx = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f;
@@ -3805,9 +3765,9 @@ visibleSlots.clear();
             p.velocity = randDir * glm::mix(3.0f, 7.5f, strength01) * VOXEL_SIZE;
             p.color = glm::vec4(tint * 0.9f, 0.05f); // strong smoke alpha
             p.age = 0.0f;
-            p.lifetime = glm::mix(0.75f, 1.6f, strength01);
-            p.startSize = 0.6f * VOXEL_SIZE;
-            p.endSize = glm::mix(3.0f, 7.0f, strength01) * VOXEL_SIZE;
+            p.lifetime = glm::mix(1.5f, 4.6f, strength01);
+            p.startSize = 3.6f * VOXEL_SIZE;
+            p.endSize = glm::mix(20.0f, 100.0f, strength01) * VOXEL_SIZE;
             p.rotation = ((float)rand() / (float)RAND_MAX) * glm::two_pi<float>();
             p.rotationSpeed = (((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f) * 3.0f;
             p.kind = 0;
@@ -3820,11 +3780,11 @@ visibleSlots.clear();
         flash.velocity = glm::vec3(0.0f);
         flash.color = glm::vec4(1.0f, 0.24f, 0.14f, 0.98f); // red flash
         flash.age = 0.0f;
-        flash.lifetime = 0.16f;
-        flash.startSize = 2.6f * VOXEL_SIZE;
-        flash.endSize = 8.8f * VOXEL_SIZE;
+        flash.lifetime = 0.4f;
+        flash.startSize = 5.8f * VOXEL_SIZE;
+        flash.endSize = 6.8f * VOXEL_SIZE;
         flash.rotation = ((float)rand() / (float)RAND_MAX) * glm::two_pi<float>();
-        flash.rotationSpeed = (((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f) * 2.0f;
+        flash.rotationSpeed = (((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f) * 4.0f;
         flash.kind = 1;
         impactParticles.push_back(flash);
     }

@@ -66,6 +66,20 @@ uniform float uMatRoughness[64];
 uniform float uMatSpecular[64];
 uniform float uUVScale[64];
 
+uniform sampler2DArray uNormalArray;
+uniform sampler2DArray uRoughArray;
+uniform sampler2DArray uAOArray;
+uniform sampler2DArray uHeightArray;
+
+uniform float uNormalStrength;
+uniform float uHeightScale;
+uniform float uAOStrength;
+uniform int   uNormalYFlip;
+
+const float uBaseHeight= 0.5;
+const float uBaseRoughness= 1.0;
+const float uBaseAO = 1.0;
+
 const float PI = 3.14159265;
 const float MIN_ALBEDO = 0.05;
 
@@ -165,14 +179,111 @@ float eyeRadius(vec3 localPos, vec3 eyeCenterLocal, vec3 eyeForwardLocal)
     return length(uv);
 }
 
+vec3 triplanarWeights(vec3 N)
+{
+    vec3 w = abs(normalize(N));
+    w = pow(w, vec3(4.0));
+    return w / (w.x + w.y + w.z + 1e-6);
+}
+
+float sampleScalarWithFallback(
+sampler2DArray texArr, uint mat, vec2 uv, float baseValue, out float filled)
+{
+    vec4 t = texture(texArr, vec3(uv, float(mat)));
+    // Consider texel/layer filled if alpha is present OR rgb has signal.
+    float hasA = step(0.001, t.a);
+    float hasRGB = step(0.001, dot(abs(t.rgb), vec3(1.0)));
+    filled = max(hasA, hasRGB);
+
+    return mix(baseValue, t.r, filled);
+}
+
+float sampleTriplanarScalarFallback(
+sampler2DArray texArr, uint mat, vec3 p, vec3 N, float baseValue, out float filledOut)
+{
+    vec3 w = triplanarWeights(N);
+    float s = uUVScale[mat];
+
+    float fx, fy, fz;
+    float x = sampleScalarWithFallback(texArr, mat, p.yz * s, baseValue, fx);
+    float y = sampleScalarWithFallback(texArr, mat, p.xz * s, baseValue, fy);
+    float z = sampleScalarWithFallback(texArr, mat, p.xy * s, baseValue, fz);
+
+    filledOut = fx * w.x + fy * w.y + fz * w.z;
+    return x * w.x + y * w.y + z * w.z;
+}
+
+vec3 sampleNormalWithFallback(
+sampler2DArray texArr, uint mat, vec2 uv, vec3 baseN, out float filled)
+{
+    vec4 t = texture(texArr, vec3(uv, float(mat)));
+
+    float hasA = step(0.001, t.a);
+    float hasRGB = step(0.001, dot(abs(t.rgb), vec3(1.0)));
+    filled = max(hasA, hasRGB);
+
+    vec3 nTex = t.xyz * 2.0 - 1.0;
+    if (uNormalYFlip != 0) nTex.y = -nTex.y;
+
+    // If missing, use projection-local "flat" normal (0,0,1) via baseN
+    return normalize(mix(baseN, nTex, filled));
+}
+
+vec3 sampleTriplanarNormalFallback(
+sampler2DArray texArr, uint mat, vec3 p, vec3 Ngeom, out float filledOut)
+{
+    vec3 w = triplanarWeights(Ngeom);
+    float s = uUVScale[mat];
+
+    float fx, fy, fz;
+
+    // projection-local flat normal
+    vec3 baseLocal = vec3(0.0, 0.0, 1.0);
+
+    vec3 nx = sampleNormalWithFallback(texArr, mat, p.yz * s, baseLocal, fx); // X projection
+    vec3 ny = sampleNormalWithFallback(texArr, mat, p.xz * s, baseLocal, fy); // Y projection
+    vec3 nz = sampleNormalWithFallback(texArr, mat, p.xy * s, baseLocal, fz); // Z projection
+
+    // Re-orient projection normals into object/world-aligned axes
+    vec3 nX = normalize(vec3(nx.z, nx.x, nx.y));
+    vec3 nY = normalize(vec3(ny.x, ny.z, ny.y));
+    vec3 nZ = normalize(vec3(nz.x, nz.y, nz.z));
+
+    filledOut = fx * w.x + fy * w.y + fz * w.z;
+    return normalize(nX * w.x + nY * w.y + nZ * w.z);
+}
+
 void main() {
     //if ((vFlags & 1u) != 0u) discard;
 
     float alpha =1.0f;
     uint mat = (vFlags >> 1u) & 63u;
-    vec3 N = normalize(normal);
 
-    vec3 texAlbedo = sampleTriplanarAlbedo(mat, localPos/localScale, N);
+    vec3 Ngeom = normalize(normal);
+    vec3 samplePos = localPos / max(localScale, 1e-4);
+
+    // Height (fallback to base per material)
+    float heightFilled = 0.0;
+    float height = sampleTriplanarScalarFallback(
+    uHeightArray, mat, samplePos, Ngeom, uBaseHeight, heightFilled
+    );
+
+    // Parallax-ish displacement along geometric normal
+    samplePos += Ngeom * ((height - 0.5) * uHeightScale);
+
+    // Albedo (existing)
+    vec3 texAlbedo = sampleTriplanarAlbedo(mat, samplePos, Ngeom);
+
+    // Normal (fallback to geometric normal)
+    float normalFilled = 0.0;
+    vec3 Nmap = sampleTriplanarNormalFallback(uNormalArray, mat, samplePos, Ngeom, normalFilled);
+    vec3 N = normalize(mix(Ngeom, Nmap, clamp(uNormalStrength, 0.0, 1.0)));
+
+    // Roughness (map * scalar, fallback to base)
+    float roughFilled = 0.0;
+    float roughTex = sampleTriplanarScalarFallback(
+    uRoughArray, mat, samplePos, Ngeom, uBaseRoughness, roughFilled
+    );
 
     float tintStrength = 0.65;
     vec3 albedo = mix(texAlbedo, texAlbedo * vertexColor, tintStrength);
@@ -183,7 +294,7 @@ void main() {
     vec3 lightAccum = vec3(0.0);
     vec3 specAccum  = vec3(0.0);
 
-    float rough = clamp(uMatRoughness[mat], 0.02, 1.0);
+    float rough = clamp(roughTex * uMatRoughness[mat], 0.02, 1.0);
     float specStrength = clamp(uMatSpecular[mat], 0.0, 1.0);
     float shininess = mix(256.0, 8.0, rough);
 
@@ -246,7 +357,13 @@ void main() {
 
 
     vec3 diffuse = lightAccum * (albedo / PI);
-    vec3 ambient = ambientColor * albedo;
+    float aoFilled = 0.0;
+    float aoTex = sampleTriplanarScalarFallback(
+    uAOArray, mat, samplePos, Ngeom, uBaseAO, aoFilled
+    );
+    float ao = mix(1.0, clamp(aoTex, 0.0, 1.0), clamp(uAOStrength, 0.0, 1.0));
+
+    vec3 ambient = ambientColor * albedo * ao;
 
     // Burn / disintegrate
     if (uBurnEnabled != 0) {

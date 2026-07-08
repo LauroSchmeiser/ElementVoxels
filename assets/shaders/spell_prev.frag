@@ -7,12 +7,6 @@ out vec4 FragColor;
 
 uniform int uPreviewMode;
 
-// shared
-uniform float uVoxelSize;
-
-// sphere
-uniform float uFormationRadius;
-
 // wall
 uniform vec3 uWallSize;
 

@@ -29,57 +29,76 @@ namespace gl3 {
         return fs::last_write_time(cachedPath) >= fs::last_write_time(sourcePath);
     }
 
-    bool MaterialSystem::initTextureArrayFromFiles(const std::vector<std::string>& materialPaths,
-                                                   int forceChannelsRGBA)
+    static GLuint createArrayTexRGBA8(int w, int h, int layers)
     {
-        destroy();
+        GLuint tex = 0;
+        glGenTextures(1, &tex);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, tex);
 
-        stbi_set_flip_vertically_on_load(true);
-
-        layerCount = (int)materialPaths.size();
-        if (layerCount <= 0) {
-            std::cout << "MaterialSystem: no material textures provided.\n";
-            return false;
-        }
-        if (layerCount > kMaxMaterials) {
-            std::cout << "MaterialSystem: too many materials (" << layerCount
-                      << "), max is " << kMaxMaterials << "\n";
-            return false;
-        }
-
-        // Force canonical texture size for the array
-        width = 1024;
-        height = 1024;
-
-        glGenTextures(1, &albedoArrayTex);
-        glBindTexture(GL_TEXTURE_2D_ARRAY, albedoArrayTex);
-
-        // Allocate storage for all layers (RGBA8)
         glTexImage3D(GL_TEXTURE_2D_ARRAY,
                      0,
                      GL_RGBA8,
-                     width,
-                     height,
-                     layerCount,
+                     w, h, layers,
                      0,
                      GL_RGBA,
                      GL_UNSIGNED_BYTE,
                      nullptr);
 
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+        glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+        return tex;
+    }
+
+    static void uploadLayerRGBA8(GLuint tex, int w, int h, int layer, const unsigned char* data)
+    {
+        glBindTexture(GL_TEXTURE_2D_ARRAY, tex);
+        glTexSubImage3D(GL_TEXTURE_2D_ARRAY,
+                        0,
+                        0, 0, layer,
+                        w, h, 1,
+                        GL_RGBA,
+                        GL_UNSIGNED_BYTE,
+                        data);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+    }
+
+    // Shared loader for one map type with per-map fallback color
+    static bool buildArrayFromPaths(
+            GLuint tex,
+            int width, int height, int layerCount,
+            const std::array<std::string, MaterialSystem::kMaxMaterials>& paths,
+            unsigned char fr, unsigned char fg, unsigned char fb, unsigned char fa,
+            int forceChannelsRGBA,
+            MaterialSystem* selfForHelpers)
+    {
+        stbi_set_flip_vertically_on_load(true);
+
         for (int layer = 0; layer < layerCount; ++layer) {
-            const std::string& sourcePath = materialPaths[layer];
-            const std::string cachedPath = buildResizedCachePath(sourcePath, width, height);
+            const std::string& sourcePath = paths[layer];
+
+            // Empty path => fallback
+            if (sourcePath.empty()) {
+                std::vector<unsigned char> fallback;
+                fillSolidRGBA(fallback, width, height, fr, fg, fb, fa);
+                uploadLayerRGBA8(tex, width, height, layer, fallback.data());
+                continue;
+            }
+
+            const std::string cachedPath = selfForHelpers->buildResizedCachePath(sourcePath, width, height);
 
             int lw = 0, lh = 0, ln = 0;
             unsigned char* img = nullptr;
             bool loadedFromCache = false;
 
-            // 1) Try cached resized PNG first
-            if (fileExists(cachedPath) && isCacheUpToDate(sourcePath, cachedPath)) {
+            // 1) Try cache
+            if (selfForHelpers->fileExists(cachedPath) && isCacheUpToDate(sourcePath, cachedPath)) {
                 img = stbi_load(cachedPath.c_str(), &lw, &lh, &ln, forceChannelsRGBA);
                 if (img && lw == width && lh == height) {
                     loadedFromCache = true;
-                    std::cout << "MaterialSystem: loaded cached texture: " << cachedPath << "\n";
                 } else {
                     if (img) {
                         stbi_image_free(img);
@@ -88,99 +107,110 @@ namespace gl3 {
                 }
             }
 
-            // 2) If no valid cache, load original
+            // 2) Load source
             if (!img) {
                 img = stbi_load(sourcePath.c_str(), &lw, &lh, &ln, forceChannelsRGBA);
                 if (!img) {
                     std::cout << "MaterialSystem: failed to load: " << sourcePath
-                              << " (filling fallback magenta)\n";
-
+                              << " (fallback layer used)\n";
                     std::vector<unsigned char> fallback;
-                    fillSolidRGBA(fallback, width, height, 255, 0, 255, 255);
-
-                    glTexSubImage3D(GL_TEXTURE_2D_ARRAY,
-                                    0,
-                                    0, 0, layer,
-                                    width, height, 1,
-                                    GL_RGBA,
-                                    GL_UNSIGNED_BYTE,
-                                    fallback.data());
+                    fillSolidRGBA(fallback, width, height, fr, fg, fb, fa);
+                    uploadLayerRGBA8(tex, width, height, layer, fallback.data());
                     continue;
                 }
             }
 
-            // 3) If image is already correct size, upload directly
+            // 3) Upload (resize if needed)
             if (lw == width && lh == height) {
-                glTexSubImage3D(GL_TEXTURE_2D_ARRAY,
-                                0,
-                                0, 0, layer,
-                                width, height, 1,
-                                GL_RGBA,
-                                GL_UNSIGNED_BYTE,
-                                img);
+                uploadLayerRGBA8(tex, width, height, layer, img);
 
-                // If it came from original and not cache, optionally create cache once
                 if (!loadedFromCache) {
-                    if (saveRGBA8PNG(cachedPath, width, height, img)) {
-                        std::cout << "MaterialSystem: cached original-sized texture as PNG: "
-                                  << cachedPath << "\n";
-                    } else {
-                        std::cout << "MaterialSystem: failed to write cached PNG: "
-                                  << cachedPath << "\n";
-                    }
+                    selfForHelpers->saveRGBA8PNG(cachedPath, width, height, img);
                 }
 
                 stbi_image_free(img);
-                continue;
-            }
-
-            // 4) Wrong size: resize, save cache, upload resized
-            std::cout << "MaterialSystem: resizing " << sourcePath
-                      << " from " << lw << "x" << lh
-                      << " to " << width << "x" << height << "\n";
-
-            auto resized = resizeToRGBA(img, lw, lh, width, height);
-
-            if (saveRGBA8PNG(cachedPath, width, height, resized.data())) {
-                std::cout << "MaterialSystem: wrote cached resized texture: "
-                          << cachedPath << "\n";
             } else {
-                std::cout << "MaterialSystem: failed to write cached resized texture: "
-                          << cachedPath << "\n";
+                auto resized = selfForHelpers->resizeToRGBA(img, lw, lh, width, height);
+                selfForHelpers->saveRGBA8PNG(cachedPath, width, height, resized.data());
+                uploadLayerRGBA8(tex, width, height, layer, resized.data());
+                stbi_image_free(img);
             }
-
-            glTexSubImage3D(GL_TEXTURE_2D_ARRAY,
-                            0,
-                            0, 0, layer,
-                            width, height, 1,
-                            GL_RGBA,
-                            GL_UNSIGNED_BYTE,
-                            resized.data());
-
-            stbi_image_free(img);
         }
 
-        // Sampler state
-        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
-        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
-        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
+        glBindTexture(GL_TEXTURE_2D_ARRAY, tex);
         glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
         glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
-
-        std::cout << "MaterialSystem: built texture array "
-                  << width << "x" << height
-                  << " layers=" << layerCount << "\n";
-
         return true;
     }
+
+    bool MaterialSystem::initAllTextureArraysFromFiles(
+            const std::array<std::string, kMaxMaterials>& albedoPaths,
+            const std::array<std::string, kMaxMaterials>& normalPaths,
+            const std::array<std::string, kMaxMaterials>& roughPaths,
+            const std::array<std::string, kMaxMaterials>& aoPaths,
+            const std::array<std::string, kMaxMaterials>& heightPaths,
+            int forceChannelsRGBA)
+    {
+        destroy();
+
+        layerCount = kMaxMaterials;
+        width = 1024;
+        height = 1024;
+
+        albedoArrayTex = createArrayTexRGBA8(width, height, layerCount);
+        normalArrayTex = createArrayTexRGBA8(width, height, layerCount);
+        roughArrayTex  = createArrayTexRGBA8(width, height, layerCount);
+        aoArrayTex     = createArrayTexRGBA8(width, height, layerCount);
+        heightArrayTex = createArrayTexRGBA8(width, height, layerCount);
+
+        // Albedo fallback: magenta (debug-visible)
+        buildArrayFromPaths(albedoArrayTex, width, height, layerCount, albedoPaths,
+                            255, 0, 255, 255, forceChannelsRGBA, this);
+
+        // Normal fallback: flat normal
+        buildArrayFromPaths(normalArrayTex, width, height, layerCount, normalPaths,
+                            128, 128, 255, 255, forceChannelsRGBA, this);
+
+        // Rough fallback: 1.0 (rough)
+        buildArrayFromPaths(roughArrayTex, width, height, layerCount, roughPaths,
+                            255, 255, 255, 255, forceChannelsRGBA, this);
+
+        // AO fallback: 1.0 (no ambient darkening)
+        buildArrayFromPaths(aoArrayTex, width, height, layerCount, aoPaths,
+                            255, 255, 255, 255, forceChannelsRGBA, this);
+
+        // Height fallback: 0.5 (neutral midpoint)
+        buildArrayFromPaths(heightArrayTex, width, height, layerCount, heightPaths,
+                            128, 128, 128, 255, forceChannelsRGBA, this);
+
+        std::cout << "MaterialSystem: built ALL texture arrays "
+                  << width << "x" << height
+                  << " layers=" << layerCount << "\n";
+        return true;
+    }
+
 
     void MaterialSystem::destroy()
     {
         if (albedoArrayTex != 0) {
             glDeleteTextures(1, &albedoArrayTex);
             albedoArrayTex = 0;
+        }
+        if (normalArrayTex != 0) {
+            glDeleteTextures(1, &normalArrayTex);
+            normalArrayTex = 0;
+        }
+        if (roughArrayTex != 0) {
+            glDeleteTextures(1, &roughArrayTex);
+            roughArrayTex = 0;
+        }
+        if (aoArrayTex != 0) {
+            glDeleteTextures(1, &aoArrayTex);
+            aoArrayTex = 0;
+        }
+        if (heightArrayTex != 0) {
+            glDeleteTextures(1, &heightArrayTex);
+            heightArrayTex = 0;
         }
         layerCount = 0;
         width = height = 0;

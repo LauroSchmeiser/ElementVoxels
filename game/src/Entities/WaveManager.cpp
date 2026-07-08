@@ -112,7 +112,7 @@ namespace gl3 {
         static EnemyArchetype basic;
         basic.name = "Basic";
         basic.maxHP = 1000.0f;
-        basic.moveSpeed = 30.0f;
+        basic.moveSpeed = 10.0f;
         basic.shapeType = VoxelPhysicsBody::ShapeType::SPHERE;
         basic.mass = 50.0f;
         basic.radius = 2.5f * VOXEL_SIZE;

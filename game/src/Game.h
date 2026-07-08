@@ -146,6 +146,12 @@ namespace gl3 {
             bool hit;
         };
 
+        struct ImpactInstanceGPU {
+            glm::vec4 pos_size;      // xyz + size
+            glm::vec4 color;         // rgba
+            glm::vec4 rot_life_kind; // x=rotation, y=life01, z=kind, w=unused
+        };
+
         struct Frustum {
             Plane planes[6]; // left, right, bottom, top, near, far
 
@@ -302,11 +308,8 @@ namespace gl3 {
         bool DebugMode1 = false;
         bool DebugMode2 = false;
         int activeDebugMode = 0;
-        int FilledChunks = 0;
 
         ////Initialization-Steps
-        void setupSSBOsAndTables();
-
         void setupInput();
 
         void setupCamera();
@@ -326,11 +329,7 @@ namespace gl3 {
         void updateDeltaTime();
 
         //Lighting:
-        void updateLightSpatialHash();
-
         void rebuildChunkLights(const ChunkCoord &coord);
-
-        void updateChunkLights(Chunk *chunk);
 
         void processEmissiveChunks();
 
@@ -356,8 +355,6 @@ namespace gl3 {
         void renderSpellPreview();
 
         //marching cubes Shader:
-        void generateChunkMesh(Chunk *chunk);
-
         void uploadVoxelChunk(const Chunk &chunk, const glm::vec3 *overrideColor = nullptr);
 
         void resetAtomicCounter();
@@ -434,23 +431,7 @@ namespace gl3 {
         size_t voxelCount = DIM * DIM * DIM; //How many voxels can be in one Chunk
         static constexpr int RenderingRange = 25; //Range around Camera that is rendered
 
-        //Marching-cubes Variables
-        size_t maxVerts = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5 * 3; //Max amount of vertices marching cubes can create
-        const int MAX_CHUNKS_PER_FRAME = 4;
-        //std::vector<Chunk> dirtyChunks;
-        //SSBOs for marching cubes:
-        GLuint ssboVoxels = 0, ssboEdgeTable = 0, ssboTriTable = 0,
-        ssboCounter = 0, ssboTriangles = 0, particleSSBO = 0, fieldBitsSSBO = 0;
-
-        GLuint globalChunkVertexBuffer = 0;   // SSBO for verts, also used as ARRAY_BUFFER
-        GLuint chunkIndirectBuffer = 0;       // GL_DRAW_INDIRECT_BUFFER
-        GLuint globalChunkVAO = 0;
-
         size_t CHUNK_MAX_VERTS = 0;           // computed once from DIM
-        int MAX_CHUNKS_GPU = 0;               // capacity (>= number of chunks you may render)
-
-        GLuint ssboLights = 0;         // binding = 10
-        GLuint ssboChunkLightIdx = 0;  // binding = 11
 
         //vEffects
         SunBillboard sunBillboards;
@@ -474,6 +455,11 @@ namespace gl3 {
         //Materials:
         gl3::MaterialSystem materials;
         GLuint materialAlbedoArrayTexId = 0;
+        GLuint materialNormalArrayTexId = 0;
+        GLuint materialRoughArrayTexId = 0;
+        GLuint materialAOArrayTexId = 0;
+        GLuint materialHeightArrayTexId = 0;
+
         void fillMaterialTable();
 
         std::array<float, 64> rough{};
@@ -504,10 +490,6 @@ namespace gl3 {
         float tickGameplayPreload();
         const std::string& getGameplayPreloadStageName() const { return preloadStageName; }
 
-
-
-
-        void initGameplayIfNeeded();
         void updateGameplayFrame();
         void renderGameplayFrame();
 
@@ -517,8 +499,6 @@ namespace gl3 {
 
         bool gameplayInitialized = false;
 
-        // split initialization so menu can show instantly
-        void initGameplaySystems(); // chunk generation, camera, vfx, etc (slow)
         enum class PreloadStage : uint8_t {
             NotStarted,
 
@@ -635,6 +615,8 @@ namespace gl3 {
                                     float strength01,
                                     const glm::vec3& tint);
 
+
+
     private:
         glm::vec2 getMouseDelta();
         glm::dvec2 previousMousePos = glm::dvec2(0.0, 0.0);
@@ -663,10 +645,7 @@ namespace gl3 {
         glm::vec3 cameraUp;
 
         glm::vec3 cameraRight;
-        float cameraRoll = 0.0f;
-        float targetCameraRoll = 0.0f;
-        float cameraRollSpeed = 8.0f;
-        const float cameraSensitivity=0.125f;
+        const float cameraSensitivity=0.075f;
 
         std::unique_ptr<Shader> speedLinesShader;
         bool enableSpeedLines = true;
@@ -680,5 +659,12 @@ namespace gl3 {
         void alignCameraRollToUp(const glm::vec3 &targetUp, float dt);
 
         void appendSpellBillboards(std::vector<SunInstance> &out);
+
+        GLuint impactInstanceVBO = 0;
+        std::vector<ImpactInstanceGPU> impactInstancesCPU;
+        static constexpr size_t kMaxImpactInstances = 4096;
+        GLuint impactNoiseTexId = 0;
+        void createImpactNoiseTexture();
+        void initImpactInstancing();
     };
 }

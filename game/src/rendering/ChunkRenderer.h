@@ -5,6 +5,7 @@
 #include "GpuStructsStd430.h"
 #include "Shader.h"
 #include "../../../extern/robin_hood.h"
+#include "SunBillboard.h"
 #include <iostream>
 
 
@@ -64,7 +65,7 @@ namespace gl3 {
 
         void uploadMergedLightsToGPU();
 
-        void generateEmissiveBillboards(Chunk *chunk);
+        void collectEmissiveBillboards(std::vector<SunInstance>& out, robin_hood::unordered_set<uint32_t>& usedIds,Chunk* chunk);
 
         GLuint ssboLights = 0;
         GLuint ssboChunkLightIdx = 0;

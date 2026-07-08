@@ -614,35 +614,22 @@ namespace gl3 {
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     }
 
-    // Add to your ChunkRenderer class
-    void ChunkRenderer::generateEmissiveBillboards(Chunk* chunk) {
+    void ChunkRenderer::collectEmissiveBillboards(std::vector<SunInstance>& out,
+                                                  robin_hood::unordered_set<uint32_t>& usedIds, Chunk* chunk)
+    {
         if (!chunk) return;
-
-        std::vector<SunInstance> suns;
-
-        for (int x = 0; x <= CHUNK_SIZE; x++) {
-            for (int y = 0; y <= CHUNK_SIZE; y++) {
-                for (int z = 0; z <= CHUNK_SIZE; z++) {
-                    Voxel& voxel = chunk->voxels[x][y][z];
-                    if (voxel.type == 2 && voxel.density > 0.0f) {
-                        SunInstance inst;
-                        inst.position = glm::vec3(
-                                chunk->coord.x * CHUNK_SIZE * VOXEL_SIZE + x * VOXEL_SIZE,
-                                chunk->coord.y * CHUNK_SIZE * VOXEL_SIZE + y * VOXEL_SIZE,
-                                chunk->coord.z * CHUNK_SIZE * VOXEL_SIZE + z * VOXEL_SIZE
-                        );
-                        inst.scale = VOXEL_SIZE * 1.5f; // Slightly larger than voxel
-                        inst.color = voxel.color;
-                        suns.push_back(inst);
-                    }
-                }
+        if (chunk->isCleared) return;
+        for (const auto& light : chunk->emissiveLights) {
+            if (usedIds.insert(light.id).second) {
+                SunInstance inst;
+                inst.position = light.pos;
+                inst.scale = std::sqrt(light.intensity) * 0.5f;
+                inst.color = light.color * 1.0f;
+                out.push_back(inst);
             }
         }
-
-
-        // Upload to SSBO for billboard rendering
-        //uploadBillboardInstances(suns);
     }
+
     void ChunkRenderer::setupLightSSBOs()
     {
         glGenBuffers(1, &ssboLights);

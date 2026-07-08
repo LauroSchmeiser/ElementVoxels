@@ -24,7 +24,7 @@ namespace gl3 {
         float gravityMaxIntensity = 50.0f;
         float gravityMinIntensity = 0.1f;
 
-        float terminalVelocity = 750.0f;
+        float terminalVelocity = 850.0f;
         float coyoteTimeDuration = 3.5f;
         float jumpBufferDuration = 0.75f;
 

@@ -18,16 +18,25 @@ namespace gl3 {
         static constexpr int kMaxMaterials = 64;
 
         GLuint albedoArrayTex = 0;
-        int layerCount = 7;
+        GLuint normalArrayTex = 0;
+        GLuint roughArrayTex  = 0;
+        GLuint aoArrayTex     = 0;
+        GLuint heightArrayTex = 0;
+
+        int layerCount = kMaxMaterials;
         int width = 0;
         int height = 0;
 
         std::array<MaterialParams, kMaxMaterials> params{};
 
-        // Load 1 texture per material id: materialPaths[i] goes into layer i.
-        // Layers beyond materialPaths.size() are filled with a fallback color.
-        bool initTextureArrayFromFiles(const std::vector<std::string>& materialPaths,
-                                       int forceChannelsRGBA = 4);
+        // New: all maps, fixed by material id [0..63], empty path => fallback layer
+        bool initAllTextureArraysFromFiles(
+                const std::array<std::string, kMaxMaterials>& albedoPaths,
+                const std::array<std::string, kMaxMaterials>& normalPaths,
+                const std::array<std::string, kMaxMaterials>& roughPaths,
+                const std::array<std::string, kMaxMaterials>& aoPaths,
+                const std::array<std::string, kMaxMaterials>& heightPaths,
+                int forceChannelsRGBA = 4);
 
         std::vector<unsigned char> resizeToRGBA(
                 const unsigned char* src, int sw, int sh,
