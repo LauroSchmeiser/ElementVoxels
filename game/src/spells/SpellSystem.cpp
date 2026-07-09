@@ -940,6 +940,7 @@ namespace gl3 {
             spell.physicsBodyId = spell.physicsBody ? spell.physicsBody->id : 0;
 
             if (spell.physicsBody) {
+                spell.physicsBody->material = static_cast<uint32_t>(spell.targetMaterial);
                 spell.physicsBody->userData = reinterpret_cast<void*>((uintptr_t)spell.ID);
                 spell.physicsBody->velocity = spell.initialVelocity;
                 spell.physicsBody->orientation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
@@ -1174,6 +1175,7 @@ namespace gl3 {
             spell.physicsBodyId = spell.physicsBody ? spell.physicsBody->id : 0;
 
             if (spell.physicsBody) {
+                spell.physicsBody->material = static_cast<uint32_t>(spell.targetMaterial);
                 spell.physicsBody->userData = reinterpret_cast<void*>((uintptr_t)spell.ID);
                 spell.physicsBody->velocity = spell.initialVelocity;
                 spell.physicsBody->orientation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);

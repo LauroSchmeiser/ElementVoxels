@@ -18,6 +18,7 @@
 #include <imgui.h>
 #include "entities/EnemyManager.h"
 #include "Entities/LocalMarchingCubes.h"
+#include "physics/MaterialCollisionPolicy.h"
 
 #ifndef TRACY_GPU_ENABLED
 #define TRACY_CPU_ZONE(nameStr) ZoneScopedN(nameStr)
@@ -397,6 +398,42 @@ namespace gl3 {
                 }
         );
 
+        //BodyBodyPreCollision Callback
+        voxelPhysics->setBodyBodyPreSolveCallback(
+                [this](gl3::VoxelPhysicsBody* bodyA,
+                       gl3::VoxelPhysicsBody* bodyB,
+                       const glm::vec3& hitPos,
+                       const glm::vec3& hitNormal,
+                       float impactSpeed) -> bool
+                {
+                    CollisionDecision dA = decideCollisionResponse(*bodyA, bodyB, hitPos, hitNormal, impactSpeed);
+                    CollisionDecision dB = decideCollisionResponse(*bodyB, bodyA, hitPos, -hitNormal, impactSpeed);
+
+                    // apply stick immediately (pre-solve, before bounce)
+                    if (dA.stick) {
+                        bodyA->stuck = true;
+                        bodyA->stuckToBodyId = bodyB->id;
+                        bodyA->velocity = glm::vec3(0.0f);
+                        bodyA->angularVelocity = glm::vec3(0.0f);
+                        bodyA->stuckOffset = bodyA->position - bodyB->position;
+                    }
+                    if (dB.stick) {
+                        bodyB->stuck = true;
+                        bodyB->stuckToBodyId = bodyA->id;
+                        bodyB->velocity = glm::vec3(0.0f);
+                        bodyB->angularVelocity = glm::vec3(0.0f);
+                        bodyB->stuckOffset = bodyB->position - bodyA->position;
+                    }
+
+                    // If either side says no physics resolve, skip bounce
+                    if (dA.ignoreCollision || dB.ignoreCollision || !dA.resolvePhysics || !dB.resolvePhysics) {
+                        return false;
+                    }
+
+                    return true;
+                }
+        );
+
         enemyManager = std::make_unique<EnemyManager>();
         enemyManager->init(voxelPhysics.get(),chunkManager.get(), this);
 
@@ -552,6 +589,7 @@ namespace gl3 {
             case PreloadStage::Boot_Materials:
                 preloadStageName = "Loading materials...";
                 fillMaterialTable();
+                initMaterialRules();
                 preloadStage = PreloadStage::Boot_Assets;
                 return 0.40f;
 
@@ -1236,6 +1274,28 @@ namespace gl3 {
                                 float impactSpeed)
     {
         if (!body) return;
+
+        const CollisionDecision decision = decideCollisionResponse(*body, nullptr, hitPos, hitNormal, impactSpeed);
+        const auto& rule = materialRules[body->material];
+
+        if (decision.ignoreCollision) return;
+
+        if (decision.stick) {
+            body->stuck = true;
+            body->angularVelocity = glm::vec3(0.0f);
+            body->position = hitPos + hitNormal * body->radius;
+            //body->stuckOffset=glm::normalize(hitPos);
+
+            if (decision.convertWorld) {
+                float r = (rule.convertRadius > 0.0f) ? rule.convertRadius*glm::sqrt(body->radius) : (body->radius * 1.5f);
+                convertSolidWorldToMaterial(hitPos, r, body->material);
+            }
+            //body->velocity = glm::vec3(0.0f);
+
+            // optional: no crater if sticky material
+            return;
+        }
+
         std::mt19937 rng(std::random_device{}());
         std::uniform_real_distribution<float> dist(-0.5f, 0.5f);
 
@@ -1479,6 +1539,37 @@ namespace gl3 {
         glGenerateMipmap(GL_TEXTURE_2D);
         glBindTexture(GL_TEXTURE_2D, 0);
     }
+
+    void Game::initMaterialRules() {
+        materialRules.resize(64);
+
+        // default
+        for (auto& r : materialRules) r = {};
+
+        // examples
+        materialRules[0].mode = MaterialCollisionMode::DefaultBounce;
+        materialRules[1].mode = MaterialCollisionMode::DefaultBounce;
+        materialRules[2].mode = MaterialCollisionMode::DefaultBounce;
+        materialRules[3].mode = MaterialCollisionMode::DefaultBounce;
+        materialRules[4].mode = MaterialCollisionMode::DefaultBounce;
+        materialRules[5].mode = MaterialCollisionMode::DefaultBounce;
+        materialRules[6].mode = MaterialCollisionMode::DefaultBounce;
+
+
+        /*materialRules[3].mode = MaterialCollisionMode::PassThroughFirstBody;
+        materialRules[3].passThroughBodiesLeft = 1;
+
+        materialRules[4].mode = MaterialCollisionMode::CollidePlayerOnly;
+        materialRules[4].collideWorld = false;*/
+
+        materialRules[7].mode = MaterialCollisionMode::StickOnWorld;
+        materialRules[7].convertOnStick = true;
+        materialRules[7].convertRadius = 5.0f;
+
+
+        materialRules[9].mode = MaterialCollisionMode::DestroyTargetKeepFlying;
+        materialRules[9].collideWorld = false;
+    }
 ////----Debugging Code--------------------------------------------------------------------------------------------------------------------------
 
     void Game::DisplayFPSCount()
@@ -1509,7 +1600,7 @@ namespace gl3 {
                                 GLFW_KEY_SPACE, GLFW_KEY_LEFT_SHIFT, GLFW_KEY_LEFT_CONTROL,
                                 GLFW_KEY_TAB, GLFW_KEY_ESCAPE,GLFW_KEY_E,GLFW_KEY_R,GLFW_KEY_F,
                                 GLFW_KEY_1, GLFW_KEY_2, GLFW_KEY_3, GLFW_KEY_4, GLFW_KEY_5, GLFW_KEY_6,
-                                GLFW_KEY_T
+                                GLFW_KEY_T, GLFW_KEY_Q
                         });
 
         // Character movement
@@ -1534,6 +1625,8 @@ namespace gl3 {
 
         actions.addAction("Escape", {GLFW_KEY_ESCAPE});
         actions.addAction("CastSphere", {GLFW_KEY_E});
+        actions.addAction("CastFleshSphere", {GLFW_KEY_Q});
+
         actions.addAction("CastWall", {GLFW_KEY_R});
         actions.addAction("AirReset", {GLFW_KEY_F});
 
@@ -1547,6 +1640,69 @@ namespace gl3 {
         cameraRight   = glm::normalize(glm::cross(cameraForward, cameraUp));
     }
 
+    static inline int decideMaterial(int random)
+    {
+        if(random<35)
+        {
+            return 0;
+        } else if(random<45)
+        {
+            return 1;
+        }
+        else if(random<55)
+        {
+            return 2;
+        }
+        else if(random<65)
+        {
+            return 3;
+        }
+        else if(random<85)
+        {
+            return 4;
+        }
+        else if(random<90)
+        {
+            return 5;
+        }
+        else
+        {
+            return 7;
+        }
+    }
+
+    static inline float decideMassFromMaterial(int mat)
+    {
+
+        switch (mat) {
+            case 0:
+                return 1.0;
+                break;
+            case 1:
+                return 1.5;
+                break;
+            case 2:
+                return 2.0;
+                break;
+            case 3:
+                return 2.5;
+                break;
+            case 4:
+                return 3.0;
+                break;
+            case 5:
+                return 0.5;
+                break;
+            case 6:
+                return 4.0;
+                break;
+            default:
+                return 5.0;
+                break;
+        }
+    }
+
+
 
     void Game::generateChunks() {
         TRACY_CPU_ZONE("Game::generateChunks");
@@ -1559,7 +1715,7 @@ namespace gl3 {
         std::uniform_real_distribution<float> distPos(-worldMax * 0.9f, worldMax * 0.9f);
         std::uniform_real_distribution<float> distScale(0.5f, 3.0f);
         std::uniform_real_distribution<float> distColor(0.3f, 1.0f);
-        std::uniform_real_distribution<float> distMat(0.0f, 5.9f);
+        std::uniform_real_distribution<float> distMat(0.0f, 100.9f);
 
         std::vector<WorldPlanet> worldPlanets;
 
@@ -1575,7 +1731,7 @@ namespace gl3 {
         p.radius = distScale(rng) * CHUNK_SIZE;
         p.color = glm::vec3(distColor(rng), distColor(rng), distColor(rng));
         p.type = 1; // solid
-        p.material= 7;
+        p.material= 0;
         if(p.material==7)
         {
             p.color= glm::vec3(1.0, 0.0, 1.0);
@@ -1594,7 +1750,7 @@ namespace gl3 {
             p.radius = distScale(rng) * CHUNK_SIZE;
             p.color = glm::vec3(distColor(rng), distColor(rng), distColor(rng));
             p.type = 1; // solid
-            p.material=(int)distMat(rng);
+            p.material=decideMaterial((int)distMat(rng));
             //p.material=0;
             worldPlanets.push_back(p);
         }
@@ -1907,9 +2063,36 @@ namespace gl3 {
     void Game::onBodyBodyCollision(gl3::VoxelPhysicsBody *bodyA, gl3::VoxelPhysicsBody *bodyB, const glm::vec3 &hitPos,
                                    const glm::vec3 &hitNormal, float impactSpeed) {
 
-            std::cout<<"Enemy Callback entered:"<<"\n";
-            enemyManager->applyDamageSphere(bodyA->id,hitPos,bodyA->radius,impactSpeed);
-            enemyManager->applyDamageSphere(bodyB->id,hitPos,bodyA->radius,impactSpeed);
+            CollisionDecision dA = decideCollisionResponse(*bodyA, bodyB, hitPos, hitNormal, impactSpeed);
+            CollisionDecision dB = decideCollisionResponse(*bodyB, bodyA, hitPos, -hitNormal, impactSpeed);
+
+            if (dA.stick) {
+                bodyA->stuck = true;
+                bodyA->stuckToBodyId = bodyB->id;
+                bodyA->velocity = glm::vec3(0.0f);
+                bodyA->angularVelocity = glm::vec3(0.0f);
+                bodyA->stuckOffset = bodyA->position - bodyB->position; // one-time
+            }
+            if (dB.stick) {
+                bodyB->stuck = true;
+                bodyB->stuckToBodyId = bodyA->id;
+                bodyB->velocity = glm::vec3(0.0f);
+                bodyB->angularVelocity = glm::vec3(0.0f);
+                bodyB->stuckOffset = bodyB->position - bodyA->position; // one-time
+            }
+
+            if (dA.ignoreCollision && dB.ignoreCollision) return;
+
+            // optional per-side passthrough decrement
+            if (dA.ignoreCollision && bodyA->bodiesCanPassThrough > 0) bodyA->bodiesCanPassThrough--;
+            if (dB.ignoreCollision && bodyB->bodiesCanPassThrough > 0) bodyB->bodiesCanPassThrough--;
+
+            // only damage if not ignored
+            if (!dA.ignoreCollision) enemyManager->applyDamageSphere(bodyA->id, hitPos, bodyA->radius, impactSpeed);
+            if (!dB.ignoreCollision) enemyManager->applyDamageSphere(bodyB->id, hitPos, bodyA->radius, impactSpeed);
+
+            // if sticky collision happened, skip bounce-like extras
+            if (dA.stick || dB.stick) return;
 
 
             std::mt19937 rng(std::random_device{}());
@@ -2249,6 +2432,20 @@ if (actions["CastSphere"].wasJustReleased) {
     if (spellSystem)
         spellSystem->castSphere(spellCenter, spellRadius, activeSpellMat, spellStrength, getCameraFront(), VOXEL_SIZE*CHUNK_SIZE*3);
 }
+
+if (actions["CastFleshSphere"].wasJustReleased) {
+    std::cout << "Flesh Sphere Spell Triggered\n";
+    RayCastResult hit = rayCastFromCamera(5.0f);
+    glm::vec3 spellCenter = hit.hit ? hit.hitPosition :
+            (cameraPos + getCameraFront() * 35.0f);
+
+    // Cast spell with physics enabled
+    float spellRadius = 2.0f * VOXEL_SIZE;  // Adjust size
+    float spellStrength = 3.0f;              // Affects velocity
+
+    if (spellSystem)
+        spellSystem->castSphere(spellCenter, spellRadius, 7, spellStrength, getCameraFront(), VOXEL_SIZE*CHUNK_SIZE*3);
+    }
 
 if (actions["CastWall"].wasJustReleased) {
     std::cout << "Wall Spell Triggered" << "\n";
@@ -3989,6 +4186,148 @@ visibleSlots.clear();
                 inst.scale = std::sqrt((float)count) * vol.voxelSize * 0.75f;
                 out.push_back(inst);
             }
+        }
+    }
+
+    CollisionDecision Game::decideCollisionResponse(
+            const gl3::VoxelPhysicsBody& self,
+            const gl3::VoxelPhysicsBody* other,
+            const glm::vec3& hitPos,
+            const glm::vec3& hitNormal,
+            float impactSpeed) const
+    {
+        (void)hitPos; (void)hitNormal; (void)impactSpeed;
+
+        CollisionDecision d{};
+        const auto& rule = materialRules[self.material];
+
+        if (!other && !rule.collideWorld) { d.ignoreCollision = true; return d; }
+        if ( other && !rule.collideBodies) { d.ignoreCollision = true; return d; }
+
+        switch (rule.mode) {
+            case MaterialCollisionMode::StickOnWorld:
+                if (!other) { d.resolvePhysics = false; d.stick = true; }
+                break;
+
+            case MaterialCollisionMode::StickOnBody:
+                if (other) { d.resolvePhysics = false; d.stick = true; }
+                break;
+
+            case MaterialCollisionMode::StickOnAll:
+                d.resolvePhysics = false; d.stick = true;
+                break;
+
+            case MaterialCollisionMode::PassThroughFirstBody:
+                if (other && self.bodiesCanPassThrough > 0) d.ignoreCollision = true;
+                break;
+
+            case MaterialCollisionMode::CollidePlayerOnly:
+                if (other) d.ignoreCollision = true;
+                else d.ignoreCollision = true;
+                break;
+
+            case MaterialCollisionMode::DestroyTargetKeepFlying:
+                if (other) { d.destroyOther = true; d.keepFlying = true; d.resolvePhysics = false; }
+                break;
+
+            default: break;
+        }
+
+        // extra behavior layered on top
+        if (rule.convertOnStick && d.stick) {
+            if (other) d.convertOtherBody = true;
+            else       d.convertWorld = true;
+        }
+
+        return d;
+    }
+
+    void Game::convertWorldToMaterial(const glm::vec3& center, float radius, uint32_t material, float strength)
+    {
+        gl3::VoxelCarver::CarveParams p{};
+        p.radius = radius;
+        p.strength = glm::max(0.001f, strength);
+        p.targetType = 1;
+        p.material = material;
+        p.color = glm::vec3(0.8f); // or material color lookup
+        p.autoCreate = false;
+        p.additive = true;
+        p.densityThreshold = -0.5f;
+
+        auto sdfSphere = [center, radius](const glm::vec3& wp) -> float {
+            return radius - glm::distance(wp, center);
+        };
+
+        auto res = gl3::VoxelCarver::carveSDF(chunkManager.get(), center, sdfSphere, p);
+        for (const auto& c : res.modifiedChunks) {
+            markChunkModified(c);
+        }
+    }
+
+    void Game::convertSolidWorldToMaterial(const glm::vec3& center, float radius, uint32_t material)
+    {
+        if (!chunkManager) return;
+
+        const float r2 = radius * radius;
+
+        const int minCX = worldToChunk(center.x - radius);
+        const int maxCX = worldToChunk(center.x + radius);
+        const int minCY = worldToChunk(center.y - radius);
+        const int maxCY = worldToChunk(center.y + radius);
+        const int minCZ = worldToChunk(center.z - radius);
+        const int maxCZ = worldToChunk(center.z + radius);
+
+        std::vector<ChunkCoord> touched;
+        touched.reserve(64);
+
+        for (int cx = minCX; cx <= maxCX; ++cx)
+            for (int cy = minCY; cy <= maxCY; ++cy)
+                for (int cz = minCZ; cz <= maxCZ; ++cz)
+                {
+                    ChunkCoord cc{cx,cy,cz};
+                    Chunk* chunk = chunkManager->getChunk(cc);
+                    if (!chunk) continue;
+
+                    const glm::vec3 cmin = getChunkMin(cc);
+                    bool any = false;
+
+                    for (int vx = 0; vx <= CHUNK_SIZE; ++vx) {
+                        const float wx = cmin.x + vx * VOXEL_SIZE;
+                        const float dx = wx - center.x;
+                        const float dx2 = dx * dx;
+
+                        for (int vy = 0; vy <= CHUNK_SIZE; ++vy) {
+                            const float wy = cmin.y + vy * VOXEL_SIZE;
+                            const float dy = wy - center.y;
+                            const float dy2 = dy * dy;
+                            if (dx2 + dy2 > r2) continue;
+
+                            for (int vz = 0; vz <= CHUNK_SIZE; ++vz) {
+                                const float wz = cmin.z + vz * VOXEL_SIZE;
+                                const float dz = wz - center.z;
+                                const float d2 = dx2 + dy2 + dz * dz;
+                                if (d2 > r2) continue;
+
+                                Voxel& v = chunk->voxels[vx][vy][vz];
+
+                                // only convert existing solid/active voxels
+                                if (v.type > 0 && v.density > -0.5f) {
+                                    v.material = material;
+                                    any = true;
+                                }
+                            }
+                        }
+                    }
+
+                    if (any) {
+                        chunk->meshDirty = true;
+                        chunk->lightingDirty = true;
+                        touched.push_back(cc);
+                    }
+                }
+
+        for (const auto& c : touched) {
+            markChunkModified(c);
         }
     }
 }

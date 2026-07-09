@@ -39,6 +39,7 @@
 #include "MainThreadDispatcher.h"
 #include "rendering/ChunkRenderer.h"
 #include "Entities/WaveManager.h"
+#include "physics/MaterialCollisionPolicy.h"
 
 #undef NEAR
 #undef FAR
@@ -666,5 +667,14 @@ namespace gl3 {
         GLuint impactNoiseTexId = 0;
         void createImpactNoiseTexture();
         void initImpactInstancing();
+
+        CollisionDecision
+        decideCollisionResponse(const VoxelPhysicsBody &self, const VoxelPhysicsBody *other, const glm::vec3 &hitPos,
+                                const glm::vec3 &hitNormal, float impactSpeed) const;
+        std::vector<MaterialCollisionRule> materialRules;
+        void initMaterialRules();
+        void convertWorldToMaterial(const glm::vec3& center, float radius, uint32_t material, float strength);
+
+        void convertSolidWorldToMaterial(const glm::vec3 &center, float radius, uint32_t material);
     };
 }

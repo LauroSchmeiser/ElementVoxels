@@ -36,6 +36,11 @@ struct VoxelPhysicsBody {
     uint64_t id = 0;
 
     uint32_t material=0;
+    int bodiesCanPassThrough = 0;
+    bool stuck = false;
+    uint64_t stuckToBodyId = 0;
+    glm::vec3 stuckOffset;
+
     float impactVfxCooldown = 0.0f;
 };
 }

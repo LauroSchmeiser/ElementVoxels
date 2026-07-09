@@ -84,6 +84,12 @@ namespace gl3 {
                         }
                     }
         }
+        void setAllSolidToMaterial(uint32_t newMaterial) {
+            for (auto& c : corners) {
+                if (c.type > 0 && c.density > -1.0f) {
+                    c.material = newMaterial;
+                }
+            }
+        }
     };
-
 } // namespace gl3

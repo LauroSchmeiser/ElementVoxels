@@ -406,6 +406,24 @@ namespace gl3 {
                 continue;
             }
 
+            if (body->stuck) {
+                body->velocity = glm::vec3(0.0f);
+                body->angularVelocity = glm::vec3(0.0f);
+
+                if (body->stuckToBodyId != 0) {
+                    if (VoxelPhysicsBody* host = getBodyById(body->stuckToBodyId)) {
+                        body->position = host->position + body->stuckOffset;
+                    } else {
+                        body->stuck = false;
+                        body->stuckToBodyId = 0;
+                        body->stuckOffset = glm::vec3(0.0f);
+                    }
+                }
+
+                ++i;
+                continue;
+            }
+
             body->impactVfxCooldown = glm::max(0.0f, body->impactVfxCooldown - dt);
 
             body->velocity += gravity * dt;
@@ -465,6 +483,13 @@ namespace gl3 {
                             if (voxelCollisionCallback && impactSpeed > 1.0f * VOXEL_SIZE && body->impactVfxCooldown <= 0.0f) {
                                 body->impactVfxCooldown = impactVfxBaseCooldown;
                                 voxelCollisionCallback(body, contactPoint, n, impactSpeed);
+                                if (body->stuck) {
+                                    // callback decided this should stick: skip physical resolve/bounce
+                                    body->velocity = glm::vec3(0.0f);
+                                    body->angularVelocity = glm::vec3(0.0f);
+                                    hit = true;
+                                    break;
+                                }
                             }
 
                             // Re-test after callback may have modified the voxel world.
@@ -539,7 +564,17 @@ namespace gl3 {
                 glm::vec3 normal;
                 float penetration;
                 if (checkBodyBodyCollision(*bodyA, *bodyB, normal, penetration)) {
-                    resolveBodyBodyCollision(*bodyA, *bodyB, normal, penetration);
+                    glm::vec3 contactPoint = (bodyA->position + bodyB->position) * 0.5f;
+                    float impactSpeed = glm::length(bodyB->velocity - bodyA->velocity);
+
+                    bool doResolve = true;
+                    if (bodyBodyPreSolveCallback) {
+                        doResolve = bodyBodyPreSolveCallback(bodyA, bodyB, contactPoint, normal, impactSpeed);
+                    }
+
+                    if (doResolve) {
+                        resolveBodyBodyCollision(*bodyA, *bodyB, normal, penetration);
+                    }
                 }
             }
         }

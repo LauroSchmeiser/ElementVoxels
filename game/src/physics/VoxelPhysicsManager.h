@@ -25,6 +25,13 @@ namespace gl3 {
                 const glm::vec3& hitNormal,
                 float impactSpeed
         )>;
+        using BodyBodyPreSolveCallback = std::function<bool(
+                VoxelPhysicsBody* bodyA,
+                VoxelPhysicsBody* bodyB,
+                const glm::vec3& hitPos,
+                const glm::vec3& hitNormal,
+                float impactSpeed
+        )>;
 
 
         VoxelPhysicsManager(FixedGridChunkManager* chunkMgr)
@@ -42,6 +49,8 @@ namespace gl3 {
         void update(float dt, std::vector<uint64_t>& removedBodies);
         void setVoxelCollisionCallback(VoxelCollisionCallback cb) { voxelCollisionCallback = cb; }
         void setBodyBodyCollisionCallback(BodyBodyCollisionCallback cb) { bodyBodyCollisionCallback = cb; }
+        void setBodyBodyPreSolveCallback(BodyBodyPreSolveCallback cb) { bodyBodyPreSolveCallback = cb; }
+
         void removeBody(uint64_t id);
         const std::vector<std::unique_ptr<VoxelPhysicsBody>>& getBodies() const { return bodies; }
 
@@ -52,6 +61,8 @@ namespace gl3 {
         std::vector<std::unique_ptr<VoxelPhysicsBody>> bodies;
         VoxelCollisionCallback voxelCollisionCallback;
         BodyBodyCollisionCallback bodyBodyCollisionCallback;
+        BodyBodyPreSolveCallback bodyBodyPreSolveCallback;
+
 
         glm::vec3 gravity;
 
