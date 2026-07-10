@@ -463,6 +463,9 @@ namespace gl3 {
                     for (int s = 1; s <= steps; ++s) {
                         float t = (float)s / (float)steps;
                         glm::vec3 p = body->prevPosition + delta * t;
+                        if (bodyStepCallback) {
+                            bodyStepCallback(body, body->prevPosition, p);
+                        }
 
                         glm::vec3 n;
                         float pen;
@@ -483,16 +486,22 @@ namespace gl3 {
                             if (voxelCollisionCallback && impactSpeed > 1.0f * VOXEL_SIZE && body->impactVfxCooldown <= 0.0f) {
                                 body->impactVfxCooldown = impactVfxBaseCooldown;
                                 voxelCollisionCallback(body, contactPoint, n, impactSpeed);
-                                if (body->stuck) {
-                                    // callback decided this should stick: skip physical resolve/bounce
-                                    body->velocity = glm::vec3(0.0f);
-                                    body->angularVelocity = glm::vec3(0.0f);
-                                    hit = true;
-                                    break;
-                                }
                             }
 
-                            // Re-test after callback may have modified the voxel world.
+                            if (body->material == 9) {
+                                body->position = p;
+                                hit = false;
+                                continue;
+                            }
+
+                            if (body->stuck) {
+                                body->velocity = glm::vec3(0.0f);
+                                body->angularVelocity = glm::vec3(0.0f);
+                                hit = true;
+                                break;
+                            }
+
+                            // Re-test after callback may have modified world.
                             glm::vec3 newNormal;
                             float newPenetration;
                             if (sphereIntersectsWorld(*body, p, newNormal, newPenetration)) {
@@ -500,7 +509,6 @@ namespace gl3 {
                                 hit = true;
                                 break;
                             } else {
-                                // The callback carved/opened the surface, so allow the body to continue through.
                                 body->position = p;
                                 continue;
                             }

@@ -676,5 +676,92 @@ namespace gl3 {
         void convertWorldToMaterial(const glm::vec3& center, float radius, uint32_t material, float strength);
 
         void convertSolidWorldToMaterial(const glm::vec3 &center, float radius, uint32_t material);
+
+        void convertWorldToType(const glm::vec3 &center, float radius, uint32_t type, float strength);
+
+        void convertSolidWorldToType(const glm::vec3 &center, float radius, uint32_t type);
+
+        enum class PauseSubmenu {
+            Main,
+            Settings
+        };
+
+        void applyMaterial9BurnAlongSegment(const glm::vec3 &from, const glm::vec3 &to, float radius);
+
+    public:
+        enum class DisplayMode {
+            Fullscreen = 0,
+            Windowed = 1,
+            Borderless = 2
+        };
+
+        struct ResolutionOption {
+            int w, h;
+            const char* label;
+        };
+
+        struct GameSettings {
+            float sensitivity = 0.12f;
+            float masterVolume = 1.0f;
+            float sfxVolume = 1.0f;
+            float musicVolume = 0.8f;
+            float gamma = 2.2f;       // typical gamma baseline
+            float brightness = 1.0f;  // 1.0 neutral
+            DisplayMode displayMode = DisplayMode::Borderless;
+            int resolutionIndex = 3;
+        };
+
+        PauseSubmenu pauseSubmenu = PauseSubmenu::Main;
+        GameSettings settings;
+        std::vector<ResolutionOption> commonResolutions = {
+                {1280, 720,  "1280x720 (HD)"},
+                {1600, 900,  "1600x900"},
+                {1920, 1080, "1920x1080 (FHD)"},
+                {1920, 1200, "1920x1200 (HD)"},
+                {2560, 1440, "2560x1440 (QHD)"},
+                {3840, 2160, "3840x2160 (4K)"},
+                {2560, 1080, "2560x1080 (UW FHD)"},
+                {3440, 1440, "3440x1440 (UW QHD)"},
+                {3840, 1600, "3840x1600 (UW+)"},
+                {5120, 1440, "5120x1440 (Super UW)"}
+        };
+
+        void applyDisplaySettings();   // implement in Game.cpp
+        //void applyAudioSettings();     // hook to your audio engine
+        //void applyVisualSettings();    // gamma/brightness uniforms/postprocess
+        void pickResolutionFromNativeMonitor(bool applyNow);
+
+        int findBestResolutionIndexForMonitor(GLFWmonitor *monitor) const;
+
+        enum class CraftSpellType : uint8_t { Construct, Projectile };
+        enum class CraftForm : uint8_t { Sphere, Wall };
+        enum class CraftMaterial : uint8_t { Rock=0, Flesh=7, Lava=9 };
+
+        struct SpellPreset {
+            std::string name = "New Spell";
+            CraftMaterial material = CraftMaterial::Rock;
+            CraftForm form = CraftForm::Sphere;
+            CraftSpellType spellType = CraftSpellType::Projectile;
+
+            float radius = 2.0f;      // for sphere
+            float width = 3.0f;       // for wall
+            float height = 2.0f;      // for wall
+            float thickness = 1.0f;   // for wall
+
+            float range = 35.0f;      // customizable
+
+            // derived stats (not directly editable)
+            float cooldown = 1.0f;
+            float materialCost = 10.0f;
+        };
+
+        std::array<SpellPreset, 3> spellPresets;
+        int activeSpellPresetIndex = 0;
+
+        const SpellPreset& getSpellPreset(int i) const { return spellPresets[i]; }
+        void recomputeSpellDerivedStats(SpellPreset& p);
+
+        SpellPreset& getSpellPreset(int i) { return spellPresets[i]; }
     };
+
 }

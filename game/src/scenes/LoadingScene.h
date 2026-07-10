@@ -14,6 +14,8 @@ namespace gl3 {
     private:
         float progress = 0.0f;
         double t = 0.0;
+        int selectedSlot = 0;
+        int selectedCategory = -1; // 0 material,1 form,2 size,3 range,4 type
     };
 
 } // namespace gl3

@@ -187,7 +187,8 @@ namespace gl3 {
 
         sceneManager.requestChange(SceneId::MainMenu);
         sceneManager.applyPendingChange();
-
+        applyDisplaySettings();
+        //pickResolutionFromNativeMonitor(true);
             }
 
 
@@ -431,6 +432,17 @@ namespace gl3 {
                     }
 
                     return true;
+                }
+        );
+
+        voxelPhysics->setBodyStepCallback(
+                [this](gl3::VoxelPhysicsBody* body, const glm::vec3& from, const glm::vec3& to)
+                {
+                    if (!body) return;
+                    if (body->material != 9) return;
+
+                    const float burnRadius = glm::max(body->radius * 1.5f, VOXEL_SIZE);
+                    applyMaterial9BurnAlongSegment(from, to, burnRadius);
                 }
         );
 
@@ -813,7 +825,7 @@ namespace gl3 {
             const ImVec2 center(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
 
             ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-            ImGui::SetNextWindowSize(ImVec2(420, 220), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(520, 420), ImGuiCond_Always);
 
             ImGuiWindowFlags flags =
                     ImGuiWindowFlags_NoResize |
@@ -821,41 +833,92 @@ namespace gl3 {
                     ImGuiWindowFlags_NoCollapse |
                     ImGuiWindowFlags_NoTitleBar;
 
-            ImGui::SetNextWindowBgAlpha(0.65f);
+            ImGui::SetNextWindowBgAlpha(0.80f);
 
             if (ImGui::Begin("PauseMenu", nullptr, flags))
             {
-                ImGui::SetWindowFontScale(2.0f);
-                ImGui::SetCursorPosY(18.0f);
-                ImGui::SetCursorPosX((420.0f - ImGui::CalcTextSize("Paused").x) * 0.5f);
-                ImGui::TextUnformatted("Paused");
-                ImGui::SetWindowFontScale(1.0f);
+                const ImVec2 btnSize(520.0f * 0.75f, 42.0f);
 
-                ImGui::Spacing();
-                ImGui::Separator();
-                ImGui::Spacing();
+                if (pauseSubmenu == PauseSubmenu::Main)
+                {
+                    ImGui::SetWindowFontScale(1.8f);
+                    ImGui::SetCursorPosY(14.0f);
+                    ImGui::SetCursorPosX((520.0f - ImGui::CalcTextSize("Paused").x) * 0.5f);
+                    ImGui::TextUnformatted("Paused");
+                    ImGui::SetWindowFontScale(1.0f);
 
-                const ImVec2 btnSize(420.0f * 0.75f, 44.0f);
-                ImGui::SetCursorPosX((420.0f - btnSize.x) * 0.5f);
+                    ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
 
-                if (ImGui::Button("Resume", btnSize)) {
-                    setPaused(false);
+                    ImGui::SetCursorPosX((520.0f - btnSize.x) * 0.5f);
+                    if (ImGui::Button("Resume", btnSize)) setPaused(false);
+
+                    ImGui::Spacing();
+                    ImGui::SetCursorPosX((520.0f - btnSize.x) * 0.5f);
+                    if (ImGui::Button("Settings", btnSize)) pauseSubmenu = PauseSubmenu::Settings;
+
+                    ImGui::Spacing();
+                    ImGui::SetCursorPosX((520.0f - btnSize.x) * 0.5f);
+                    if (ImGui::Button("Back to Main Menu", btnSize)) {
+                        setPaused(false);
+                        requestSceneChange(SceneId::MainMenu);
+                    }
+
+                    ImGui::Spacing();
+                    ImGui::SetCursorPosX((520.0f - btnSize.x) * 0.5f);
+                    if (ImGui::Button("Exit to Desktop", btnSize)) {
+                        glfwSetWindowShouldClose(getWindow(), true);
+                    }
+                }
+                else // Settings submenu
+                {
+                    ImGui::SetWindowFontScale(1.4f);
+                    ImGui::TextUnformatted("Settings");
+                    ImGui::SetWindowFontScale(1.0f);
+                    ImGui::Separator();
+
+                    bool changed = false;
+
+                    changed |= ImGui::SliderFloat("Mouse Sensitivity", &settings.sensitivity, 0.01f, 1.0f, "%.3f");
+                    changed |= ImGui::SliderFloat("Master Volume", &settings.masterVolume, 0.0f, 1.0f, "%.2f");
+                    changed |= ImGui::SliderFloat("SFX Volume", &settings.sfxVolume, 0.0f, 1.0f, "%.2f");
+                    changed |= ImGui::SliderFloat("Music Volume", &settings.musicVolume, 0.0f, 1.0f, "%.2f");
+                    changed |= ImGui::SliderFloat("Gamma", &settings.gamma, 1.6f, 3.0f, "%.2f");
+                    changed |= ImGui::SliderFloat("Brightness", &settings.brightness, 0.5f, 1.5f, "%.2f");
+
+                    const char* modeLabels[] = {"Fullscreen", "Windowed", "Borderless"};
+                    int mode = static_cast<int>(settings.displayMode);
+                    if (ImGui::Combo("Display Mode", &mode, modeLabels, IM_ARRAYSIZE(modeLabels))) {
+                        settings.displayMode = static_cast<DisplayMode>(mode);
+                        changed = true;
+                    }
+
+                    std::vector<const char*> resLabels;
+                    resLabels.reserve(commonResolutions.size());
+                    for (auto& r : commonResolutions) resLabels.push_back(r.label);
+
+                    if (ImGui::Combo("Resolution", &settings.resolutionIndex, resLabels.data(), (int)resLabels.size())) {
+                        changed = true;
+                    }
+                    if (ImGui::Button("Set native display resolution.", ImVec2(180, 38))) {
+                        pickResolutionFromNativeMonitor(false);
+                    }
+
+                    ImGui::Spacing();
+                    //if (changed) {
+                     //   applyAudioSettings();
+                     //   applyVisualSettings();
+                    //}
+
+                    ImGui::Spacing();
+                    if (ImGui::Button("Apply Display", ImVec2(180, 38))) {
+                        applyDisplaySettings();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Back", ImVec2(140, 38))) {
+                        pauseSubmenu = PauseSubmenu::Main;
+                    }
                 }
 
-                ImGui::Spacing();
-                ImGui::SetCursorPosX((420.0f - btnSize.x) * 0.5f);
-
-                if (ImGui::Button("Back to Main Menu", btnSize)) {
-                    setPaused(false);
-                    requestSceneChange(SceneId::MainMenu);
-                }
-
-                ImGui::Spacing();
-                ImGui::SetCursorPosX((420.0f - btnSize.x) * 0.5f);
-
-                if (ImGui::Button("Exit to Desktop", btnSize)) {
-                    glfwSetWindowShouldClose(getWindow(), true);
-                }
                 ImGui::End();
             }
         }
@@ -1290,11 +1353,13 @@ namespace gl3 {
                 float r = (rule.convertRadius > 0.0f) ? rule.convertRadius*glm::sqrt(body->radius) : (body->radius * 1.5f);
                 convertSolidWorldToMaterial(hitPos, r, body->material);
             }
-            //body->velocity = glm::vec3(0.0f);
 
-            // optional: no crater if sticky material
             return;
         }
+        /*if (decision.destroyOther) {
+            convertSolidWorldToType(hitPos, (body->radius * 1.5f), 0);
+            return;
+        }*/
 
         std::mt19937 rng(std::random_device{}());
         std::uniform_real_distribution<float> dist(-0.5f, 0.5f);
@@ -1568,7 +1633,13 @@ namespace gl3 {
 
 
         materialRules[9].mode = MaterialCollisionMode::DestroyTargetKeepFlying;
-        materialRules[9].collideWorld = false;
+        materialRules[9].collideWorld = true;
+        materialRules[9].collideBodies = true;
+
+        materialRules[9].destroyWorldOnImpact = true;
+        materialRules[9].destroyWorldSolidOnly = true;
+        materialRules[9].destroyWorldToType = 0;
+        materialRules[9].destroyWorldRadius = 1.5f;
     }
 ////----Debugging Code--------------------------------------------------------------------------------------------------------------------------
 
@@ -1600,7 +1671,7 @@ namespace gl3 {
                                 GLFW_KEY_SPACE, GLFW_KEY_LEFT_SHIFT, GLFW_KEY_LEFT_CONTROL,
                                 GLFW_KEY_TAB, GLFW_KEY_ESCAPE,GLFW_KEY_E,GLFW_KEY_R,GLFW_KEY_F,
                                 GLFW_KEY_1, GLFW_KEY_2, GLFW_KEY_3, GLFW_KEY_4, GLFW_KEY_5, GLFW_KEY_6,
-                                GLFW_KEY_T, GLFW_KEY_Q
+                                GLFW_KEY_T, GLFW_KEY_Q, GLFW_KEY_I
                         });
 
         // Character movement
@@ -1626,6 +1697,8 @@ namespace gl3 {
         actions.addAction("Escape", {GLFW_KEY_ESCAPE});
         actions.addAction("CastSphere", {GLFW_KEY_E});
         actions.addAction("CastFleshSphere", {GLFW_KEY_Q});
+        actions.addAction("CastFireSphere", {GLFW_KEY_I});
+
 
         actions.addAction("CastWall", {GLFW_KEY_R});
         actions.addAction("AirReset", {GLFW_KEY_F});
@@ -2060,89 +2133,77 @@ namespace gl3 {
         }
     }
 
-    void Game::onBodyBodyCollision(gl3::VoxelPhysicsBody *bodyA, gl3::VoxelPhysicsBody *bodyB, const glm::vec3 &hitPos,
-                                   const glm::vec3 &hitNormal, float impactSpeed) {
+    void Game::onBodyBodyCollision(gl3::VoxelPhysicsBody* bodyA,
+                                   gl3::VoxelPhysicsBody* bodyB,
+                                   const glm::vec3& hitPos,
+                                   const glm::vec3& hitNormal,
+                                   float impactSpeed)
+    {
+        if (!bodyA || !bodyB) return;
 
-            CollisionDecision dA = decideCollisionResponse(*bodyA, bodyB, hitPos, hitNormal, impactSpeed);
-            CollisionDecision dB = decideCollisionResponse(*bodyB, bodyA, hitPos, -hitNormal, impactSpeed);
+        CollisionDecision dA = decideCollisionResponse(*bodyA, bodyB, hitPos,  hitNormal,  impactSpeed);
+        CollisionDecision dB = decideCollisionResponse(*bodyB, bodyA, hitPos, -hitNormal, impactSpeed);
 
-            if (dA.stick) {
-                bodyA->stuck = true;
-                bodyA->stuckToBodyId = bodyB->id;
-                bodyA->velocity = glm::vec3(0.0f);
-                bodyA->angularVelocity = glm::vec3(0.0f);
-                bodyA->stuckOffset = bodyA->position - bodyB->position; // one-time
-            }
-            if (dB.stick) {
-                bodyB->stuck = true;
-                bodyB->stuckToBodyId = bodyA->id;
-                bodyB->velocity = glm::vec3(0.0f);
-                bodyB->angularVelocity = glm::vec3(0.0f);
-                bodyB->stuckOffset = bodyB->position - bodyA->position; // one-time
-            }
+        if (dA.stick) {
+            bodyA->stuck = true;
+            bodyA->stuckToBodyId = bodyB->id;
+            bodyA->velocity = glm::vec3(0.0f);
+            bodyA->angularVelocity = glm::vec3(0.0f);
+            bodyA->stuckOffset = bodyA->position - bodyB->position;
+        }
+        if (dB.stick) {
+            bodyB->stuck = true;
+            bodyB->stuckToBodyId = bodyA->id;
+            bodyB->velocity = glm::vec3(0.0f);
+            bodyB->angularVelocity = glm::vec3(0.0f);
+            bodyB->stuckOffset = bodyB->position - bodyA->position;
+        }
 
-            if (dA.ignoreCollision && dB.ignoreCollision) return;
+        if (dA.ignoreCollision && dB.ignoreCollision) return;
 
-            // optional per-side passthrough decrement
-            if (dA.ignoreCollision && bodyA->bodiesCanPassThrough > 0) bodyA->bodiesCanPassThrough--;
-            if (dB.ignoreCollision && bodyB->bodiesCanPassThrough > 0) bodyB->bodiesCanPassThrough--;
+        if (dA.ignoreCollision && bodyA->bodiesCanPassThrough > 0) bodyA->bodiesCanPassThrough--;
+        if (dB.ignoreCollision && bodyB->bodiesCanPassThrough > 0) bodyB->bodiesCanPassThrough--;
 
-            // only damage if not ignored
-            if (!dA.ignoreCollision) enemyManager->applyDamageSphere(bodyA->id, hitPos, bodyA->radius, impactSpeed);
-            if (!dB.ignoreCollision) enemyManager->applyDamageSphere(bodyB->id, hitPos, bodyA->radius, impactSpeed);
+        auto applyDamageToOneBody = [&](gl3::VoxelPhysicsBody* self,
+                                        gl3::VoxelPhysicsBody* other,
+                                        bool ignoreThisSide)
+        {
+            if (!self || ignoreThisSide) return;
 
-            // if sticky collision happened, skip bounce-like extras
-            if (dA.stick || dB.stick) return;
-
-
-            std::mt19937 rng(std::random_device{}());
-            std::uniform_real_distribution<float> dist(-0.5f, 0.5f);
-            uint64_t spellId = (uint64_t)(uintptr_t)bodyA->userData;
-            if (auto* spell = spellSystem->findSpellById(spellId)) {
-                float mass = spell->physicsBody ? spell->physicsBody->mass : 1.0f;
-
-                float craterStrength = glm::sqrt((impactSpeed * mass)) / 30.0f;
-                float spellRadius = glm::max(spell->physicsBody->radius, 0.001f);
-
-                //createCraterAtPosition(hitPos, craterStrength, spellRadius);
-
-                // Estimate removed voxels from crater strength
-                //float removedVoxelEstimate = craterStrength * 40.0f;
-
-                glm::vec3 tint = spell->formationColor;
-                if (glm::length(tint) < 0.001f) {
-                    tint = glm::vec3(0.45f, 0.45f, 0.45f);
-                }
-                glm::vec3 variance = glm::vec3(dist(rng));
-                tint+=(spell->formationColor/glm::vec3(10));
-                tint+=variance;
-
-                spawnImpactEffect(hitPos, hitNormal, impactSpeed, 100, tint);
-            }
-            spellId = (uint64_t)(uintptr_t)bodyB->userData;
-            if (auto* spell = spellSystem->findSpellById(spellId)) {
-                float mass = spell->physicsBody ? spell->physicsBody->mass : 1.0f;
-
-                float craterStrength = glm::sqrt((impactSpeed * mass)) / 30.0f;
-                float spellRadius = glm::sqrt(glm::max(spell->physicsBody->radius, 0.001f));
-
-               // createCraterAtPosition(hitPos, craterStrength, spellRadius);
-
-                // Estimate removed voxels from crater strength
-               // float removedVoxelEstimate = craterStrength * 40.0f;
-
-                glm::vec3 tint = spell->formationColor;
-                if (glm::length(tint) < 0.001f) {
-                    tint = glm::vec3(0.45f, 0.45f, 0.45f);
-                }
-                glm::vec3 variance = glm::vec3(dist(rng));
-                tint+=(spell->formationColor/glm::vec3(10));
-                tint+=variance;
-
-                spawnImpactEffect(hitPos, hitNormal, impactSpeed, 100, tint);
+            // 1) Enemy damage path
+            if (enemyManager) {
+                enemyManager->applyDamageSphere(self->id, hitPos, self->radius, impactSpeed);
             }
 
-}
+            // 2) Spell/destructible damage path
+            SpellEffect* spell = self->ownerSpell;
+            if (!spell) {
+                uint64_t spellId = (uint64_t)(uintptr_t)self->userData;
+                spell = spellSystem ? spellSystem->findSpellById(spellId) : nullptr;
+            }
+
+            if (spell) {
+                // Convert world hit to local spell volume and carve damage
+                const glm::vec3 localHit = spell->destruct.worldToLocal(hitPos, spell->center);
+
+                // Tune these two to taste:
+                const float damageRadius   = glm::max(self->radius * 0.35f, 1.5f * VOXEL_SIZE);
+                const float damageStrength = glm::clamp(impactSpeed * 0.05f, 0.5f, 8.0f);
+
+                spell->destruct.volume.carveSphere(localHit, damageRadius, damageStrength);
+                spell->destruct.meshDirty = true; // ensure remesh
+            }
+        };
+
+        // Apply to BOTH sides
+        applyDamageToOneBody(bodyA, bodyB, dA.ignoreCollision);
+        applyDamageToOneBody(bodyB, bodyA, dB.ignoreCollision);
+
+        if (dA.stick || dB.stick) return;
+
+        // keep your existing impact VFX (optional)
+        spawnImpactEffect(hitPos, hitNormal, impactSpeed, 100.0f, glm::vec3(0.45f));
+    }
 
 void Game::updateDeltaTime() {
 float frameTime = glfwGetTime();
@@ -2346,8 +2407,8 @@ if(getPlayerHealth()<=0)
         if(spell.physicsBody&&spell.physicsBody->material==9) {
             glm::vec3 dist = (cameraPos - spell.physicsBody->position);
             float distsq = glm::sqrt(dist.x * dist.x + dist.y * dist.y + dist.z * dist.z);
-            if (distsq < spell.radius * spell.radius) {
-                setPlayerHealth(getPlayerHealth() - 0.025f * distsq);
+            if (distsq < (spell.radius * spell.radius)) {
+                setPlayerHealth(getPlayerHealth() - 0.0125f * distsq);
             }
         }
     }
@@ -2445,6 +2506,20 @@ if (actions["CastFleshSphere"].wasJustReleased) {
 
     if (spellSystem)
         spellSystem->castSphere(spellCenter, spellRadius, 7, spellStrength, getCameraFront(), VOXEL_SIZE*CHUNK_SIZE*3);
+    }
+
+    if (actions["CastFireSphere"].wasJustReleased) {
+        std::cout << "Fire Sphere Spell Triggered\n";
+        RayCastResult hit = rayCastFromCamera(5.0f);
+        glm::vec3 spellCenter = hit.hit ? hit.hitPosition :
+                                (cameraPos + getCameraFront() * 35.0f);
+
+        // Cast spell with physics enabled
+        float spellRadius = 2.0f * VOXEL_SIZE;  // Adjust size
+        float spellStrength = 1.0f;              // Affects velocity
+
+        if (spellSystem)
+            spellSystem->castSphere(spellCenter, spellRadius, 9, spellStrength, getCameraFront(), VOXEL_SIZE*CHUNK_SIZE*30);
     }
 
 if (actions["CastWall"].wasJustReleased) {
@@ -2953,7 +3028,10 @@ visibleSlots.clear();
         for (const auto& spell : spellSystem->spells()) {
             if (!spell.isPhysicsEnabled || !spell.physicsBody|| spell.physicsBodyId == 0) continue;
             auto* body = voxelPhysics->getBodyById(spell.physicsBodyId);
-            if (!body) continue;
+            if (!body || !body->renderMesh) continue;
+
+            const auto& mesh = *body->renderMesh;
+            if (!mesh.isValid || mesh.vertexCount == 0) continue;
 
             int currentChunkX = worldToChunk(spell.physicsBody->position.x);
             int currentChunkY = worldToChunk(spell.physicsBody->position.y);
@@ -2984,11 +3062,9 @@ visibleSlots.clear();
             } else {
                 voxelShader->setInt("uBurnEnabled", 0);
             }
-            // Draw mesh
-            if (!spell.destruct.mesh.isValid || spell.destruct.mesh.vertexCount == 0) continue;
 
-            glBindVertexArray(spell.destruct.mesh.vao);
-            glDrawArrays(GL_TRIANGLES, 0, spell.destruct.mesh.vertexCount);
+            glBindVertexArray(mesh.vao);
+            glDrawArrays(GL_TRIANGLES, 0, mesh.vertexCount);
             glBindVertexArray(0);
         }
     }
@@ -4218,22 +4294,37 @@ visibleSlots.clear();
                 break;
 
             case MaterialCollisionMode::PassThroughFirstBody:
-                if (other && self.bodiesCanPassThrough > 0) d.ignoreCollision = true;
+                if (other && self.bodiesCanPassThrough > 0) {
+                    d.ignoreCollision = true;
+                    d.keepFlying = true;
+                    d.resolvePhysics = false;
+                }
                 break;
 
             case MaterialCollisionMode::CollidePlayerOnly:
-                if (other) d.ignoreCollision = true;
-                else d.ignoreCollision = true;
+                d.ignoreCollision = true;
                 break;
 
             case MaterialCollisionMode::DestroyTargetKeepFlying:
-                if (other) { d.destroyOther = true; d.keepFlying = true; d.resolvePhysics = false; }
+                if (!other) {
+                    d.resolvePhysics = false;
+                    d.keepFlying = true;
+                    d.destroyWorld = true;
+                    d.destroyWorldSolidOnly = true;
+                    d.worldDestroyType = 0;
+                    d.worldDestroyRadius = 2;
+                } else {
+                    d.destroyOther = true;
+                    d.keepFlying = true;
+                    d.resolvePhysics = false;
+                }
                 break;
 
-            default: break;
+            default:
+                break;
         }
 
-        // extra behavior layered on top
+        // layered behavior
         if (rule.convertOnStick && d.stick) {
             if (other) d.convertOtherBody = true;
             else       d.convertWorld = true;
@@ -4311,7 +4402,7 @@ visibleSlots.clear();
                                 Voxel& v = chunk->voxels[vx][vy][vz];
 
                                 // only convert existing solid/active voxels
-                                if (v.type > 0 && v.density > -0.5f) {
+                                if (v.type > 0 && v.isSolid()) {
                                     v.material = material;
                                     any = true;
                                 }
@@ -4330,4 +4421,271 @@ visibleSlots.clear();
             markChunkModified(c);
         }
     }
+
+    void Game::convertWorldToType(const glm::vec3& center, float radius, uint32_t type, float strength)
+    {
+        if (!chunkManager) return;
+
+        const float r2 = radius * radius;
+
+        const int minCX = worldToChunk(center.x - radius);
+        const int maxCX = worldToChunk(center.x + radius);
+        const int minCY = worldToChunk(center.y - radius);
+        const int maxCY = worldToChunk(center.y + radius);
+        const int minCZ = worldToChunk(center.z - radius);
+        const int maxCZ = worldToChunk(center.z + radius);
+
+        std::vector<ChunkCoord> touched;
+        touched.reserve(64);
+
+        // optional use of strength: if <=0, do nothing
+        if (strength <= 0.0f) return;
+
+        for (int cx = minCX; cx <= maxCX; ++cx)
+            for (int cy = minCY; cy <= maxCY; ++cy)
+                for (int cz = minCZ; cz <= maxCZ; ++cz)
+                {
+                    ChunkCoord cc{cx,cy,cz};
+                    Chunk* chunk = chunkManager->getChunk(cc);
+                    if (!chunk) continue;
+
+                    const glm::vec3 cmin = getChunkMin(cc);
+                    bool any = false;
+
+                    for (int vx = 0; vx <= CHUNK_SIZE; ++vx) {
+                        const float wx = cmin.x + vx * VOXEL_SIZE;
+                        const float dx = wx - center.x;
+                        const float dx2 = dx * dx;
+
+                        for (int vy = 0; vy <= CHUNK_SIZE; ++vy) {
+                            const float wy = cmin.y + vy * VOXEL_SIZE;
+                            const float dy = wy - center.y;
+                            const float dy2 = dy * dy;
+                            if (dx2 + dy2 > r2) continue;
+
+                            for (int vz = 0; vz <= CHUNK_SIZE; ++vz) {
+                                const float wz = cmin.z + vz * VOXEL_SIZE;
+                                const float dz = wz - center.z;
+                                const float d2 = dx2 + dy2 + dz * dz;
+                                if (d2 > r2) continue;
+
+                                Voxel& v = chunk->voxels[vx][vy][vz];
+
+                                // convert all voxels in sphere (world-to-type)
+                                v.type = static_cast<uint8_t>(type);
+
+                                // keep density coherent if setting to empty
+                                if (v.type == 0) {
+                                    v.density = glm::min(v.density, -1.0f);
+                                }
+                                any = true;
+                            }
+                        }
+                    }
+
+                    if (any) {
+                        chunk->meshDirty = true;
+                        chunk->lightingDirty = true;
+                        touched.push_back(cc);
+                    }
+                }
+
+        for (const auto& c : touched) {
+            markChunkModified(c);
+        }
+    }
+
+    void Game::convertSolidWorldToType(const glm::vec3& center, float radius, uint32_t type)
+    {
+        if (!chunkManager) return;
+
+        const float r2 = radius * radius;
+
+        const int minCX = worldToChunk(center.x - radius);
+        const int maxCX = worldToChunk(center.x + radius);
+        const int minCY = worldToChunk(center.y - radius);
+        const int maxCY = worldToChunk(center.y + radius);
+        const int minCZ = worldToChunk(center.z - radius);
+        const int maxCZ = worldToChunk(center.z + radius);
+
+        std::vector<ChunkCoord> touched;
+        touched.reserve(64);
+
+        for (int cx = minCX; cx <= maxCX; ++cx)
+            for (int cy = minCY; cy <= maxCY; ++cy)
+                for (int cz = minCZ; cz <= maxCZ; ++cz)
+                {
+                    ChunkCoord cc{cx,cy,cz};
+                    Chunk* chunk = chunkManager->getChunk(cc);
+                    if (!chunk) continue;
+
+                    const glm::vec3 cmin = getChunkMin(cc);
+                    bool any = false;
+
+                    for (int vx = 0; vx <= CHUNK_SIZE; ++vx) {
+                        const float wx = cmin.x + vx * VOXEL_SIZE;
+                        const float dx = wx - center.x;
+                        const float dx2 = dx * dx;
+
+                        for (int vy = 0; vy <= CHUNK_SIZE; ++vy) {
+                            const float wy = cmin.y + vy * VOXEL_SIZE;
+                            const float dy = wy - center.y;
+                            const float dy2 = dy * dy;
+                            if (dx2 + dy2 > r2) continue;
+
+                            for (int vz = 0; vz <= CHUNK_SIZE; ++vz) {
+                                const float wz = cmin.z + vz * VOXEL_SIZE;
+                                const float dz = wz - center.z;
+                                const float d2 = dx2 + dy2 + dz * dz;
+                                if (d2 > r2) continue;
+
+                                Voxel& v = chunk->voxels[vx][vy][vz];
+
+                                // inside convertSolidWorldToType loop
+                                if (v.isSolid()) {
+                                    v.type = static_cast<uint8_t>(type);
+                                    if (v.type == 0) {
+                                        v.density = glm::min(v.density, -1.0f);
+                                    }
+                                    any = true;
+                                }
+                            }
+                        }
+                    }
+
+                    if (any) {
+                        chunk->meshDirty = true;
+                        chunk->lightingDirty = true;
+                        touched.push_back(cc);
+                    }
+                }
+
+        for (const auto& c : touched) {
+            markChunkModified(c);
+        }
+    }
+
+    void Game::applyDisplaySettings()
+    {
+        GLFWwindow* win = getWindow();
+        if (!win) return;
+
+        const auto& res = commonResolutions[std::clamp(
+                settings.resolutionIndex, 0, (int)commonResolutions.size() - 1)];
+
+        GLFWmonitor* primary = glfwGetPrimaryMonitor();
+        const GLFWvidmode* vm = glfwGetVideoMode(primary);
+
+        switch (settings.displayMode)
+        {
+            case DisplayMode::Fullscreen:
+                glfwSetWindowAttrib(win, GLFW_DECORATED, GLFW_TRUE);
+                glfwSetWindowMonitor(win, primary, 0, 0, res.w, res.h, vm ? vm->refreshRate : GLFW_DONT_CARE);
+                break;
+
+            case DisplayMode::Windowed:
+                glfwSetWindowMonitor(win, nullptr, 100, 100, res.w, res.h, GLFW_DONT_CARE);
+                glfwSetWindowAttrib(win, GLFW_DECORATED, GLFW_TRUE);
+                break;
+
+            case DisplayMode::Borderless:
+                // Borderless window at monitor native size
+                glfwSetWindowMonitor(win, nullptr, 0, 0, vm->width, vm->height, GLFW_DONT_CARE);
+                glfwSetWindowAttrib(win, GLFW_DECORATED, GLFW_FALSE);
+                break;
+        }
+    }
+    int Game::findBestResolutionIndexForMonitor(GLFWmonitor* monitor) const
+    {
+        if (commonResolutions.empty()) return 0;
+        if (!monitor) monitor = glfwGetPrimaryMonitor();
+        if (!monitor) return 0;
+
+        const GLFWvidmode* vm = glfwGetVideoMode(monitor);
+        if (!vm) return 0;
+
+        const int targetW = vm->width;
+        const int targetH = vm->height;
+        const float targetAspect = (targetH > 0) ? (float)targetW / (float)targetH : 16.0f / 9.0f;
+
+        int bestIdx = 0;
+        long long bestScore = std::numeric_limits<long long>::max();
+
+        for (int i = 0; i < (int)commonResolutions.size(); ++i) {
+            const auto& r = commonResolutions[i];
+
+            const int dw = r.w - targetW;
+            const int dh = r.h - targetH;
+            const long long pixelDelta = 1LL * dw * dw + 1LL * dh * dh;
+
+            const float aspect = (r.h > 0) ? (float)r.w / (float)r.h : targetAspect;
+            const float aspectDiff = std::abs(aspect - targetAspect);
+
+            // Weight aspect mismatch strongly so ultrawide chooses ultrawide entries
+            const long long aspectPenalty = (long long)(aspectDiff * 1000000.0f);
+
+            const long long score = pixelDelta + aspectPenalty;
+            if (score < bestScore) {
+                bestScore = score;
+                bestIdx = i;
+            }
+        }
+
+        return bestIdx;
+    }
+
+    void Game::pickResolutionFromNativeMonitor(bool applyNow)
+    {
+        GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+        settings.resolutionIndex = findBestResolutionIndexForMonitor(monitor);
+
+        if (applyNow) {
+            applyDisplaySettings();
+        }
+    }
+
+    void Game::applyMaterial9BurnAlongSegment(const glm::vec3& from, const glm::vec3& to, float radius)
+    {
+        if (!chunkManager) return;
+
+        glm::vec3 d = to - from;
+        float len = glm::length(d);
+        if (len < 1e-4f) {
+            convertSolidWorldToType(from, radius, 0);
+            return;
+        }
+
+        glm::vec3 dir = d / len;
+
+        // step <= half voxel for contiguous burn tunnel
+        const float step = glm::max(VOXEL_SIZE * 0.5f, radius * 0.35f);
+        int n = glm::max(1, (int)std::ceil(len / step));
+
+        for (int i = 0; i <= n; ++i) {
+            float t = (float)i / (float)n;
+            glm::vec3 p = from + dir * (len * t);
+            convertSolidWorldToType(p, radius, 0);
+        }
+    }
+
+    void Game::recomputeSpellDerivedStats(SpellPreset& p)
+    {
+        float sizeFactor = (p.form == CraftForm::Sphere)
+                           ? p.radius
+                           : (p.width * 0.35f + p.height * 0.35f + p.thickness * 0.30f);
+
+        float materialFactor = 1.0f;
+        switch (p.material) {
+            case CraftMaterial::Rock:  materialFactor = 1.0f; break;
+            case CraftMaterial::Flesh: materialFactor = 0.9f; break;
+            case CraftMaterial::Lava:  materialFactor = 1.4f; break;
+        }
+
+        float typeFactor = (p.spellType == CraftSpellType::Projectile) ? 1.15f : 0.95f;
+        float rangeFactor = glm::clamp(p.range / 35.0f, 0.5f, 2.0f);
+
+        p.cooldown = glm::clamp(0.35f + sizeFactor * 0.22f * materialFactor * typeFactor, 0.2f, 8.0f);
+        p.materialCost = glm::clamp(4.0f + sizeFactor * 6.0f * materialFactor * rangeFactor, 1.0f, 999.0f);
+    }
+
 }

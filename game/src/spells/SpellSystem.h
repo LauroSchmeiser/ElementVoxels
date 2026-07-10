@@ -204,6 +204,8 @@ namespace gl3 {
         inline bool isShuttingDown() const noexcept {
             return shuttingDown.load(std::memory_order_relaxed);
         }
+
+        SpellEffect* spellFromBody(VoxelPhysicsBody* body);
     };
 
 }

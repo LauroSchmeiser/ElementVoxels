@@ -24,6 +24,12 @@ struct MaterialCollisionRule {
 
     bool convertOnStick = false;
     float convertRadius = 0.0f;      // world units
+
+    // NEW: world-destruction behavior
+    bool destroyWorldOnImpact = false;
+    bool destroyWorldSolidOnly = true;
+    uint8_t destroyWorldToType = 0;   // 0 == empty/air by your convention
+    float destroyWorldRadius = 0.0f;  // if <= 0, caller picks fallback
 };
 
 struct CollisionDecision {
@@ -36,4 +42,10 @@ struct CollisionDecision {
 
     bool convertWorld = false;       // convert world voxels at hit
     bool convertOtherBody = false;
+
+    // NEW: explicit world destruction request
+    bool destroyWorld = false;
+    bool destroyWorldSolidOnly = true;
+    uint8_t worldDestroyType = 0;
+    float worldDestroyRadius = 0.0f;
 };

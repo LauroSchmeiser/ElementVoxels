@@ -32,6 +32,11 @@ namespace gl3 {
                 const glm::vec3& hitNormal,
                 float impactSpeed
         )>;
+        using BodyStepCallback = std::function<void(
+                VoxelPhysicsBody* body,
+                const glm::vec3& from,
+                const glm::vec3& to
+        )>;
 
 
         VoxelPhysicsManager(FixedGridChunkManager* chunkMgr)
@@ -50,7 +55,7 @@ namespace gl3 {
         void setVoxelCollisionCallback(VoxelCollisionCallback cb) { voxelCollisionCallback = cb; }
         void setBodyBodyCollisionCallback(BodyBodyCollisionCallback cb) { bodyBodyCollisionCallback = cb; }
         void setBodyBodyPreSolveCallback(BodyBodyPreSolveCallback cb) { bodyBodyPreSolveCallback = cb; }
-
+        void setBodyStepCallback(BodyStepCallback cb) { bodyStepCallback = cb; }
         void removeBody(uint64_t id);
         const std::vector<std::unique_ptr<VoxelPhysicsBody>>& getBodies() const { return bodies; }
 
@@ -62,6 +67,7 @@ namespace gl3 {
         VoxelCollisionCallback voxelCollisionCallback;
         BodyBodyCollisionCallback bodyBodyCollisionCallback;
         BodyBodyPreSolveCallback bodyBodyPreSolveCallback;
+        BodyStepCallback bodyStepCallback;
 
 
         glm::vec3 gravity;

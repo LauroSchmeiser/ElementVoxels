@@ -379,6 +379,13 @@ namespace gl3 {
             return;
         }*/
 
+        if (s.physicsBody && s.physicsBody->renderMesh) {
+            if (s.destruct.meshDirty) {
+                rebuildDestructibleMeshIfNeeded(s.destruct);
+                s.physicsBody->renderMesh = &s.destruct.mesh;
+            }
+        }
+
         // Process animated voxels (the heavy part)
         processAnimatedVoxelsForSpell(s, dt);
     }
@@ -552,6 +559,7 @@ namespace gl3 {
 
             if (body) {
                 body->userData = nullptr;
+                body->ownerSpell = nullptr;
             }
 
             ctx.physics->removeBody(spell.physicsBodyId);
@@ -941,6 +949,8 @@ namespace gl3 {
 
             if (spell.physicsBody) {
                 spell.physicsBody->material = static_cast<uint32_t>(spell.targetMaterial);
+                spell.physicsBody->ownerSpell = &spell;
+
                 spell.physicsBody->userData = reinterpret_cast<void*>((uintptr_t)spell.ID);
                 spell.physicsBody->velocity = spell.initialVelocity;
                 spell.physicsBody->orientation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
@@ -1176,6 +1186,8 @@ namespace gl3 {
 
             if (spell.physicsBody) {
                 spell.physicsBody->material = static_cast<uint32_t>(spell.targetMaterial);
+                spell.physicsBody->ownerSpell = &spell;
+
                 spell.physicsBody->userData = reinterpret_cast<void*>((uintptr_t)spell.ID);
                 spell.physicsBody->velocity = spell.initialVelocity;
                 spell.physicsBody->orientation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
@@ -1966,5 +1978,10 @@ namespace gl3 {
         return result;
     }
 
-
+    SpellEffect* SpellSystem::spellFromBody(VoxelPhysicsBody* body) {
+        if (!body) return nullptr;
+        if (body->ownerSpell) return body->ownerSpell;
+        uint64_t id = (uint64_t)(uintptr_t)body->userData;
+        return findSpellById(id);
+    }
 }

@@ -5,8 +5,9 @@
 
 namespace gl3 {
     struct PhysicsMeshData;
+    struct SpellEffect;
 
-struct VoxelPhysicsBody {
+    struct VoxelPhysicsBody {
     // Transform
     glm::vec3 position;
     glm::vec3 prevPosition;
@@ -33,6 +34,8 @@ struct VoxelPhysicsBody {
 
     // User data
     void* userData = nullptr;
+    SpellEffect* ownerSpell = nullptr;
+
     uint64_t id = 0;
 
     uint32_t material=0;
