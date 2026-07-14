@@ -20,7 +20,7 @@ namespace gl3 {
         loadTitleTexture(gl3::resolveAssetPath("textures/title.png").string());
 
         loadStartButtonTexture(gl3::resolveAssetPath("textures/cobble.jpg").string());
-        loadSettingsButtonTexture(gl3::resolveAssetPath("textures/flesh.jpg").string());
+        loadSettingsButtonTexture(gl3::resolveAssetPath("textures/marble_rock_03_diff_4k.jpg").string());
         loadExitButtonTexture(gl3::resolveAssetPath("textures/aerial_rocks_02_diff_4k.jpg").string());
 
     }

@@ -19,6 +19,14 @@ uniform vec2  uInvResolution; // 1/width, 1/height
 uniform float uExposure;      // 1.0
 uniform float uGamma;         // 2.2
 
+uniform sampler2D uFluidColor;
+uniform sampler2D uFluidDepth;
+uniform sampler2D uFluidThickness;
+
+uniform int uCameraInsideFluid;
+uniform vec3 uFluidFogColor;
+uniform float uFluidFogDensity;
+
 float linearizeDepth(float z01, float near, float far) {
     float z = z01 * 2.0 - 1.0;
     return (2.0 * near * far) / (far + near - z * (far - near));
@@ -104,6 +112,27 @@ void main()
     //color *= uExposure;
     //color = tonemapReinhard(color);
     //color = pow(max(color, vec3(0.0)), vec3(1.0 / uGamma));
+
+    vec4 fluidSurface = texture(uFluidColor, vUV);
+    float fluidDepth01 = texture(uFluidDepth, vUV).r;
+    float thickness = texture(uFluidThickness, vUV).r;
+
+    bool hasFluid = fluidDepth01 < 0.9999;
+
+    if (hasFluid) {
+        float fluidLin = linearizeDepth(fluidDepth01, uNear, uFar);
+        float sceneLin = linearizeDepth(d01, uNear, uFar);
+
+        if (fluidLin <= sceneLin + 1e-3 || d01 >= 0.9999) {
+            color = mix(color, fluidSurface.rgb, fluidSurface.a);
+        }
+    }
+
+    if (uCameraInsideFluid != 0) {
+        float depthFog = 1.0 - exp(-dLin * uFluidFogDensity);
+        depthFog = clamp(depthFog + thickness * 0.03, 0.0, 1.0);
+        color = mix(color, uFluidFogColor, depthFog);
+    }
 
     FragColor = vec4(color, 1.0);
 }

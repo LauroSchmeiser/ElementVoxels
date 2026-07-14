@@ -45,16 +45,28 @@ namespace gl3 {
         void destroyEnemy(size_t index);
 
         uint32_t getEnemiesAlive() const { return enemies.size();}
-        glm::vec3 getEnemyPos(int idx) const { return enemies.at(0).inst.position;}
-        float getEnemyHP(int idx) const { return enemies.at(0).inst.hp;}
-        float getEnemyMat(int idx) const { return enemies.at(0).inst.body->material;}
 
+        glm::vec3 getEnemyPos(int idx) { return find(idx)->inst.position;}
+
+        float getEnemyHP(int idx)  { return find(idx)->inst.hp;}
+        void setEnemyHP(int idx, float hp) { find(idx)->inst.hp=hp;}
+
+        float getEnemyMat(int idx) { return find(idx)->inst.body->material;}
+        void setEnemyMat(int idx, int mat)  { find(idx)->inst.body->material=mat;}
+
+        float getEnemyRadius(int idx) { return find(idx)->inst.body->radius;}
+        void setEnemyRadius(int idx, float r)
+        {
+            EnemyRuntime* enemy = find(idx);
+            enemy->inst.body->radius=r;
+            rebuildMeshIfNeeded(*enemy);
+        }
+
+        EnemyRuntime* find(uint64_t id);
 
 
     private:
         Game* game = nullptr;
-        EnemyRuntime* find(uint64_t id);
-
         void ensurePhysicsBody(EnemyRuntime& e);
         void rebuildMeshIfNeeded(EnemyRuntime& e);
         RayCastResult rayCastFromPosition(glm::vec3 position,  glm::vec3 direction, float maxDistance = 1000.0f);

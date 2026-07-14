@@ -26,7 +26,6 @@ namespace gl3 {
         GLuint globalChunkVertexBuffer = 0;
 
         size_t CHUNK_MAX_VERTS = 0;
-        int MAX_CHUNKS_GPU = 1350;
 
         void setupSSBOsAndTables();
         bool tryResolveChunkVertexCount(Chunk* chunk);
@@ -36,6 +35,8 @@ namespace gl3 {
         void setupChunkBatchBuffers(int maxChunksGpu);
 
     public:
+        int MAX_CHUNKS_GPU = 1350;
+
         void generateChunkMesh(Chunk* chunk);
 
         ChunkRenderer(FixedGridChunkManager* chunkMgr);
@@ -66,11 +67,21 @@ namespace gl3 {
         void uploadMergedLightsToGPU();
 
         void collectEmissiveBillboards(std::vector<SunInstance>& out, robin_hood::unordered_set<uint32_t>& usedIds,Chunk* chunk);
+        void collectMergedEmissiveBillboards(std::vector<SunInstance>& out);
 
         GLuint ssboLights = 0;
         GLuint ssboChunkLightIdx = 0;
 
         void setupLightSSBOs();
+
+        void setupFluidBatchBuffers(int maxChunksGpu);
+        void ChunkRenderer::generateFluidMesh(Chunk* chunk);
+        size_t FLUID_CHUNK_MAX_VERTS=0;
+        std::unique_ptr<Shader> fluidMarchingCubesShader;
+        GLuint globalFluidVertexBuffer = 0;
+        GLuint fluidIndirectBuffer = 0;
+        GLuint globalFluidVAO = 0;
+
     };
 
 }

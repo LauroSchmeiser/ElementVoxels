@@ -122,6 +122,7 @@ namespace gl3 {
             game->windowWidth = width;
             game->windowHeight = height;
             game->initPostFBO();
+            game->initFluidFBO();
         }
     }
 
@@ -170,6 +171,7 @@ namespace gl3 {
         //Shader Setup
         skyboxRuntimeShader = std::make_unique<Shader>("shaders/skybox.vert", "shaders/skybox_runtime.frag");
         voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel.frag");
+        fluidShader = std::make_unique<Shader>("shaders/fluid_voxel.vert", "shaders/fluid_voxel.frag");
         marchingCubesShader = std::make_unique<Shader>("shaders/marching_cubes.comp");
         spellPreviewShader = std::make_unique<Shader>("shaders/spell_prev.vert", "shaders/spell_prev.frag");
         postShader = std::make_unique<Shader>("shaders/post_fullscreen.vert", "shaders/post_fog_glow.frag");
@@ -478,11 +480,11 @@ namespace gl3 {
         mainDispatcher.execute();
     }
 
-    void Game::renderGameplayFrame() {
-        // 1) Render scene into postFBO
+    void Game::renderGameplayFrame()
+    {
+        // 1) main scene
         glBindFramebuffer(GL_FRAMEBUFFER, postFBO);
         glViewport(0, 0, windowWidth, windowHeight);
-
         glEnable(GL_DEPTH_TEST);
         glDepthMask(GL_TRUE);
         glClearColor(0,0,0,1);
@@ -498,45 +500,57 @@ namespace gl3 {
 
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
+        // 2) fluid pass
+        glBindFramebuffer(GL_FRAMEBUFFER, fluidFBO);
+        glViewport(0, 0, windowWidth, windowHeight);
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_TRUE);
+        glClearColor(0,0,0,0);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // 2) Post pass to screen (fog + glow)
+        renderFluids();
+
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+        // 3) final composite
         glDisable(GL_DEPTH_TEST);
         glDepthMask(GL_FALSE);
 
         postShader->use();
 
-        postShader->setInt("uSceneColor", 0);
-        postShader->setInt("uSceneDepth", 1);
-
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, postColorTex);
+        postShader->setInt("uSceneColor", 0);
 
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, postDepthTex);
+        postShader->setInt("uSceneDepth", 1);
+
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, fluidColorTex);
+        postShader->setInt("uFluidColor", 2);
+
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D, fluidDepthTex);
+        postShader->setInt("uFluidDepth", 3);
+
+        glActiveTexture(GL_TEXTURE4);
+        glBindTexture(GL_TEXTURE_2D, fluidThicknessTex);
+        postShader->setInt("uFluidThickness", 4);
 
         postShader->setFloat("uNear", 0.1f);
         postShader->setFloat("uFar", 500.0f);
 
-        /*postShader->setFloat("uExposure", 1.0f);
-        postShader->setFloat("uGamma", 2.2f);
+        bool inside = isPointInsideFluid(cameraPos);
+        postShader->setInt("uCameraInsideFluid", inside ? 1 : 0);
+        postShader->setVec3("uFluidFogColor", glm::vec3(1.0f,0.0f,0.0f));
+        postShader->setFloat("uFluidFogDensity", 1.0f);
 
-        postShader->setFloat("uFogStrength", 3.0f);
-        postShader->setFloat("uFogStart", 50.0f);
-        postShader->setFloat("uFogEnd", 1050.0f);
-
-        postShader->setFloat("uGlowThreshold", 2.0f);  // if HDR-ish
-        postShader->setFloat("uGlowStrength", 0.85f);
-
-        postShader->setVec2("uInvResolution", glm::vec2(1.0f / windowWidth, 1.0f / windowHeight));
-*/
         glBindVertexArray(postVAO);
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glBindVertexArray(0);
 
         renderSpeedLines();
-
-        // UI and other stuff AFTER post
-        //DisplayFPSCount();
         renderGameplayUI();
     }
 
@@ -587,6 +601,7 @@ namespace gl3 {
             case PreloadStage::Boot_PostProcessor:
                 preloadStageName = "Preparing Post-processing...";
                 initPostFBO();
+                initFluidFBO();
                 preloadStage = PreloadStage::Boot_SSBOs;
                 return 0.25f;
 
@@ -668,6 +683,8 @@ namespace gl3 {
             case PreloadStage::Run_Lighting:
             {
                 preloadStageName = "Building meshes & lighting...";
+                emissiveBillboards.clear();
+
                 chunkManager->forEachChunk([&](gl3::Chunk* chunk) {
                     if (!chunk) return;
                     if (!chunk->lightingDirty) return;
@@ -682,6 +699,7 @@ namespace gl3 {
                 // Uses your existing budgeted manager path (MAX_CALC_PER_FRAME in manager)
                 chunkManager->rebuildDirtyChunks([this](Chunk* chunk) {
                     chunkRenderer->generateChunkMesh(chunk);
+                    chunkRenderer->generateFluidMesh(chunk);
                 }, cameraPos);
 
                 // 3) Rebuild light-index buffer for current camera neighborhood
@@ -692,13 +710,7 @@ namespace gl3 {
                         RenderingRange
                 );
 
-                emissiveBillboards.clear();
-                usedLightIDs.clear();
-                chunkManager->forEachChunk([&](gl3::Chunk* chunk) {
-                    if (!chunk) return;
-                    if (chunk->isCleared) return;
-                    chunkRenderer->collectEmissiveBillboards(emissiveBillboards, usedLightIDs,chunk);
-                });
+                chunkRenderer->collectMergedEmissiveBillboards(emissiveBillboards);
 
                 // 4) Stay in this stage until no dirty chunks remain
                 if (chunkManager->hasDirtyChunks()) {
@@ -1342,19 +1354,39 @@ namespace gl3 {
         const auto& rule = materialRules[body->material];
 
         if (decision.ignoreCollision) return;
+        bool isEnemy = false;
+        uint64_t enemyID;
+        for(auto& enemy : enemyManager->all())
+        {
+            if(body==enemy.inst.body)
+            {
+                isEnemy=true;
+                enemyID = enemy.inst.id;
+                break;
+            }
+        }
 
-        if (decision.stick) {
+        if (decision.stick&&!isEnemy) {
             body->stuck = true;
             body->angularVelocity = glm::vec3(0.0f);
             body->position = hitPos + hitNormal * body->radius;
             //body->stuckOffset=glm::normalize(hitPos);
 
-            if (decision.convertWorld) {
-                float r = (rule.convertRadius > 0.0f) ? rule.convertRadius*glm::sqrt(body->radius) : (body->radius * 1.5f);
-                convertSolidWorldToMaterial(hitPos, r, body->material);
-            }
-
             return;
+        }
+        if (decision.convertWorld) {
+            float r = (rule.convertRadius > 0.0f) ? rule.convertRadius*glm::sqrt(body->radius) : (body->radius * 1.5f);
+            convertSolidWorldToMaterial(hitPos, r, body->material);
+        }
+
+        if(isEnemy&&strcmp(enemyManager->find(enemyID)->inst.type.name, "Consumer") == 0)
+        {
+            int amount = consumeWorldOfMaterial(body->position,body->radius*1.5f,7);
+            enemyManager->setEnemyHP(enemyID,enemyManager->getEnemyHP(enemyID)+amount);
+            std::cout<<"amount is: "<<amount<<"\n";
+           // body->radius=body->radius+glm::sqrt(amount);
+            //TODO:: Fix radius scaling
+
         }
         /*if (decision.destroyOther) {
             convertSolidWorldToType(hitPos, (body->radius * 1.5f), 0);
@@ -1846,17 +1878,17 @@ namespace gl3 {
         }
 
         // Create water planets (type 3)
-        std::uniform_real_distribution<float> waterDistColorR(0.0f, 0.2f);
-        std::uniform_real_distribution<float> waterDistColorG(0.2f, 0.8f);
-        std::uniform_real_distribution<float> waterDistColorB(0.8f, 1.0f);
+        std::uniform_real_distribution<float> waterDistColorR(1.0f, 1.0f);
+        std::uniform_real_distribution<float> waterDistColorG(0.0f, 0.0f);
+        std::uniform_real_distribution<float> waterDistColorB(0.0f, 0.0f);
 
-        int waterCount = 0 + (rng() % 1);
+        int waterCount = 14 ;
         for (int i = 0; i < waterCount; ++i) {
             WorldPlanet p;
             p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
             p.radius = distScale(rng) * CHUNK_SIZE;
             p.color = glm::vec3(waterDistColorR(rng), waterDistColorG(rng), waterDistColorB(rng));
-            p.type = 3; // water
+            p.type = 3;
             worldPlanets.push_back(p);
         }
 
@@ -2036,6 +2068,21 @@ namespace gl3 {
             for (int i = 0; i < subStepCount; ++i) {
                 {
                     TRACY_CPU_ZONE("Game::updatePlayer()");
+                    if (characterController->hasWorldContact()) {
+                        uint32_t mat = characterController->getCurrentContactMaterial();
+
+                        switch (mat) {
+                            case 9: // lava
+                                registerPlayerDamage(0.0125f);
+                                break;
+                            case 7: // flesh
+                                registerPlayerDamage(0.00625f);
+                                moveInput/=2;
+                                break;
+                            default:
+                                break;
+                        }
+                    }
                     characterController->update(subDt, moveInput, jump, sprint, crouch, mouseDelta, cameraFront,
                                                 cameraRight, airSlam);
                 }
@@ -2062,9 +2109,9 @@ namespace gl3 {
         {
             if(body==enemy.inst.body)
             {
-                setPlayerHealth(getPlayerHealth() - 10);
+                registerPlayerDamage(10);
 
-                body->position-=body->velocity*glm::vec3(3);
+                body->position-=body->velocity*glm::vec3(1);
                 return;
             }
         }
@@ -2104,7 +2151,7 @@ namespace gl3 {
         //dmg *= approach01;
         dmg = glm::min(dmg,getPlayerMaxHealth()/10);
         dmg= glm::max(dmg,getPlayerMaxHealth()/20);
-        setPlayerHealth(getPlayerHealth() - dmg);
+        registerPlayerDamage( dmg);
         body->velocity=-body->velocity*0.75f;
 
 
@@ -2128,8 +2175,12 @@ namespace gl3 {
             glm::vec3 variance = glm::vec3(dist(rng));
             tint+=(spell->formationColor/glm::vec3(10));
             tint+=variance;
+            if(body->impactVfxCooldown<=0)
+            {
+                body->impactVfxCooldown=2.0f;
+                spawnImpactEffect(hitPos, hitNormal, hitSpeed, 100, tint);
 
-            spawnImpactEffect(hitPos, hitNormal, hitSpeed, 100, tint);
+            }
         }
     }
 
@@ -2164,6 +2215,17 @@ namespace gl3 {
         if (dA.ignoreCollision && bodyA->bodiesCanPassThrough > 0) bodyA->bodiesCanPassThrough--;
         if (dB.ignoreCollision && bodyB->bodiesCanPassThrough > 0) bodyB->bodiesCanPassThrough--;
 
+        if(bodyA->material==9&&bodyB->material!=9)
+        {
+            voxelPhysics->removeBody(bodyB->id);
+            return;
+        }
+        if(bodyB->material==9&&bodyA->material!=9)
+        {
+            voxelPhysics->removeBody(bodyA->id);
+            return;
+        }
+
         auto applyDamageToOneBody = [&](gl3::VoxelPhysicsBody* self,
                                         gl3::VoxelPhysicsBody* other,
                                         bool ignoreThisSide)
@@ -2196,8 +2258,10 @@ namespace gl3 {
         };
 
         // Apply to BOTH sides
-        applyDamageToOneBody(bodyA, bodyB, dA.ignoreCollision);
-        applyDamageToOneBody(bodyB, bodyA, dB.ignoreCollision);
+        if(bodyB&&bodyA) {
+            applyDamageToOneBody(bodyA, bodyB, dA.ignoreCollision);
+            applyDamageToOneBody(bodyB, bodyA, dB.ignoreCollision);
+        }
 
         if (dA.stick || dB.stick) return;
 
@@ -2212,6 +2276,15 @@ lastFrameTime = frameTime;
 }
 
 //------Lighting-Code---------------------------------------------------------------------------------------------------------------------------
+
+void Game::refreshMergedEmissiveBillboards()
+{
+        TRACY_CPU_ZONE("Game::refreshMergedEmissiveBillboards");
+
+        emissiveBillboards.clear();
+        chunkRenderer->collectMergedEmissiveBillboards(emissiveBillboards);
+        emissiveBillboardsDirty = false;
+}
 
 void Game::rebuildChunkLights(const ChunkCoord &coord) {
 ZoneScoped;
@@ -2260,26 +2333,6 @@ chunk->lightingDirty = false;
 chunkManager->updateEmissiveMembership(*chunk);
 }
 
-void Game::processEmissiveChunks() {
-chunkManager->forEachEmissiveChunk([this](Chunk *chunk) {
-    // Process only emissive chunks
-    if (chunk->lightingDirty) {
-        rebuildChunkLights(chunk->coord);
-    }
-
-    // Collect emissive lights for billboards
-    for (const auto &light: chunk->emissiveLights) {
-        if (usedLightIDs.insert(light.id).second) {
-            SunInstance inst;
-            inst.position = light.pos;
-            inst.scale = std::sqrt(light.intensity)/VOXEL_SIZE * 0.5f;
-            inst.color = light.color * 2.5f;
-            emissiveBillboards.push_back(inst);
-        }
-    }
-});
-}
-
 uint32_t Game::makeLightID(int cx, int cy, int cz) {
 // Simple hash function for light ID
 return ((cx & 0xFFF) << 20) | ((cy & 0xFFF) << 8) | (cz & 0xFF);
@@ -2323,38 +2376,41 @@ impactParticles.erase(
 
 
 void Game::update() {
-TRACY_CPU_ZONE("Game::update()");
+    TRACY_CPU_ZONE("Game::update()");
 
-// Update merged lights occasionally (CPU) + upload to GPU
-if (frameCounter % 283 == 0) {
-    chunkRenderer->updateLightSpatialHash();
-}
-if(frameCounter%261==0)
-{
-    chunkRenderer->uploadMergedLightsToGPU();
-}
-if (frameCounter % 247 == 0) {
-    TRACY_CPU_ZONE("renderChunks::updateLightSpatialHash");
-    chunkManager->forEachChunk([&](gl3::Chunk* chunk)
-                               {rebuildChunkLights(chunk->coord);
-                                   chunk->lightingDirty = false;
-                                   for (const auto& light : chunk->emissiveLights) {
-                                       if (usedLightIDs.insert(light.id).second) {
-                                           SunInstance inst;
-                                           inst.position = light.pos;
-                                           inst.scale = std::sqrt(light.intensity) * 0.5f;
-                                           inst.color = light.color * 1.0f;
-                                           emissiveBillboards.push_back(inst);
-                                       }
-                                   }
-                               });
-}
-{
+    // Update merged lights occasionally (CPU) + upload to GPU
+    if (frameCounter % 283 == 0) {
+        chunkRenderer->updateLightSpatialHash();
+        emissiveBillboardsDirty = true;
+    }
+    if(frameCounter%261==0)
+    {
+        chunkRenderer->uploadMergedLightsToGPU();
+    }
+    if (frameCounter % 247 == 0) {
+        TRACY_CPU_ZONE("Game::refreshMergedLights");
+
+        chunkManager->forEachChunk([&](gl3::Chunk* chunk) {
+            if (!chunk) return;
+            if (!chunk->lightingDirty) return;
+
+            rebuildChunkLights(chunk->coord);
+            chunk->lightingDirty = false;
+        });
+
+        chunkRenderer->updateLightSpatialHash();
+    }
+
+    if (emissiveBillboardsDirty) {
+        refreshMergedEmissiveBillboards();
+    }
+    {
     TRACY_CPU_ZONE("Game::Recalc Meshes and Lights");
     chunkManager->rebuildDirtyChunks([this](Chunk* chunk) {
         chunkRenderer->generateChunkMesh(chunk);
+        chunkRenderer->generateFluidMesh(chunk);
     },cameraPos);
-}
+    }
 
 // per-chunk light index buffer
 if(frameCounter % 311 == 0)
@@ -2381,7 +2437,7 @@ if(getPlayerHealth()<=0)
         float distsq = glm::sqrt(dist.x*dist.x+ dist.y*dist.y+ dist.z*dist.z);
         if(distsq<std::sqrt(light.intensity) * 0.15f)
         {
-            setPlayerHealth(getPlayerHealth()-0.0075f*distsq);
+            registerPlayerDamage(0.005f*distsq*(glm::sqrt(light.intensity*0.00001f)));
         }
         float gravity = glm::pow(light.intensity,1.0f)-distsq;
         if(gravity>bestGravity&&!characterController->isSurfaceAdhered())
@@ -2407,18 +2463,11 @@ if(getPlayerHealth()<=0)
         if(spell.physicsBody&&spell.physicsBody->material==9) {
             glm::vec3 dist = (cameraPos - spell.physicsBody->position);
             float distsq = glm::sqrt(dist.x * dist.x + dist.y * dist.y + dist.z * dist.z);
-            if (distsq < (spell.radius * spell.radius)) {
-                setPlayerHealth(getPlayerHealth() - 0.0125f * distsq);
+            if (distsq < (spell.radius*1.5f)) {
+                registerPlayerDamage( 0.0025f * distsq*(glm::sqrt(spell.physicsBody->radius*0.01f)));
             }
         }
     }
-}
-
-emissiveUpdateCounter++;
-if (++emissiveUpdateCounter >= 100) { // Every 100 frames
-    TRACY_CPU_ZONE("ProcessEmissiveChunks()");
-    processEmissiveChunks();
-    emissiveUpdateCounter = 0;
 }
 
 input.update(window);
@@ -2519,7 +2568,7 @@ if (actions["CastFleshSphere"].wasJustReleased) {
         float spellStrength = 1.0f;              // Affects velocity
 
         if (spellSystem)
-            spellSystem->castSphere(spellCenter, spellRadius, 9, spellStrength, getCameraFront(), VOXEL_SIZE*CHUNK_SIZE*30);
+            spellSystem->castSphere(spellCenter, spellRadius, 9, spellStrength, getCameraFront(), VOXEL_SIZE*CHUNK_SIZE*50);
     }
 
 if (actions["CastWall"].wasJustReleased) {
@@ -2572,6 +2621,13 @@ burn01(1.0f,5.0f);
 //chunkManager->forEachFluidChunk([this](Chunk* chunk) {
 // Fluid simulation
 //});
+    damageTimer+=deltaTime;
+    while (damageTimer >= damageTimeframe)
+    {
+        damageTimer -= damageTimeframe;
+        applyPlayerDamage();
+    }
+
 }
 
 glm::vec3 Game::getCameraFront() const {
@@ -2644,8 +2700,6 @@ glm::mat4 pv = projection * view;
 
 frameCounter++;
 chunkRenderer->frameCounter +=1;
-emissiveBillboards.clear();
-usedLightIDs.clear();
 
 const int camCX = worldToChunk(cameraPos.x);
 const int camCY = worldToChunk(cameraPos.y);
@@ -2660,6 +2714,7 @@ if (frameCounter % 60 == 0) {
 
 // visibleDrawCmds.clear();
 visibleSlots.clear();
+visibleFluidSlots.clear();
 // visibleDrawCmds.reserve((2*renderRadius+1)*(2*renderRadius+1)*(2*renderRadius+1));
 
 // Generate meshes / rebuild emissive lights
@@ -2674,6 +2729,7 @@ visibleSlots.clear();
     const int minCZ = std::max(camCZ - renderRadius, -R);
     const int maxCZ = std::min(camCZ + renderRadius,  R);
 
+    visibleFluidSlots.reserve(visibleSlots.size());
 
     for (int cx = minCX; cx <= maxCX; ++cx)
         for (int cy = minCY; cy <= maxCY; ++cy)
@@ -2706,10 +2762,13 @@ visibleSlots.clear();
                             chunk->lightingDirty = false;
                         }
 */
-
-                        chunkRenderer->collectEmissiveBillboards(emissiveBillboards, usedLightIDs,chunk);
-
-                        if (!chunk->gpuCache.isValid) continue;
+                        if (!chunk->gpuCache.isValid) {
+#
+                            /*if (chunkHasFluid(*chunk)) {
+                                visibleFluidSlots.push_back(chunk->gpuSlot);
+                            }*/
+                            continue;
+                        }
 
                         DrawArraysIndirectCommand cmd{};
                         cmd.count         = chunk->gpuCache.vertexCount;
@@ -2719,7 +2778,7 @@ visibleSlots.clear();
 
                         if (cmd.count == 0) continue;
 
-                       // visibleDrawCmds.push_back(cmd);
+                        // visibleDrawCmds.push_back(cmd);
                         visibleSlots.push_back(chunk->gpuSlot);
                     }
         }
@@ -2761,6 +2820,9 @@ visibleSlots.clear();
 
             voxelShader->setVec3("viewPos", cameraPos);
             voxelShader->setVec3("ambientColor", glm::vec3(0.85f));
+
+            voxelShader->setBool("uHasPlayerContact", characterController->hasWorldContact());
+            voxelShader->setVec3("uPlayerContactPoint", characterController->getCurrentContactPoint());
 
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D_ARRAY, materialAlbedoArrayTexId);
@@ -2808,11 +2870,11 @@ visibleSlots.clear();
             glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
             glBindVertexArray(0);
         }
-        appendSpellBillboards(emissiveBillboards);
+        std::vector<SunInstance> billboardRenderList = emissiveBillboards;
+        appendSpellBillboards(billboardRenderList);
 
-        // Billboards
-        if (!emissiveBillboards.empty() && !DebugMode1) {
-            sunBillboards.render(emissiveBillboards, view, projection, (float)glfwGetTime());
+        if (!billboardRenderList.empty() && !DebugMode1) {
+            sunBillboards.render(billboardRenderList, view, projection, (float)glfwGetTime());
         }
     }
 
@@ -3525,6 +3587,56 @@ visibleSlots.clear();
         return -glm::normalize(g);
         }
 
+     uint32_t Game::sampleMaterialAtWorld(FixedGridChunkManager* chunkManager, const glm::vec3& worldPos) {
+        if (!chunkManager) return 0;
+
+        const float chunkWorldSize = CHUNK_SIZE * VOXEL_SIZE;
+        int cx = static_cast<int>(std::floor(worldPos.x / chunkWorldSize));
+        int cy = static_cast<int>(std::floor(worldPos.y / chunkWorldSize));
+        int cz = static_cast<int>(std::floor(worldPos.z / chunkWorldSize));
+
+        ChunkCoord coord{cx, cy, cz};
+        Chunk* chunk = chunkManager->getChunk(coord);
+        if (!chunk) return 0;
+
+        glm::vec3 chunkMin = glm::vec3(coord.x * chunkWorldSize,
+                                       coord.y * chunkWorldSize,
+                                       coord.z * chunkWorldSize);
+
+        glm::vec3 local = (worldPos - chunkMin) / VOXEL_SIZE;
+
+        int ix = glm::clamp((int)std::round(local.x), 0, CHUNK_SIZE);
+        int iy = glm::clamp((int)std::round(local.y), 0, CHUNK_SIZE);
+        int iz = glm::clamp((int)std::round(local.z), 0, CHUNK_SIZE);
+
+        return chunk->voxels[ix][iy][iz].material;
+    }
+
+    uint8_t Game::sampleTypeAtWorld(FixedGridChunkManager* chunkManager, const glm::vec3& worldPos) {
+        if (!chunkManager) return 0;
+
+        const float chunkWorldSize = CHUNK_SIZE * VOXEL_SIZE;
+        int cx = static_cast<int>(std::floor(worldPos.x / chunkWorldSize));
+        int cy = static_cast<int>(std::floor(worldPos.y / chunkWorldSize));
+        int cz = static_cast<int>(std::floor(worldPos.z / chunkWorldSize));
+
+        ChunkCoord coord{cx, cy, cz};
+        Chunk* chunk = chunkManager->getChunk(coord);
+        if (!chunk) return 0;
+
+        glm::vec3 chunkMin = glm::vec3(coord.x * chunkWorldSize,
+                                       coord.y * chunkWorldSize,
+                                       coord.z * chunkWorldSize);
+
+        glm::vec3 local = (worldPos - chunkMin) / VOXEL_SIZE;
+
+        int ix = glm::clamp((int)std::round(local.x), 0, CHUNK_SIZE);
+        int iy = glm::clamp((int)std::round(local.y), 0, CHUNK_SIZE);
+        int iz = glm::clamp((int)std::round(local.z), 0, CHUNK_SIZE);
+
+        return chunk->voxels[ix][iy][iz].type;
+    }
+
 
     void Game::updateCamera() {
         glm::vec3 targetPos = characterController->getCameraPosition();
@@ -3899,13 +4011,12 @@ visibleSlots.clear();
                                       float speedWorld,
                                       glm::vec3 color, int material)
     {
-        float searchRadius = radiusWorld*2;
+        float searchRadius = radiusWorld*4;
         if(material==9)
         {
             searchRadius=glm::pow(radiusWorld,3);
         }
         FormationParams params = FormationParams::Sphere(start, radiusWorld);
-
         spellSystem->castSphere(
                 params.center,
                 params.radius,
@@ -4333,26 +4444,144 @@ visibleSlots.clear();
         return d;
     }
 
-    void Game::convertWorldToMaterial(const glm::vec3& center, float radius, uint32_t material, float strength)
+    void Game::convertWorldToMaterial(const glm::vec3& center, float radius, uint32_t material)
     {
-        gl3::VoxelCarver::CarveParams p{};
-        p.radius = radius;
-        p.strength = glm::max(0.001f, strength);
-        p.targetType = 1;
-        p.material = material;
-        p.color = glm::vec3(0.8f); // or material color lookup
-        p.autoCreate = false;
-        p.additive = true;
-        p.densityThreshold = -0.5f;
+        if (!chunkManager) return;
 
-        auto sdfSphere = [center, radius](const glm::vec3& wp) -> float {
-            return radius - glm::distance(wp, center);
-        };
+        const float r2 = radius * radius;
 
-        auto res = gl3::VoxelCarver::carveSDF(chunkManager.get(), center, sdfSphere, p);
-        for (const auto& c : res.modifiedChunks) {
+        const int minCX = worldToChunk(center.x - radius);
+        const int maxCX = worldToChunk(center.x + radius);
+        const int minCY = worldToChunk(center.y - radius);
+        const int maxCY = worldToChunk(center.y + radius);
+        const int minCZ = worldToChunk(center.z - radius);
+        const int maxCZ = worldToChunk(center.z + radius);
+
+        std::vector<ChunkCoord> touched;
+        touched.reserve(64);
+
+        for (int cx = minCX; cx <= maxCX; ++cx)
+            for (int cy = minCY; cy <= maxCY; ++cy)
+                for (int cz = minCZ; cz <= maxCZ; ++cz)
+                {
+                    ChunkCoord cc{cx,cy,cz};
+                    Chunk* chunk = chunkManager->getChunk(cc);
+                    if (!chunk) continue;
+
+                    const glm::vec3 cmin = getChunkMin(cc);
+                    bool any = false;
+
+                    for (int vx = 0; vx <= CHUNK_SIZE; ++vx) {
+                        const float wx = cmin.x + vx * VOXEL_SIZE;
+                        const float dx = wx - center.x;
+                        const float dx2 = dx * dx;
+
+                        for (int vy = 0; vy <= CHUNK_SIZE; ++vy) {
+                            const float wy = cmin.y + vy * VOXEL_SIZE;
+                            const float dy = wy - center.y;
+                            const float dy2 = dy * dy;
+                            if (dx2 + dy2 > r2) continue;
+
+                            for (int vz = 0; vz <= CHUNK_SIZE; ++vz) {
+                                const float wz = cmin.z + vz * VOXEL_SIZE;
+                                const float dz = wz - center.z;
+                                const float d2 = dx2 + dy2 + dz * dz;
+                                if (d2 > r2) continue;
+
+                                Voxel& v = chunk->voxels[vx][vy][vz];
+
+                                // Make voxel solid
+                                v.type = 1;
+                                v.material = material;
+
+                                v.density = glm::max(v.density, 1.0f);
+
+                                any = true;
+                            }
+                        }
+                    }
+
+                    if (any) {
+                        chunk->meshDirty = true;
+                        chunk->lightingDirty = true;
+                        touched.push_back(cc);
+                    }
+                }
+
+        for (const auto& c : touched) {
             markChunkModified(c);
         }
+    }
+
+    int Game::consumeWorldOfMaterial(const glm::vec3& center, float radius, uint32_t material)
+    {
+        if (!chunkManager) return 0;
+
+        int amount = 0;
+        const float r2 = radius * radius;
+
+        const int minCX = worldToChunk(center.x - radius);
+        const int maxCX = worldToChunk(center.x + radius);
+        const int minCY = worldToChunk(center.y - radius);
+        const int maxCY = worldToChunk(center.y + radius);
+        const int minCZ = worldToChunk(center.z - radius);
+        const int maxCZ = worldToChunk(center.z + radius);
+
+        std::vector<ChunkCoord> touched;
+        touched.reserve(64);
+
+        for (int cx = minCX; cx <= maxCX; ++cx)
+            for (int cy = minCY; cy <= maxCY; ++cy)
+                for (int cz = minCZ; cz <= maxCZ; ++cz)
+                {
+                    ChunkCoord cc{cx,cy,cz};
+                    Chunk* chunk = chunkManager->getChunk(cc);
+                    if (!chunk) continue;
+
+                    const glm::vec3 cmin = getChunkMin(cc);
+                    bool any = false;
+
+                    for (int vx = 0; vx <= CHUNK_SIZE; ++vx) {
+                        const float wx = cmin.x + vx * VOXEL_SIZE;
+                        const float dx = wx - center.x;
+                        const float dx2 = dx * dx;
+
+                        for (int vy = 0; vy <= CHUNK_SIZE; ++vy) {
+                            const float wy = cmin.y + vy * VOXEL_SIZE;
+                            const float dy = wy - center.y;
+                            const float dy2 = dy * dy;
+                            if (dx2 + dy2 > r2) continue;
+
+                            for (int vz = 0; vz <= CHUNK_SIZE; ++vz) {
+                                const float wz = cmin.z + vz * VOXEL_SIZE;
+                                const float dz = wz - center.z;
+                                const float d2 = dx2 + dy2 + dz * dz;
+                                if (d2 > r2) continue;
+
+                                Voxel& v = chunk->voxels[vx][vy][vz];
+                                if (!v.isSolid()) continue;
+
+                                v.type = 0;
+                                v.material=0;
+                                v.density = -1.0;
+
+                                any = true;
+                                amount++;
+                            }
+                        }
+                    }
+
+                    if (any) {
+                        chunk->meshDirty = true;
+                        chunk->lightingDirty = true;
+                        touched.push_back(cc);
+                    }
+                }
+
+        for (const auto& c : touched) {
+            markChunkModified(c);
+        }
+        return amount;
     }
 
     void Game::convertSolidWorldToMaterial(const glm::vec3& center, float radius, uint32_t material)
@@ -4688,4 +4917,118 @@ visibleSlots.clear();
         p.materialCost = glm::clamp(4.0f + sizeFactor * 6.0f * materialFactor * rangeFactor, 1.0f, 999.0f);
     }
 
+    bool Game::isPointInsideFluid(const glm::vec3& worldPos) const
+    {
+        uint8_t t = sampleTypeAtWorld(chunkManager.get(), worldPos);
+        float d = sampleDensityAtWorld(worldPos);
+        return t == 3u && d >= 0.0f;
+    }
+
+    void Game::initFluidFBO()
+    {
+        if (fluidFBO) {
+            glDeleteFramebuffers(1, &fluidFBO);
+            glDeleteTextures(1, &fluidColorTex);
+            glDeleteTextures(1, &fluidDepthTex);
+            glDeleteTextures(1, &fluidThicknessTex);
+            fluidFBO = fluidColorTex = fluidDepthTex = fluidThicknessTex = 0;
+        }
+
+        glGenFramebuffers(1, &fluidFBO);
+        glBindFramebuffer(GL_FRAMEBUFFER, fluidFBO);
+
+        glGenTextures(1, &fluidColorTex);
+        glBindTexture(GL_TEXTURE_2D, fluidColorTex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, windowWidth, windowHeight, 0, GL_RGBA, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, fluidColorTex, 0);
+
+        glGenTextures(1, &fluidThicknessTex);
+        glBindTexture(GL_TEXTURE_2D, fluidThicknessTex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, windowWidth, windowHeight, 0, GL_RED, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, fluidThicknessTex, 0);
+
+        glGenTextures(1, &fluidDepthTex);
+        glBindTexture(GL_TEXTURE_2D, fluidDepthTex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, windowWidth, windowHeight, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, fluidDepthTex, 0);
+
+        GLenum bufs[] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
+        glDrawBuffers(2, bufs);
+
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+            std::cerr << "fluidFBO incomplete!\n";
+        }
+
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+
+    void Game::renderFluids()
+    {
+        fluidShader->use();
+
+        float aspect = (windowHeight == 0) ? (float)windowWidth : (float)windowWidth / (float)windowHeight;
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
+        glm::vec3 camUp = getCameraUp();
+        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
+        glm::mat4 pv = projection * view;
+
+        fluidShader->setMatrix("model", glm::mat4(1.0f));
+        fluidShader->setMatrix("mvp", pv);
+        fluidShader->setFloat("uTime", (float)glfwGetTime());
+        fluidShader->setVec3("viewPos", cameraPos);
+
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDisable(GL_CULL_FACE);
+
+        glBindVertexArray(chunkRenderer->globalFluidVAO);
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, chunkRenderer->fluidIndirectBuffer);
+
+        for (uint32_t slot : visibleSlots) {
+            const GLsizeiptr offset = (GLsizeiptr)slot * (GLsizeiptr)sizeof(DrawArraysIndirectCommand);
+            glDrawArraysIndirect(GL_TRIANGLES, (const void*)offset);
+        }
+
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+        glBindVertexArray(0);
+
+        glDisable(GL_BLEND);
+        glEnable(GL_CULL_FACE);
+    }
+
+    glm::vec3 Game::sampleFluidColorAtWorld(const glm::vec3& worldPos) const
+    {
+        const float chunkWorldSize = CHUNK_SIZE * VOXEL_SIZE;
+        int cx = (int)std::floor(worldPos.x / chunkWorldSize);
+        int cy = (int)std::floor(worldPos.y / chunkWorldSize);
+        int cz = (int)std::floor(worldPos.z / chunkWorldSize);
+
+        Chunk* chunk = chunkManager->getChunk({cx, cy, cz});
+        if (!chunk) return glm::vec3(0.1f, 0.3f, 0.8f);
+
+        glm::vec3 chunkMin = getChunkMin({cx,cy,cz});
+        glm::vec3 local = (worldPos - chunkMin) / VOXEL_SIZE;
+
+        int ix = glm::clamp((int)std::round(local.x), 0, CHUNK_SIZE);
+        int iy = glm::clamp((int)std::round(local.y), 0, CHUNK_SIZE);
+        int iz = glm::clamp((int)std::round(local.z), 0, CHUNK_SIZE);
+
+        const Voxel& v = chunk->voxels[ix][iy][iz];
+        return (v.type == 3) ? v.color : glm::vec3(0.1f, 0.3f, 0.8f);
+    }
+
+    bool Game::chunkHasFluid(const Chunk& chunk) {
+        for (int x = 0; x <= CHUNK_SIZE; ++x)
+            for (int y = 0; y <= CHUNK_SIZE; ++y)
+                for (int z = 0; z <= CHUNK_SIZE; ++z)
+                    if (chunk.voxels[x][y][z].type == 3)
+                        return true;
+        return false;
+    }
 }

@@ -332,8 +332,6 @@ namespace gl3 {
         //Lighting:
         void rebuildChunkLights(const ChunkCoord &coord);
 
-        void processEmissiveChunks();
-
         uint32_t makeLightID(int cx, int cy, int cz);
 
 
@@ -354,13 +352,6 @@ namespace gl3 {
         void renderPhysicsFormations();
         void renderEnemies();
         void renderSpellPreview();
-
-        //marching cubes Shader:
-        void uploadVoxelChunk(const Chunk &chunk, const glm::vec3 *overrideColor = nullptr);
-
-        void resetAtomicCounter();
-
-        void setComputeUniforms(const glm::vec3 &position, Shader &computeShader);
 
         //vertex/frag Shader:
         void ensurePreviewCube();
@@ -390,11 +381,9 @@ namespace gl3 {
         const float LIGHT_RADIUS_SQ = LIGHT_RADIUS * LIGHT_RADIUS;
         std::vector<const gl3::VoxelLight *> flatEmissiveLightList;
         robin_hood::unordered_map<ChunkCoord, std::vector<VoxelLight *>, ChunkCoordHash> lightSpatialHash;
-        // After building chunk-local lights we create a small merged pool to avoid seams.
-        // Merged pool holds stable VoxelLight objects we point to from flatEmissiveLightList.
+
         std::vector<gl3::VoxelLight> mergedEmissiveLightPool;
         static constexpr int LIGHT_UPDATE_INTERVAL = 60; // Update lights every 15 frames
-        robin_hood::unordered_set<uint32_t> usedLightIDs;
 
         //std::unique_ptr<SpellPhysicsManager> spellPhysics;
         std::unique_ptr<VoxelPhysicsManager> voxelPhysics;
@@ -438,6 +427,11 @@ namespace gl3 {
         SunBillboard sunBillboards;
         std::vector<SunInstance> emissiveBillboards;
         int emissiveUpdateCounter=0;
+        // Billboard cache control
+        static constexpr int BILLBOARD_REFRESH_INTERVAL = 240;
+        bool emissiveBillboardsDirty = true;
+
+        void refreshMergedEmissiveBillboards();
 
         // Post-processing FBO
         GLuint postFBO = 0;
@@ -543,7 +537,11 @@ namespace gl3 {
         void updateCamera();
         void createNoiseTexture();
         void createNebulaCubemap(int size);
+
     public:
+        static uint8_t sampleTypeAtWorld(FixedGridChunkManager* chunkManager, const glm::vec3& worldPos);
+        static uint32_t sampleMaterialAtWorld(FixedGridChunkManager* chunkManager, const glm::vec3& worldPos);
+
         void beginGameplayPreload(bool newRun);
         void bakeNebulaCubemap(int size);
         void setupSkybox();
@@ -552,6 +550,26 @@ namespace gl3 {
         float getPlayerMaxHealth() const { return playerMaxHealth; }
         void setPlayerHealth(float h) { playerHealth = glm::clamp(h, 0.0f, playerMaxHealth); }
         void setPlayerMaxHealth(float h) { playerMaxHealth = glm::max(1.0f, h); playerHealth = glm::min(playerHealth, playerMaxHealth); }
+        std::vector<float> playerDamageInstances;
+        float maxDamagePerTimeframe = 20.0f;
+        float damageTimeframe = 0.0125f;
+        float damageTimer = 0;
+        void registerPlayerDamage(float d) { playerDamageInstances.push_back(d);}
+        void applyPlayerDamage() {
+            float sum=0;
+            for(auto& damageInstance: playerDamageInstances )
+            {
+                sum+=damageInstance;
+            }
+            playerDamageInstances.clear();
+            if(sum>maxDamagePerTimeframe)
+            {
+                setPlayerHealth(maxDamagePerTimeframe);
+            } else
+            {
+                setPlayerHealth(getPlayerHealth()-sum);
+            }
+        }
         bool isPaused() const { return paused; }
         void setPaused(bool p);
         void togglePaused();
@@ -673,13 +691,6 @@ namespace gl3 {
                                 const glm::vec3 &hitNormal, float impactSpeed) const;
         std::vector<MaterialCollisionRule> materialRules;
         void initMaterialRules();
-        void convertWorldToMaterial(const glm::vec3& center, float radius, uint32_t material, float strength);
-
-        void convertSolidWorldToMaterial(const glm::vec3 &center, float radius, uint32_t material);
-
-        void convertWorldToType(const glm::vec3 &center, float radius, uint32_t type, float strength);
-
-        void convertSolidWorldToType(const glm::vec3 &center, float radius, uint32_t type);
 
         enum class PauseSubmenu {
             Main,
@@ -688,7 +699,26 @@ namespace gl3 {
 
         void applyMaterial9BurnAlongSegment(const glm::vec3 &from, const glm::vec3 &to, float radius);
 
+        void initFluidFBO();
+        bool isPointInsideFluid(const glm::vec3& worldPos) const;
+        GLuint fluidFBO = 0;
+        GLuint fluidColorTex = 0;
+        GLuint fluidDepthTex = 0;
+        GLuint fluidThicknessTex = 0;
+        std::vector<uint32_t> visibleFluidSlots;
+        bool chunkHasFluid(const Chunk& chunk);
+        void renderFluids();
+        glm::vec3 sampleFluidColorAtWorld(const glm::vec3& worldPos) const;
+        std::unique_ptr<Shader> fluidShader;
     public:
+        void convertWorldToMaterial(const glm::vec3& center, float radius, uint32_t material);
+        int Game::consumeWorldOfMaterial(const glm::vec3& center, float radius, uint32_t material);
+        void convertSolidWorldToMaterial(const glm::vec3 &center, float radius, uint32_t material);
+
+        void convertWorldToType(const glm::vec3 &center, float radius, uint32_t type, float strength);
+
+        void convertSolidWorldToType(const glm::vec3 &center, float radius, uint32_t type);
+
         enum class DisplayMode {
             Fullscreen = 0,
             Windowed = 1,
@@ -726,9 +756,10 @@ namespace gl3 {
                 {5120, 1440, "5120x1440 (Super UW)"}
         };
 
-        void applyDisplaySettings();   // implement in Game.cpp
-        //void applyAudioSettings();     // hook to your audio engine
-        //void applyVisualSettings();    // gamma/brightness uniforms/postprocess
+        void applyDisplaySettings();
+        //void applyAudioSettings();
+        //void applyVisualSettings();
+
         void pickResolutionFromNativeMonitor(bool applyNow);
 
         int findBestResolutionIndexForMonitor(GLFWmonitor *monitor) const;

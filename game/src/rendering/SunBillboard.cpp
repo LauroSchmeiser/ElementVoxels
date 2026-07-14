@@ -89,7 +89,7 @@ void SunBillboard::render(const std::vector<SunInstance>& instances, const glm::
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
     glEnable(GL_BLEND);
-    glBlendFunc(GL_ONE, GL_ONE); // additive
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
     glDepthMask(GL_FALSE);

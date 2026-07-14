@@ -193,9 +193,21 @@ namespace gl3 {
                             newDensity = voxel.density + (sdfValue * params.strength);
                         }
 
-                        if (std::abs(newDensity - voxel.density) > 0.001f) {
-                            const uint8_t newType = (newDensity < params.densityThreshold) ? 0 : params.targetType;
+                        const uint8_t newType = (newDensity < params.densityThreshold) ? 0 : params.targetType;
 
+                        const bool densityChanged =
+                                std::abs(newDensity - voxel.density) > 0.001f;
+
+                        const bool typeChanged =
+                                voxel.type != newType;
+
+                        const bool materialChanged =
+                                voxel.material != params.material;
+
+                        const bool colorChanged =
+                                voxel.color != params.color;
+
+                        if (densityChanged || typeChanged || materialChanged || colorChanged) {
                             updates.push_back(VoxelUpdate{
                                     chunk->coord,
                                     glm::ivec3(vx, vy, vz),

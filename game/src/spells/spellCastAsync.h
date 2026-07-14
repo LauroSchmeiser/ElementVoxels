@@ -19,7 +19,9 @@ namespace gl3 {
         // Inputs
         glm::vec3 center;
         float searchRadius = 0.0f;
+        bool hasTargetMaterial = false;
         uint64_t targetMaterial = 0;
+        std::vector<uint64_t> excludedMaterials;
         float strength = 1.0f;
         FormationParams baseFormationParams;
 

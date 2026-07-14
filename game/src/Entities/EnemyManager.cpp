@@ -158,9 +158,16 @@ namespace gl3 {
                 float radius = e.inst.type.radius * 1.5f;
                 int material = 0;
 
-                if (e.inst.type.radius == 8.0f * VOXEL_SIZE) {
+                if (strcmp(e.inst.type.name, "Boss1") == 0) {
                     radius = 10.0f * VOXEL_SIZE;
-                    material = 9;
+                } else if(strcmp(e.inst.type.name, "Boss2") == 0)
+                {
+                    radius = 10.0f * VOXEL_SIZE;
+                    material = 9.0f;
+                }else if(strcmp(e.inst.type.name, "Consumer") == 0)
+                {
+                    radius = 6.0f * VOXEL_SIZE;
+                    material = 7.0f;
                 }
 
                 if (game &&
@@ -203,6 +210,7 @@ namespace gl3 {
             }
 
             if (e.inst.hp <= 0.0f || totalVerts < kTooSmallVtx) {
+                game->convertWorldToMaterial(e.inst.position,e.inst.baseRadius*1.5f,7);
                 destroyEnemy(i);
                 continue;
             }
@@ -308,7 +316,7 @@ namespace gl3 {
 
     void EnemyManager::destroyEnemy(size_t index) {
         EnemyRuntime& e = enemies[index];
-
+        std::cout<<"destroy Enemy\n";
         if (physicsMgr && e.inst.bodyId != 0) {
             physicsMgr->removeBody(e.inst.bodyId);
             e.inst.bodyId = 0;
@@ -319,7 +327,6 @@ namespace gl3 {
         {
             destroyRenderMesh(e.renderParts.at(i).mesh);
         }
-
         enemies[index] = std::move(enemies.back());
         enemies.pop_back();
     }

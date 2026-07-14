@@ -38,14 +38,17 @@ void main() {
 
     if (r > 1.0) discard;
 
-    float core = smoothstep(0.35, 0.0, r);
-    float corona = smoothstep(0.9, 0.45, r) * (1.0 - core);
+    float aura = exp(-r * r * 2.5);
+    float turbulenceMask = smoothstep(0.3, 1.0, r);
+
+    float corona = smoothstep(0.95, 0.55, r);
 
     float t = fbm(uv * 5.0 + time * 0.7);
     float t2 = fbm(uv * 11.0 - time * 0.9 + vec2(3.1, 4.2));
     float turb = mix(t, t2, 0.5);
+    aura *= mix(1.0, 0.75 + turb * 0.35, turbulenceMask);
 
-    float intensity = clamp(core * (1.0 + 0.8 * turb) + corona * (0.6 + 0.6 * turb), 0.0, 2.0);
+    float intensity = clamp(aura * (1.0 + 0.8 * turb) + corona * (0.6 + 0.6 * turb), 0.0, 2.0);
 
     vec3 col = vColor * (0.6 + 0.8 * intensity);
 

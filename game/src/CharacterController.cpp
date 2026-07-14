@@ -78,6 +78,39 @@ namespace gl3 {
         return glm::length(outP - outQ);
     }
 
+    static float getSolidDensityAtWorld(FixedGridChunkManager *chunkManager, const glm::vec3 &worldPos) {
+        if (!chunkManager) return -10000.0f;
+
+        const float chunkWorldSize = CHUNK_SIZE * VOXEL_SIZE;
+        int cx = static_cast<int>(std::floor(worldPos.x / chunkWorldSize));
+        int cy = static_cast<int>(std::floor(worldPos.y / chunkWorldSize));
+        int cz = static_cast<int>(std::floor(worldPos.z / chunkWorldSize));
+
+        ChunkCoord coord{cx, cy, cz};
+        Chunk *chunk = chunkManager->getChunk(coord);
+        if (!chunk) return -10000.0f;
+
+        glm::vec3 chunkMin = glm::vec3(coord.x * chunkWorldSize,
+                                       coord.y * chunkWorldSize,
+                                       coord.z * chunkWorldSize);
+
+        glm::vec3 local = (worldPos - chunkMin) / VOXEL_SIZE;
+
+        int ix = static_cast<int>(std::lround(local.x));
+        int iy = static_cast<int>(std::lround(local.y));
+        int iz = static_cast<int>(std::lround(local.z));
+
+        ix = glm::clamp(ix, 0, CHUNK_SIZE);
+        iy = glm::clamp(iy, 0, CHUNK_SIZE);
+        iz = glm::clamp(iz, 0, CHUNK_SIZE);
+
+        const Voxel& v = chunk->voxels[ix][iy][iz];
+
+        if (v.type == 3) return -1000.0f; // fluid is non-solid for collision
+        if (v.type == 0) return -1000.0f; // air
+        return v.density;
+    }
+
     static float getDensityAtWorld(FixedGridChunkManager *chunkManager, const glm::vec3 &worldPos) {
         if (!chunkManager) return -10000.0f;
 
@@ -125,7 +158,6 @@ namespace gl3 {
 
         glm::vec3 local = (worldPos - chunkMin) / VOXEL_SIZE;
 
-        // fractional coordinates inside cell
         float fx = local.x - std::floor(local.x);
         float fy = local.y - std::floor(local.y);
         float fz = local.z - std::floor(local.z);
@@ -134,19 +166,17 @@ namespace gl3 {
         int iy = static_cast<int>(std::floor(local.y));
         int iz = static_cast<int>(std::floor(local.z));
 
-        // Build the eight corner sample world positions
         float samples[2][2][2];
         for (int dx = 0; dx <= 1; ++dx) {
             for (int dy = 0; dy <= 1; ++dy) {
                 for (int dz = 0; dz <= 1; ++dz) {
                     glm::vec3 cornerWorld =
-                            chunkMin + glm::vec3((float) (ix + dx), (float) (iy + dy), (float) (iz + dz)) * VOXEL_SIZE;
-                    samples[dx][dy][dz] = getDensityAtWorld(chunkManager, cornerWorld);
+                            chunkMin + glm::vec3((float)(ix + dx), (float)(iy + dy), (float)(iz + dz)) * VOXEL_SIZE;
+                    samples[dx][dy][dz] = getSolidDensityAtWorld(chunkManager, cornerWorld);
                 }
             }
         }
 
-        // trilinear interpolation
         auto lerp = [](float a, float b, float t) { return a + (b - a) * t; };
 
         float c00 = lerp(samples[0][0][0], samples[1][0][0], fx);
@@ -295,6 +325,10 @@ namespace gl3 {
     }
 
     void CharacterController::resolveCollisions() {
+        state.hasWorldContact = false;
+        state.currentContactMaterial = 0;
+        state.currentContactType = 0;
+
         const int maxIterations = 8;
 
         for (int i = 0; i < maxIterations; i++) {
@@ -329,6 +363,11 @@ namespace gl3 {
                 } else {
                     contactPoint = state.position - normal * radius;
                 }
+                state.currentContactPoint = contactPoint;
+                state.currentContactNormal = normal;
+                state.currentContactMaterial = Game::sampleMaterialAtWorld(chunkManager, contactPoint);
+                state.currentContactType = Game::sampleTypeAtWorld(chunkManager, contactPoint);
+                state.hasWorldContact = true;
 
                 if (shouldLandOnContact(normal)) {
                     beginSurfaceAdhesion(contactPoint, normal);
@@ -345,8 +384,7 @@ namespace gl3 {
                     state.velocity -= normal * velDotNormal;
                 }
 
-                if (playerBodyCollisionCallback && collidingBody&&collidingBody->impactVfxCooldown<=0) {
-                    collidingBody->impactVfxCooldown=2.0f;
+                if (playerBodyCollisionCallback && collidingBody) {
                     float playerSpeed = glm::length(state.velocity);
                     glm::vec3 contactPoint = state.position - normal * radius;
                     playerBodyCollisionCallback(collidingBody, contactPoint, normal, playerSpeed);
@@ -605,6 +643,12 @@ namespace gl3 {
                     state.adheredNormal = glm::normalize(gn);
                     state.isGrounded = true;
                     setGravityDirection(-state.adheredNormal);
+
+                    state.currentContactPoint = gp;
+                    state.currentContactNormal = gn;
+                    state.currentContactMaterial = Game::sampleMaterialAtWorld(chunkManager, gp);
+                    state.currentContactType = Game::sampleTypeAtWorld(chunkManager, gp);
+                    state.hasWorldContact = true;
                 }
             }
         } else {
@@ -925,11 +969,16 @@ namespace gl3 {
         }
     }
 
-    bool CharacterController::checkCameraCollision(const glm::vec3& cameraPos, float eyeRadius,
+    bool CharacterController::checkCameraCollision(glm::vec3& cameraPos, float eyeRadius,
                                                    glm::vec3& outNormal, float& outPenetration) const {
         if (!chunkManager) return false;
 
         float sdf = sampleDensityAtWorld(chunkManager, cameraPos);
+        uint8_t t = Game::sampleTypeAtWorld(chunkManager, cameraPos);
+        if (sdf > 0.0f && t != 3u) {
+            glm::vec3 normal = sampleNormalAtWorld(chunkManager,cameraPos);
+            cameraPos += normal * (sdf + VOXEL_SIZE * 0.05f);
+        }
         float pen = sdf - eyeRadius;
 
         if (pen <= 0.0f) return false;

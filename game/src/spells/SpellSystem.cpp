@@ -153,6 +153,16 @@ namespace gl3 {
 
         SpellCastRequest req = buildSpellCastRequestSnapshot(center, searchRadius, material, strength, params);
         req.physicsEnabled = true;
+        if(material!=9&&material!=7)
+        {
+            req.excludedMaterials.push_back(9);
+            req.excludedMaterials.push_back(7);
+        }
+        else
+        {
+            req.hasTargetMaterial = true;
+            req.targetMaterial = material;
+        }
         req.launchDir = direction;
         req.launchSpeed = strength * 120.0f * VOXEL_SIZE;
         req.lifetime = 20.0f;
@@ -500,7 +510,7 @@ namespace gl3 {
             }
 
             if (stillAnimating == 0) {
-                std::cout << "All voxels arrived. Cleaning voxel data.\n";
+                //std::cout << "All voxels arrived. Cleaning voxel data.\n";
                 s.voxelsCleaned = true;
 
                 // Clear animated voxel IDs (they're no longer needed)

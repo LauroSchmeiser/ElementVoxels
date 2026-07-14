@@ -179,10 +179,12 @@ namespace gl3 {
         ImGui::ProgressBar(progress, ImVec2(barW, 24.0f));
 
         if (ready) {
-            ImGui::SameLine();
+            game.requestSceneChange(SceneId::Gameplay);
+
+           /* ImGui::SameLine();
             if (ImGui::Button("Enter Game", ImVec2(btnW, 24.0f))) {
                 game.requestSceneChange(SceneId::Gameplay);
-            }
+            }*/
         }
 
         ImGui::End();

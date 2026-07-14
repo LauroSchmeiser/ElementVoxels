@@ -75,6 +75,12 @@ namespace gl3 {
 
         // Smoothed orientation up used by movement/camera
         glm::vec3 currentUp = glm::vec3(0.0f, 1.0f, 0.0f);
+
+        uint32_t currentContactMaterial = 0;
+        uint8_t currentContactType = 0;
+        glm::vec3 currentContactPoint = glm::vec3(0.0f);
+        glm::vec3 currentContactNormal = glm::vec3(0.0f, 1.0f, 0.0f);
+        bool hasWorldContact = false;
     };
 
     class CharacterController {
@@ -176,12 +182,17 @@ namespace gl3 {
         glm::vec3 getUpDirection() const;
 
         float getRadius() const { return radius; }
+
+        uint32_t getCurrentContactMaterial() const { return state.currentContactMaterial; }
+        uint8_t getCurrentContactType() const { return state.currentContactType; }
+        bool hasWorldContact() const { return state.hasWorldContact; }
+        glm::vec3 getCurrentContactPoint() const { return state.currentContactPoint; }
+        glm::vec3 getCurrentContactNormal() const { return state.currentContactNormal; }
     private:
         PlayerBodyCollisionCallback playerBodyCollisionCallback;
         bool depenetrateSphere(glm::vec3& center, float sphereRadius, int maxIterations = 8) const;
         void enforceCameraClearance();
-    private:
-        bool checkCameraCollision(const glm::vec3& cameraPos, float eyeRadius,
+        bool checkCameraCollision(glm::vec3& cameraPos, float eyeRadius,
                                   glm::vec3& outNormal, float& outPenetration) const;
 
         void enforceCameraClearanceAggressive();

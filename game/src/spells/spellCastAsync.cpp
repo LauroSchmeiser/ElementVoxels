@@ -138,6 +138,64 @@ namespace gl3 {
 
         int typeCounts[8] = {0};
 
+        constexpr int kMinVoxelsToCast = 3;
+
+        std::optional<uint64_t> resolvedMaterial;
+        if (req.hasTargetMaterial) {
+            resolvedMaterial = req.targetMaterial;
+        } else {
+            std::unordered_set<uint64_t> excluded(
+                    req.excludedMaterials.begin(),
+                    req.excludedMaterials.end()
+            );
+            std::unordered_map<uint64_t, int> materialCounts;
+
+            ZoneScopedN("SpellCastAsync::runJob::ResolveMaterial");
+
+            for (const auto& cs : req.chunks)
+            {
+                const glm::vec3 chunkMin = cs.chunkMinWorld;
+                const glm::vec3 chunkCenter = chunkMin + glm::vec3(CHUNK_SIZE * 0.5f) * VOXEL_SIZE;
+
+                float distToChunkCenter = glm::distance(chunkCenter, req.center);
+                float maxChunkDist = std::sqrt(3.0f) * (CHUNK_SIZE * VOXEL_SIZE * 0.5f);
+                if (distToChunkCenter > req.searchRadius + maxChunkDist) continue;
+
+                int startX = std::max(0, (int)((req.center.x - req.searchRadius - chunkMin.x) / VOXEL_SIZE));
+                int endX   = std::min(CHUNK_SIZE, (int)((req.center.x + req.searchRadius - chunkMin.x) / VOXEL_SIZE) + 1);
+                int startY = std::max(0, (int)((req.center.y - req.searchRadius - chunkMin.y) / VOXEL_SIZE));
+                int endY   = std::min(CHUNK_SIZE, (int)((req.center.y + req.searchRadius - chunkMin.y) / VOXEL_SIZE) + 1);
+                int startZ = std::max(0, (int)((req.center.z - req.searchRadius - chunkMin.z) / VOXEL_SIZE));
+                int endZ   = std::min(CHUNK_SIZE, (int)((req.center.z + req.searchRadius - chunkMin.z) / VOXEL_SIZE) + 1);
+
+                for (int x = startX; x <= endX && !resolvedMaterial.has_value(); ++x)
+                    for (int y = startY; y <= endY && !resolvedMaterial.has_value(); ++y)
+                        for (int z = startZ; z <= endZ && !resolvedMaterial.has_value(); ++z)
+                        {
+                            const Voxel& v = cs.voxelsLinear[linearIndex(x,y,z)];
+                            if (!v.isSolid()) continue;
+                            if (excluded.find(v.material) != excluded.end()) continue;
+
+                            glm::vec3 worldPos = chunkMin + glm::vec3((float)x, (float)y, (float)z) * VOXEL_SIZE;
+                            glm::vec3 diff = worldPos - req.center;
+                            float d2 = glm::dot(diff, diff);
+                            if (d2 > radiusSq) continue;
+
+                            int& count = materialCounts[v.material];
+                            ++count;
+
+                            if (count >= kMinVoxelsToCast) {
+                                resolvedMaterial = v.material;
+                            }
+                        }
+            }
+
+            if (!resolvedMaterial.has_value()) {
+                out.debugMsg = "No eligible material found with enough voxels to cast";
+                return out;
+            }
+        }
+
         // -------------------------------
         // 1) Scan candidates (snapshot)
         // -------------------------------
@@ -166,7 +224,7 @@ namespace gl3 {
                         {
                             const Voxel& v = cs.voxelsLinear[linearIndex(x,y,z)];
                             if (!v.isSolid()) continue;
-                            if (v.material != req.targetMaterial) continue;
+                            if (v.material != resolvedMaterial) continue;
 
                             glm::vec3 worldPos = chunkMin + glm::vec3((float)x, (float)y, (float)z) * VOXEL_SIZE;
                             glm::vec3 diff = worldPos - req.center;
@@ -185,14 +243,6 @@ namespace gl3 {
                             if (v.type < 8) typeCounts[v.type]++;
                         }
             }
-        }
-
-        constexpr int kMinVoxelsToCast = 3;
-
-        if ((int)candidates.size() < kMinVoxelsToCast)
-        {
-            out.debugMsg = "Not enough voxels found to cast";
-            return out; // ok stays false
         }
 
         // -------------------------------
@@ -380,7 +430,7 @@ namespace gl3 {
             spell.center = req.center;
             spell.radius = adjusted.getBoundingRadius();
             spell.strength = req.strength;
-            spell.targetMaterial = req.targetMaterial;
+            spell.targetMaterial = *resolvedMaterial;
             spell.dominantType = dominantType;
             spell.formationParams = adjusted;
             spell.formationColor = avgColor;

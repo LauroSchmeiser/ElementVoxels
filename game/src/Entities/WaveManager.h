@@ -9,7 +9,7 @@ namespace gl3 {
     struct WaveConfig {
         uint32_t waveNumber = 0;
         uint32_t totalEnemies = 0;
-        uint32_t maxConcurrentEnemies = 3;
+        uint32_t maxConcurrentEnemies = 5;
         bool isBossWave = false;
 
         float minEnemyRadius = 2.0f;
@@ -18,6 +18,9 @@ namespace gl3 {
         // Boss settings
         float bossRadius = 8.0f;
         float bossHealth = 7000.0f;
+
+        float enemyBaseHealth = 500.0f;
+
     };
 
     class WaveManager {
@@ -68,7 +71,7 @@ namespace gl3 {
         // Constants
         static constexpr uint32_t BOSS_WAVE_INTERVAL = 3;
         static constexpr float MIN_SPAWN_DISTANCE = 50.0f*VOXEL_SIZE;
-        static constexpr float MAX_SPAWN_DISTANCE = 150.0f*VOXEL_SIZE;
+        static constexpr float MAX_SPAWN_DISTANCE = 100.0f*VOXEL_SIZE;
 
         glm::vec3 playerPos;
     };

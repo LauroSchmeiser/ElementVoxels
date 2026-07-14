@@ -78,6 +78,7 @@ namespace gl3 {
 
     void WaveManager::startNextWave() {
         currentWave++;
+        config.maxConcurrentEnemies+=glm::ceil(currentWave/2);
 
         waveActive = true;
         spawnTimer = 0.0f;
@@ -95,7 +96,8 @@ namespace gl3 {
             spawnBoss();
         } else {
             config.waveNumber = currentWave;
-            config.totalEnemies = 2 + (currentWave - 1)*2;
+            config.totalEnemies = 4 + (currentWave - 1)*2;
+            config.enemyBaseHealth+=(currentWave)*50;
             config.isBossWave = false;
             enemiesToSpawn = config.totalEnemies;
         }
@@ -111,7 +113,7 @@ namespace gl3 {
 
         static EnemyArchetype basic;
         basic.name = "Basic";
-        basic.maxHP = 1000.0f;
+        basic.maxHP = config.enemyBaseHealth*2;
         basic.moveSpeed = 10.0f;
         basic.shapeType = VoxelPhysicsBody::ShapeType::SPHERE;
         basic.mass = 50.0f;
@@ -120,12 +122,21 @@ namespace gl3 {
 
         static EnemyArchetype dasher;
         dasher.name = "Dasher";
-        dasher.maxHP = 500.0f;
+        dasher.maxHP = config.enemyBaseHealth;
         dasher.moveSpeed = 50.0f;
         dasher.shapeType = VoxelPhysicsBody::ShapeType::SPHERE;
         dasher.mass = 10.0f;
         dasher.radius = 2.0f * VOXEL_SIZE;
         dasher.cooldownsSec = { 0.0f, 3.0f, 0.0f };
+
+        static EnemyArchetype consumer;
+        consumer.name = "Consumer";
+        consumer.maxHP = config.enemyBaseHealth*3;
+        consumer.moveSpeed = 30.0f;
+        consumer.shapeType = VoxelPhysicsBody::ShapeType::SPHERE;
+        consumer.mass = 10.0f;
+        consumer.radius = 4.0f * VOXEL_SIZE;
+        consumer.cooldownsSec = { 6.0f, 10.0f, 0.0f };
 
 
         enemyManager->spawn(basic, spawnPos);
@@ -138,7 +149,13 @@ namespace gl3 {
         glm::vec3 spawnPos = getRandomSpawnPosition(playerPos, MIN_SPAWN_DISTANCE, MAX_SPAWN_DISTANCE);
 
         EnemyArchetype bossArchetype;
-        bossArchetype.name = "Boss";
+        if(currentWave<2*BOSS_WAVE_INTERVAL)
+        {
+            bossArchetype.name = "Boss1";
+        } else
+        {
+            bossArchetype.name = "Boss2";
+        }
         bossArchetype.maxHP = config.bossHealth;
         bossArchetype.moveSpeed = 40.0f;
         bossArchetype.radius = config.bossRadius * VOXEL_SIZE;

@@ -14,6 +14,8 @@ namespace gl3 {
         //MAX_CHUNKS_GPU = (int)chunkManager->maxChunksGpu();
         setupLightSSBOs();
         setupChunkBatchBuffers(MAX_CHUNKS_GPU);
+        fluidMarchingCubesShader = std::make_unique<Shader>("shaders/fluid_marching_cubes.comp");
+        setupFluidBatchBuffers(MAX_CHUNKS_GPU);
     }
 
     void ChunkRenderer::setupSSBOsAndTables() {
@@ -292,7 +294,7 @@ namespace gl3 {
         MAX_CHUNKS_GPU = maxChunksGpu;
         CHUNK_MAX_VERTS = (DIM - 1) * (DIM - 1) * (DIM - 1) * 5 * 3;
 
-        const int MAX_VERTS_PER_CHUNK = 10000;
+        const int MAX_VERTS_PER_CHUNK = 8000;
         CHUNK_MAX_VERTS = std::min(
                 (int)chunkMaxVertices(DIM),
                 MAX_VERTS_PER_CHUNK
@@ -534,14 +536,14 @@ namespace gl3 {
 
         // 2) If no lights, done
         if (rawLights.empty()) {
-            std::cout << "Light spatial hash updated: 0 grid cells; 0 emissive blobs\n";
+            //std::cout << "Light spatial hash updated: 0 grid cells; 0 emissive blobs\n";
             return;
         }
 
         // 3) Simple greedy clustering (merge lights that are spatially close)
         // Tune this merge radius. Using CHUNK_SIZE * 1.5 means lights that spill over
         // into adjacent chunks are folded into a single logical emitter.
-        const float MERGE_RADIUS = DIM * 12.0f;
+        const float MERGE_RADIUS = DIM * VOXEL_SIZE* 1.5f;
         const float MERGE_RADIUS_SQ = MERGE_RADIUS * MERGE_RADIUS;
 
         std::vector<char> used(rawLights.size(), 0);
@@ -568,7 +570,6 @@ namespace gl3 {
                     accumColor += L->color * w;
                     totalIntensity += L->intensity;
                     amountMerged++;
-                    // You can combine ids in a deterministic way if needed; keep first for now
                 }
             }
 
@@ -587,6 +588,7 @@ namespace gl3 {
             // store into pool and push pointer into flat list
             mergedEmissiveLightPool.push_back(merged);
         }
+        //std::cout<<"mergedEmissiveLightPool: "<<mergedEmissiveLightPool.size()<<"\n";
 
         // 4) Build final flat list of pointers into mergedEmissiveLightPool
         flatEmissiveLightList.reserve(mergedEmissiveLightPool.size());
@@ -594,9 +596,9 @@ namespace gl3 {
             flatEmissiveLightList.push_back(&m);
         }
 
-        std::cout << "Light spatial hash updated: " << lightSpatialHash.size()
+        /*std::cout << "Light spatial hash updated: " << lightSpatialHash.size()
                   << " grid cells; raw=" << rawLights.size()
-                  << " merged=" << mergedEmissiveLightPool.size() << " emissive blobs\n";
+                  << " merged=" << mergedEmissiveLightPool.size() << " emissive blobs\n";*/
     }
     void ChunkRenderer::uploadMergedLightsToGPU()
     {
@@ -629,6 +631,22 @@ namespace gl3 {
             }
         }
     }
+    void ChunkRenderer::collectMergedEmissiveBillboards(std::vector<SunInstance>& out)
+    {
+        out.reserve(out.size() + mergedEmissiveLightPool.size());
+        for (const auto& light : mergedEmissiveLightPool)
+        {
+            SunInstance inst;
+
+            inst.position = light.pos;
+            inst.color    = light.color;
+
+            // Whatever scaling you like
+            inst.scale = std::sqrt(light.intensity) * 1.0f;
+
+            out.push_back(inst);
+        }
+    }
 
     void ChunkRenderer::setupLightSSBOs()
     {
@@ -641,5 +659,106 @@ namespace gl3 {
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboChunkLightIdx);
         glBufferData(GL_SHADER_STORAGE_BUFFER, MAX_CHUNKS_GPU * sizeof(ChunkLightIndexGpu), nullptr, GL_DYNAMIC_DRAW);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
+
+    void ChunkRenderer::setupFluidBatchBuffers(int maxChunksGpu)
+    {
+        FLUID_CHUNK_MAX_VERTS = 8000;
+
+        glGenBuffers(1, &globalFluidVertexBuffer);
+        glBindBuffer(GL_ARRAY_BUFFER, globalFluidVertexBuffer);
+        glBufferData(GL_ARRAY_BUFFER,
+                     MAX_CHUNKS_GPU * FLUID_CHUNK_MAX_VERTS * sizeof(OutVertexStd430),
+                     nullptr,
+                     GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+        glGenBuffers(1, &fluidIndirectBuffer);
+
+        std::vector<DrawArraysIndirectCommand> cmds(MAX_CHUNKS_GPU);
+        for (uint32_t s = 0; s < (uint32_t)MAX_CHUNKS_GPU; ++s) {
+            cmds[s].count = 0;
+            cmds[s].instanceCount = 1;
+            cmds[s].first = s * (uint32_t)FLUID_CHUNK_MAX_VERTS;
+            cmds[s].baseInstance = s;
+        }
+
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, fluidIndirectBuffer);
+        glBufferData(GL_DRAW_INDIRECT_BUFFER,
+                     cmds.size() * sizeof(DrawArraysIndirectCommand),
+                     cmds.data(),
+                     GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+
+        glGenVertexArrays(1, &globalFluidVAO);
+        glBindVertexArray(globalFluidVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, globalFluidVertexBuffer);
+
+        constexpr GLsizei stride = sizeof(OutVertexStd430);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void*)offsetof(OutVertexStd430, pos));
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void*)offsetof(OutVertexStd430, normal));
+        glEnableVertexAttribArray(2);
+        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, stride, (void*)offsetof(OutVertexStd430, color));
+        glEnableVertexAttribArray(3);
+        glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, stride, (void*)offsetof(OutVertexStd430, uv));
+        glEnableVertexAttribArray(4);
+        glVertexAttribIPointer(4, 1, GL_UNSIGNED_INT, stride, (void*)offsetof(OutVertexStd430, flags));
+
+        glBindVertexArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+
+    void ChunkRenderer::generateFluidMesh(Chunk* chunk)
+    {
+        if (!chunk) return;
+
+        fluidMarchingCubesShader->use();
+
+        uploadVoxelChunk(*chunk, nullptr);
+        resetAtomicCounter();
+        glm::vec3 chunkOrigin(
+                chunk->coord.x * CHUNK_SIZE * VOXEL_SIZE,
+                chunk->coord.y * CHUNK_SIZE * VOXEL_SIZE,
+                chunk->coord.z * CHUNK_SIZE * VOXEL_SIZE
+        );
+        setComputeUniforms(chunkOrigin, *fluidMarchingCubesShader);
+
+        fluidMarchingCubesShader->setUInt("uChunkSlot", chunk->gpuSlot);
+        fluidMarchingCubesShader->setUInt("uChunkMaxVerts", (uint32_t)FLUID_CHUNK_MAX_VERTS);
+
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssboVoxels);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ssboEdgeTable);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, ssboTriTable);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, ssboCounter);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, globalFluidVertexBuffer);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, fluidIndirectBuffer);
+
+        int cellsPerAxis = DIM - 1;
+        int groups = (cellsPerAxis + 7) / 8;
+        glDispatchCompute(groups, groups, groups);
+
+        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT |
+                        GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT |
+                        GL_COMMAND_BARRIER_BIT);
+
+        uint32_t produced = 0;
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(uint32_t), &produced);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+        DrawArraysIndirectCommand cmd{};
+        cmd.count = produced;
+        cmd.instanceCount = 1;
+        cmd.first = chunk->gpuSlot * (uint32_t)FLUID_CHUNK_MAX_VERTS;
+        cmd.baseInstance = chunk->gpuSlot;
+
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, fluidIndirectBuffer);
+        glBufferSubData(GL_DRAW_INDIRECT_BUFFER,
+                        chunk->gpuSlot * sizeof(DrawArraysIndirectCommand),
+                        sizeof(DrawArraysIndirectCommand),
+                        &cmd);
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
     }
 }
