@@ -294,7 +294,7 @@ namespace gl3 {
         MAX_CHUNKS_GPU = maxChunksGpu;
         CHUNK_MAX_VERTS = (DIM - 1) * (DIM - 1) * (DIM - 1) * 5 * 3;
 
-        const int MAX_VERTS_PER_CHUNK = 8000;
+        const int MAX_VERTS_PER_CHUNK = 12000;
         CHUNK_MAX_VERTS = std::min(
                 (int)chunkMaxVertices(DIM),
                 MAX_VERTS_PER_CHUNK
@@ -663,7 +663,7 @@ namespace gl3 {
 
     void ChunkRenderer::setupFluidBatchBuffers(int maxChunksGpu)
     {
-        FLUID_CHUNK_MAX_VERTS = 8000;
+        FLUID_CHUNK_MAX_VERTS = 12000;
 
         glGenBuffers(1, &globalFluidVertexBuffer);
         glBindBuffer(GL_ARRAY_BUFFER, globalFluidVertexBuffer);

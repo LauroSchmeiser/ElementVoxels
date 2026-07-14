@@ -123,6 +123,7 @@ namespace gl3 {
             game->windowHeight = height;
             game->initPostFBO();
             game->initFluidFBO();
+            game->initCompositeFBO();
         }
     }
 
@@ -482,15 +483,15 @@ namespace gl3 {
 
     void Game::renderGameplayFrame()
     {
-        // 1) main scene
+        // 1) main scene - render to postFBO
         glBindFramebuffer(GL_FRAMEBUFFER, postFBO);
         glViewport(0, 0, windowWidth, windowHeight);
         glEnable(GL_DEPTH_TEST);
         glDepthMask(GL_TRUE);
-        glClearColor(0,0,0,1);
+        glClearColor(0, 0, 0, 1);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        if(!DebugMode1) renderSkybox();
+        if (!DebugMode1) renderSkybox();
         renderChunks();
         renderAnimatedVoxels();
         renderPhysicsFormations();
@@ -498,23 +499,22 @@ namespace gl3 {
         renderEnemies();
         renderSpellPreview();
 
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-        // 2) fluid pass
+        // 2) fluid pass - render to fluidFBO
         glBindFramebuffer(GL_FRAMEBUFFER, fluidFBO);
         glViewport(0, 0, windowWidth, windowHeight);
         glEnable(GL_DEPTH_TEST);
         glDepthMask(GL_TRUE);
-        glClearColor(0,0,0,0);
+        glClearColor(0, 0, 0, 0);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
         renderFluids();
 
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-        // 3) final composite
+        // 3) final composite - render to compositeFBO
+        glBindFramebuffer(GL_FRAMEBUFFER, compositeFBO);
+        glViewport(0, 0, windowWidth, windowHeight);
         glDisable(GL_DEPTH_TEST);
         glDepthMask(GL_FALSE);
+        glClearColor(0, 0, 0, 1);
+        glClear(GL_COLOR_BUFFER_BIT);
 
         postShader->use();
 
@@ -543,15 +543,32 @@ namespace gl3 {
 
         bool inside = isPointInsideFluid(cameraPos);
         postShader->setInt("uCameraInsideFluid", inside ? 1 : 0);
-        postShader->setVec3("uFluidFogColor", glm::vec3(1.0f,0.0f,0.0f));
+        postShader->setVec3("uFluidFogColor", glm::vec3(1.0f, 0.0f, 0.0f));
         postShader->setFloat("uFluidFogDensity", 1.0f);
 
         glBindVertexArray(postVAO);
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glBindVertexArray(0);
 
-        renderSpeedLines();
+        // 4) Render speed lines - use composite texture as input
+        renderSpeedLines(compositeColorTex);  // Pass the composite texture
+
+        // 5) Render final result to screen (default framebuffer)
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, windowWidth, windowHeight);
+        glDisable(GL_DEPTH_TEST);
+        glDepthMask(GL_FALSE);
+        glClearColor(0, 0, 0, 1);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        // Simple shader to render the composite texture to screen
+        renderTextureToScreen(compositeColorTex);
+
+        // 6) Render UI on top
         renderGameplayUI();
+
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_TRUE);
     }
 
     void gl3::Game::beginGameplayPreload(bool newRun)
@@ -602,6 +619,7 @@ namespace gl3 {
                 preloadStageName = "Preparing Post-processing...";
                 initPostFBO();
                 initFluidFBO();
+                initCompositeFBO();
                 preloadStage = PreloadStage::Boot_SSBOs;
                 return 0.25f;
 
@@ -4191,7 +4209,8 @@ visibleFluidSlots.clear();
         }
     }
 
-    void Game::renderSpeedLines() {
+    void Game::renderSpeedLines(GLuint sceneTexture)
+    {
         if (!speedLinesShader || !enableSpeedLines) return;
 
         // Get player velocity
@@ -4199,27 +4218,30 @@ visibleFluidSlots.clear();
         float speed = glm::length(velocity);
 
         // Normalize speed (adjust maxSpeed to your game's scale)
-        const float maxSpeed = 100.0f; // Tune this based on your movement speed
+        const float maxSpeed = 100.0f;
         float normalizedSpeed = glm::clamp(speed / maxSpeed, 0.0f, 1.5f) * speedLinesIntensity;
 
         if (normalizedSpeed < 0.05f) return; // Skip if too slow
 
+        // Bind composite FBO so speed lines render to the composite texture
+        glBindFramebuffer(GL_FRAMEBUFFER, compositeFBO);
+        glViewport(0, 0, windowWidth, windowHeight);
         glDisable(GL_DEPTH_TEST);
         glDepthMask(GL_FALSE);
 
         speedLinesShader->use();
 
-        // Bind the scene texture rendered in postColorTex
+        // Bind the scene texture (composite scene with fluids)
         speedLinesShader->setInt("uSceneTexture", 0);
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, postColorTex);
+        glBindTexture(GL_TEXTURE_2D, sceneTexture);
 
         // Pass velocity and speed
         speedLinesShader->setVec3("uVelocity3D", velocity);
         speedLinesShader->setFloat("uSpeed", normalizedSpeed);
         speedLinesShader->setFloat("uTime", (float)glfwGetTime());
 
-        // Camera matrices (not used for radial, but kept for future variants)
+        // Camera matrices
         float aspect = (float)windowWidth / (float)windowHeight;
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
         glm::vec3 camUp = getCameraUp();
@@ -4230,44 +4252,44 @@ visibleFluidSlots.clear();
         speedLinesShader->setVec3("uCameraPos", cameraPos);
 
         // RADIAL LINE SETTINGS
-        speedLinesShader->setFloat("uLineCount", 10.0f);        // Number of lines
-        speedLinesShader->setFloat("uLineWidth", 0.15f);       // Thickness
-        speedLinesShader->setFloat("uLineSharpness", 0.95f);    // Edge sharpness (higher = sharper)
-        speedLinesShader->setFloat("uInnerRadius", 0.35f);      // Clear center zone
-        speedLinesShader->setFloat("uOuterFade", 0.85f);        // Where lines fade at edges
+        speedLinesShader->setFloat("uLineCount", 10.0f);
+        speedLinesShader->setFloat("uLineWidth", 0.15f);
+        speedLinesShader->setFloat("uLineSharpness", 0.95f);
+        speedLinesShader->setFloat("uInnerRadius", 0.35f);
+        speedLinesShader->setFloat("uOuterFade", 0.85f);
         speedLinesShader->setFloat("uVignetteStrength", 0.4f);
-        speedLinesShader->setFloat("uLineOpacity", 0.7f);       // Overall line visibility
+        speedLinesShader->setFloat("uLineOpacity", 0.7f);
 
         // Change color based on game state
-        glm::vec3 lineColor = glm::vec3(1.0f, 1.0f, 1.0f); // White default
+        glm::vec3 lineColor = glm::vec3(1.0f, 1.0f, 1.0f);
 
         if (characterController->getState().isSprinting) {
-            lineColor = glm::vec3(0.3f, 0.7f, 1.0f); // Blue for sprint
-            speedLinesShader->setFloat("uLineCount", 22.0f); // More lines when sprinting
-            speedLinesShader->setFloat("uLineWidth", 0.1f); // Thicker
-            speedLinesShader->setFloat("uInnerRadius", 0.25f);      // Clear center zone
-            speedLinesShader->setFloat("uLineOpacity", 0.9f);       // Overall line visibility
-
-
-
+            lineColor = glm::vec3(0.3f, 0.7f, 1.0f);
+            speedLinesShader->setFloat("uLineCount", 22.0f);
+            speedLinesShader->setFloat("uLineWidth", 0.1f);
+            speedLinesShader->setFloat("uInnerRadius", 0.25f);
+            speedLinesShader->setFloat("uLineOpacity", 0.9f);
         }
         if (characterController->getState().isAirSlamming) {
-            lineColor = glm::vec3(1.0f, 0.3f, 0.3f); // Red for air slam
-            speedLinesShader->setFloat("uLineCount", 18.0f); // Even more lines
-            speedLinesShader->setFloat("uLineWidth", 0.15f); // Thicker
-            speedLinesShader->setFloat("uInnerRadius", 0.30f);      // Clear center zone
-            speedLinesShader->setFloat("uLineOpacity", 0.8f);       // Overall line visibility
-
-
+            lineColor = glm::vec3(1.0f, 0.3f, 0.3f);
+            speedLinesShader->setFloat("uLineCount", 18.0f);
+            speedLinesShader->setFloat("uLineWidth", 0.15f);
+            speedLinesShader->setFloat("uInnerRadius", 0.30f);
+            speedLinesShader->setFloat("uLineOpacity", 0.8f);
         }
 
         speedLinesShader->setVec3("uLineColor", lineColor);
+
+        // Enable blending for speed lines
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
         // Draw fullscreen triangle
         glBindVertexArray(postVAO);
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glBindVertexArray(0);
 
+        glDisable(GL_BLEND);
         glDepthMask(GL_TRUE);
         glEnable(GL_DEPTH_TEST);
     }
@@ -5030,5 +5052,43 @@ visibleFluidSlots.clear();
                     if (chunk.voxels[x][y][z].type == 3)
                         return true;
         return false;
+    }
+
+    void Game::initCompositeFBO() {
+        if (compositeFBO) {
+            glDeleteFramebuffers(1, &compositeFBO);
+            glDeleteTextures(1, &compositeColorTex);
+        }
+
+        glGenFramebuffers(1, &compositeFBO);
+        glBindFramebuffer(GL_FRAMEBUFFER, compositeFBO);
+
+        glGenTextures(1, &compositeColorTex);
+        glBindTexture(GL_TEXTURE_2D, compositeColorTex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, windowWidth, windowHeight, 0, GL_RGBA, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, compositeColorTex, 0);
+
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+    void Game::renderTextureToScreen(GLuint textureID)
+    {
+        static Shader* screenShader = nullptr;
+        if (!screenShader) {
+            screenShader = new Shader(
+                    "shaders/post_fullscreen.vert",
+                    "shaders/screen_quad.frag"  // Simple shader that just samples a texture
+            );
+        }
+
+        screenShader->use();
+        screenShader->setInt("uTexture", 0);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, textureID);
+
+        glBindVertexArray(postVAO);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glBindVertexArray(0);
     }
 }

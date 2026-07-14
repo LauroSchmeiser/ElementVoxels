@@ -652,6 +652,7 @@ namespace gl3 {
         std::vector<DrawArraysIndirectCommand> visibleDrawCmds;
         std::vector<uint32_t> visibleSlots;
 
+
         void findNearbyVoxelsForVisualNew(const glm::vec3 &center, float radius, uint64_t targetMaterial,
                                           std::vector<AnimatedVoxel> &results, float strength,
                                           uint8_t &outDominantType);
@@ -671,7 +672,7 @@ namespace gl3 {
         float speedLinesIntensity = 1.0f;
 
         void initSpeedLinesShader();
-        void renderSpeedLines();
+        void renderSpeedLines(GLuint sceneTexture);
 
         WaveManager waveManager;
 
@@ -710,6 +711,9 @@ namespace gl3 {
         void renderFluids();
         glm::vec3 sampleFluidColorAtWorld(const glm::vec3& worldPos) const;
         std::unique_ptr<Shader> fluidShader;
+        GLuint compositeFBO = 0;
+        GLuint compositeColorTex = 0;
+
     public:
         void convertWorldToMaterial(const glm::vec3& center, float radius, uint32_t material);
         int Game::consumeWorldOfMaterial(const glm::vec3& center, float radius, uint32_t material);
@@ -793,6 +797,10 @@ namespace gl3 {
         void recomputeSpellDerivedStats(SpellPreset& p);
 
         SpellPreset& getSpellPreset(int i) { return spellPresets[i]; }
+
+        void initCompositeFBO();
+
+        void renderTextureToScreen(GLuint textureID);
     };
 
 }
