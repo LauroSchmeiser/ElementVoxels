@@ -113,6 +113,7 @@ void main()
     //color = tonemapReinhard(color);
     //color = pow(max(color, vec3(0.0)), vec3(1.0 / uGamma));
 
+
     vec4 fluidSurface = texture(uFluidColor, vUV);
     float fluidDepth01 = texture(uFluidDepth, vUV).r;
     float thickness = texture(uFluidThickness, vUV).r;
@@ -123,14 +124,22 @@ void main()
         float fluidLin = linearizeDepth(fluidDepth01, uNear, uFar);
         float sceneLin = linearizeDepth(d01, uNear, uFar);
 
+        // If fluid is in front of or at the scene depth, blend it
         if (fluidLin <= sceneLin + 1e-3 || d01 >= 0.9999) {
-            color = mix(color, fluidSurface.rgb, fluidSurface.a);
+            // Use the thickness for fog
+            float fogAmount = thickness * 0.15;
+            vec3 foggedColor = mix(color, uFluidFogColor, fogAmount);
+
+            // Blend fluid surface with fog
+            float blendAlpha = fluidSurface.a * (1.0 - fogAmount * 0.3);
+            color = mix(foggedColor, fluidSurface.rgb, blendAlpha);
         }
     }
 
     if (uCameraInsideFluid != 0) {
-        float depthFog = 1.0 - exp(-dLin * uFluidFogDensity);
-        depthFog = clamp(depthFog + thickness * 0.03, 0.0, 1.0);
+        // When inside fluid, apply strong fog
+        float depthFog = 1.0 - exp(-dLin * uFluidFogDensity * 0.3);
+        depthFog = clamp(depthFog + thickness * 0.1, 0.0, 1.0);
         color = mix(color, uFluidFogColor, depthFog);
     }
 

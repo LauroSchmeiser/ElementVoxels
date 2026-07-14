@@ -216,8 +216,8 @@ namespace gl3 {
         // Capsule center segment
         float halfSegment = glm::max(0.0f, (currentHeight * 0.5f) - radius);
         glm::vec3 up = getUpDirection();
-        glm::vec3 p0 = testPosition - up * halfSegment; // bottom
-        glm::vec3 p1 = testPosition + up * halfSegment; // top
+        glm::vec3 p0 = testPosition - up * halfSegment;
+        glm::vec3 p1 = testPosition + up * halfSegment;
         float segmentLength = glm::length(p1 - p0);
 
         const float maxStep = VOXEL_SIZE * 0.5f;
@@ -413,23 +413,23 @@ namespace gl3 {
     }
 
     void CharacterController::applyFriction(float deltaTime) {
-        if (state.isGrounded) {
-            float speed = glm::length(state.velocity);
+        float speed = glm::length(state.velocity);
+        if (speed <= 0.01f) return;
 
-            if (speed > 0.01f) {
-                float drop = speed * settings.friction * deltaTime;
-                float newSpeed = glm::max(speed - drop, 0.0f);
-                state.velocity *= newSpeed / speed;
-            }
+        float drop = 0.0f;
+        if (state.isInFluid) {
+            // Fluid friction - stronger drag
+            drop = speed * (settings.fluidResistance * 0.5f) * deltaTime;
+            // Additional resistance at higher speeds
+            drop += speed * speed * 0.01f * deltaTime;
+        } else if (state.isGrounded) {
+            drop = speed * settings.friction * deltaTime;
         } else {
-            float speed = glm::length(state.velocity);
-
-            if (speed > 0.01f) {
-                float drop = speed * settings.airFriction * deltaTime;
-                float newSpeed = glm::max(speed - drop, 0.0f);
-                state.velocity *= newSpeed / speed;
-            }
+            drop = speed * settings.airFriction * deltaTime;
         }
+
+        float newSpeed = glm::max(speed - drop, 0.0f);
+        state.velocity *= newSpeed / speed;
     }
 
     void CharacterController::accelerate(const glm::vec3 &wishDir, float wishSpeed,
@@ -446,16 +446,53 @@ namespace gl3 {
     }
 
     void CharacterController::move(float deltaTime) {
-        // Apply gravity (with air slam modifier)
+        // Check if player is in fluid
+        bool wasInFluid = state.isInFluid;
+        state.isInFluid = isPointInFluid(chunkManager, state.position);
+
+        // Update fluid depth and normal
+        if (state.isInFluid) {
+            // Sample fluid density at several points to determine depth
+            glm::vec3 up = getUpDirection();
+            float depthSamples = 0.0f;
+            float totalDensity = 0.0f;
+
+            // Sample along a line going upward from the player
+            for (int i = 0; i <= 10; ++i) {
+                float t = (float)i / 10.0f;
+                glm::vec3 samplePos = state.position + up * t * radius * 2.0f;
+                float d = getFluidDensityAtWorld(chunkManager, samplePos);
+                if (d > 0.0f) {
+                    totalDensity += d;
+                    depthSamples += 1.0f;
+                }
+            }
+            state.fluidDepth = depthSamples > 0.0f ? totalDensity / depthSamples : 0.0f;
+
+            // Get fluid surface normal (where density goes from positive to zero)
+            state.fluidNormal = getFluidNormalAtWorld(chunkManager, state.position);
+        } else {
+            state.fluidDepth = 0.0f;
+        }
+
+        // Apply gravity with fluid buoyancy
         float gravityMultiplier = 1.0f;
         float velAlongGravity = glm::dot(state.velocity, settings.gravityDir);
-        if (state.isAirSlamming) {
+
+        if (state.isInFluid) {
+            // Apply buoyancy (upward force)
+            float buoyancyForce = settings.fluidBuoyancy * state.fluidDepth * settings.fluidDensity;
+            state.velocity += -settings.gravityDir * buoyancyForce * deltaTime;
+
+            // Reduce gravity in fluid
+            gravityMultiplier = 0.2f; // 20% gravity in water
+        } else if (state.isAirSlamming) {
             gravityMultiplier = settings.airSlamGravityMultiplier;
         } else if (!state.isGrounded && velAlongGravity > 0.0f) {
             gravityMultiplier = settings.fallingGravityMultiplier;
         }
 
-        if (!state.isGrounded) {
+        if (!state.isGrounded && !state.isInFluid) {
             state.velocity += settings.gravityDir * settings.gravity * gravityMultiplier * deltaTime;
 
             float alongGrav = glm::dot(state.velocity, settings.gravityDir);
@@ -465,7 +502,18 @@ namespace gl3 {
             }
         }
 
-        // Update position with collision sliding
+        // Apply fluid resistance (drag)
+        if (state.isInFluid) {
+            float speed = glm::length(state.velocity);
+            if (speed > 0.001f) {
+                // Apply resistance opposite to velocity direction
+                float dragFactor = 1.0f - settings.fluidResistance * deltaTime * 2.0f;
+                dragFactor = glm::max(dragFactor, 0.1f);
+                state.velocity *= dragFactor;
+            }
+        }
+
+        // Update position with collision sliding (same as before)
         glm::vec3 moveStep = state.velocity * deltaTime;
         glm::vec3 newPosition = state.position;
 
@@ -476,6 +524,7 @@ namespace gl3 {
         for (int i = 0; i < steps; i++) {
             newPosition += step;
 
+            // Check solid collision (fluid is ignored for solid collision)
             glm::vec3 normal;
             float penetration;
             if (checkCollision(newPosition, normal, penetration)) {
@@ -493,7 +542,7 @@ namespace gl3 {
             }
         }
 
-        // ONLY snap to ground if moving fast enough (prevents standing jank)
+        // Snap to ground (same as before)
         if (state.isGrounded && glm::length(state.velocity) > 1.0f) {
             glm::vec3 gp, gn;
             float gd = 0.0f;
@@ -542,8 +591,8 @@ namespace gl3 {
                                      bool jumpInput, bool sprintInput,
                                      bool crouchInput, const glm::vec2 &mouseDelta,
                                      const glm::vec3 &cameraForward, const glm::vec3 &cameraRight,
-                                     bool airResetInput) { // ADDED: airResetInput parameter
-        // Update coyote time and jump buffer
+                                     bool airResetInput) {
+        // Update coyote time and jump buffer (same as before)
         if (state.isGrounded) {
             state.coyoteTime = settings.coyoteTimeDuration;
         } else {
@@ -565,7 +614,6 @@ namespace gl3 {
         updateAirSlam(deltaTime);
 
         updateSurfaceAdhesion(deltaTime);
-        //updateOrientation(deltaTime);
 
         // Handle crouching
         bool wantsCrouch = crouchInput;
@@ -579,8 +627,13 @@ namespace gl3 {
         state.isSprinting = sprintInput && !state.isCrouching && state.isGrounded;
 
         // Calculate movement speed
-        float targetSpeed = state.isCrouching ? settings.crouchSpeed :
-                            (state.isSprinting ? settings.sprintSpeed : settings.walkSpeed);
+        float targetSpeed;
+        if (state.isInFluid) {
+            targetSpeed = settings.fluidSwimSpeed;
+        } else {
+            targetSpeed = state.isCrouching ? settings.crouchSpeed :
+                          (state.isSprinting ? settings.sprintSpeed : settings.walkSpeed);
+        }
 
         glm::vec3 up = getUpDirection();
 
@@ -597,12 +650,29 @@ namespace gl3 {
         applyFriction(deltaTime);
 
         // Apply acceleration
-        float accel = state.isGrounded ? settings.acceleration :
-                      settings.acceleration * settings.airControl;
+        float accel;
+        if (state.isInFluid) {
+            accel = settings.fluidSwimAcceleration;
+        } else {
+            accel = state.isGrounded ? settings.acceleration :
+                    settings.acceleration * settings.airControl;
+        }
         accelerate(wishDir, targetSpeed, accel, deltaTime);
 
-        // Handle jumping (can't jump while air slamming)
-        if (!state.isAirSlamming && state.jumpBuffer > 0.0f && state.coyoteTime > 0.0f) {
+        // Handle jumping/swimming up
+        if (state.isInFluid) {
+            // In fluid, jump input makes you swim up
+            if (state.jumpBuffer > 0.0f) {
+                // Apply upward swim force
+                float swimUpForce = settings.jumpForce * 0.3f; // 30% of normal jump
+                float velUp = glm::dot(state.velocity, -settings.gravityDir);
+                if (velUp < swimUpForce) {
+                    state.velocity += -settings.gravityDir * (swimUpForce - velUp);
+                }
+                state.jumpBuffer = 0.0f;
+            }
+        } else if (!state.isAirSlamming && state.jumpBuffer > 0.0f && state.coyoteTime > 0.0f) {
+            // Normal jump (same as before)
             glm::vec3 up = getUpDirection();
 
             float velUp = glm::dot(state.velocity, up);
@@ -628,6 +698,7 @@ namespace gl3 {
 
         updateOrientation(deltaTime);
 
+        // Ground detection (same as before)
         if (state.isSurfaceAdhered) {
             bool stillGrounded = checkIfGrounded();
 
@@ -654,7 +725,7 @@ namespace gl3 {
         } else {
             float velDown = glm::dot(state.velocity, settings.gravityDir);
 
-            if (checkIfGrounded() && velDown >= 0.0f) {
+            if (checkIfGrounded() && velDown >= 0.0f && !state.isInFluid) {
                 glm::vec3 gp, gn;
                 float gd = 0.0f;
                 if (findGroundContact(gp, gn, gd)) {
@@ -944,22 +1015,25 @@ namespace gl3 {
         glm::vec3 eye = state.position + up * eyeOffset;
         glm::vec3 originalEye = eye;
 
-        // Resolve camera collision
+        // Resolve camera collision (now handles fluid)
         resolveCameraCollision(eye, eyeRadius);
 
         // Only adjust character position if camera was pushed significantly
         float pushDist = glm::length(eye - originalEye);
         if (pushDist > VOXEL_SIZE * 0.02f) {
-            // Calculate how much we need to move the character to maintain eye offset
-            // But only if it doesn't push the character into new collisions
+            // Check if we're in fluid - if so, don't push the character
+            uint8_t t = Game::sampleTypeAtWorld(chunkManager, eye);
+            if (t == 3u) {
+                // We're in fluid, don't push the character
+                return;
+            }
 
-            // Option 1: Pull character back to keep camera in position
-            // This is safer but might cause slight disconnection from surfaces
             glm::vec3 newPosition = eye - up * eyeOffset;
 
             // Check if new position is valid (not inside geometry)
             float sdf = sampleDensityAtWorld(chunkManager, newPosition);
-            if (sdf < radius * 0.5f) { // Not deeply inside voxels
+            uint8_t t2 = Game::sampleTypeAtWorld(chunkManager, newPosition);
+            if ((sdf < radius * 0.5f || t2 == 3u) && t2 != 1u) {
                 state.position = newPosition;
             } else {
                 // Option 2: Only move partially
@@ -975,13 +1049,26 @@ namespace gl3 {
 
         float sdf = sampleDensityAtWorld(chunkManager, cameraPos);
         uint8_t t = Game::sampleTypeAtWorld(chunkManager, cameraPos);
+
+        // ONLY push camera out of solid voxels (type 1), NOT fluid (type 3)
         if (sdf > 0.0f && t != 3u) {
-            glm::vec3 normal = sampleNormalAtWorld(chunkManager,cameraPos);
+            glm::vec3 normal = sampleNormalAtWorld(chunkManager, cameraPos);
             cameraPos += normal * (sdf + VOXEL_SIZE * 0.05f);
         }
+
         float pen = sdf - eyeRadius;
 
-        if (pen <= 0.0f) return false;
+        // Only register collision if it's a solid voxel (not fluid)
+        if (pen <= 0.0f || t == 3u) {
+            // If in fluid, allow passage but still return true for fluid detection
+            if (t == 3u && sdf > 0.0f) {
+                // We're in fluid - let the camera pass through
+                outNormal = glm::vec3(0.0f, 1.0f, 0.0f);
+                outPenetration = 0.0f;
+                return true; // This tells the caller we're in fluid
+            }
+            return false;
+        }
 
         glm::vec3 normal = sampleNormalAtWorld(chunkManager, cameraPos);
         float nLen = glm::length(normal);
@@ -1008,7 +1095,12 @@ namespace gl3 {
                 break;
             }
 
-            // Push camera out
+            // If penetration is 0, we're in fluid - no push needed
+            if (penetration <= 0.0f) {
+                break;
+            }
+
+            // Push camera out of solid geometry
             float push = penetration + skinWidth;
             cameraPos += normal * push;
 
@@ -1026,6 +1118,11 @@ namespace gl3 {
 
         // Check if camera is deeply inside geometry
         float sdf = sampleDensityAtWorld(chunkManager, eye);
+        uint8_t t = Game::sampleTypeAtWorld(chunkManager, eye);
+
+        // Don't push out of fluid
+        if (t == 3u) return;
+
         if (sdf > eyeRadius * 0.8f) {
             // Deep penetration - push camera and character
             glm::vec3 normal = sampleNormalAtWorld(chunkManager, eye);
@@ -1039,12 +1136,79 @@ namespace gl3 {
 
             // Only push character if it's safe
             float charSdf = sampleDensityAtWorld(chunkManager, newPos);
-            if (charSdf < radius * 0.5f) {
+            uint8_t charT = Game::sampleTypeAtWorld(chunkManager, newPos);
+            if (charSdf < radius * 0.5f || charT == 3u) {
                 state.position = newPos;
             } else {
                 // Partial push
                 state.position += (newPos - state.position) * 0.2f;
             }
         }
+    }
+    bool CharacterController::isPointInFluid(FixedGridChunkManager* chunkManager, const glm::vec3& worldPos) {
+        if (!chunkManager) return false;
+
+        const float chunkWorldSize = CHUNK_SIZE * VOXEL_SIZE;
+        int cx = static_cast<int>(std::floor(worldPos.x / chunkWorldSize));
+        int cy = static_cast<int>(std::floor(worldPos.y / chunkWorldSize));
+        int cz = static_cast<int>(std::floor(worldPos.z / chunkWorldSize));
+
+        ChunkCoord coord{cx, cy, cz};
+        Chunk* chunk = chunkManager->getChunk(coord);
+        if (!chunk) return false;
+
+        glm::vec3 chunkMin = glm::vec3(coord.x * chunkWorldSize,
+                                       coord.y * chunkWorldSize,
+                                       coord.z * chunkWorldSize);
+
+        glm::vec3 local = (worldPos - chunkMin) / VOXEL_SIZE;
+        int ix = glm::clamp((int)std::round(local.x), 0, CHUNK_SIZE);
+        int iy = glm::clamp((int)std::round(local.y), 0, CHUNK_SIZE);
+        int iz = glm::clamp((int)std::round(local.z), 0, CHUNK_SIZE);
+
+        const Voxel& v = chunk->voxels[ix][iy][iz];
+        return v.type == 3 && v.density >= 0.0f;
+    }
+
+    float CharacterController::getFluidDensityAtWorld(FixedGridChunkManager* chunkManager, const glm::vec3& worldPos) {
+        if (!chunkManager) return 0.0f;
+
+        const float chunkWorldSize = CHUNK_SIZE * VOXEL_SIZE;
+        int cx = static_cast<int>(std::floor(worldPos.x / chunkWorldSize));
+        int cy = static_cast<int>(std::floor(worldPos.y / chunkWorldSize));
+        int cz = static_cast<int>(std::floor(worldPos.z / chunkWorldSize));
+
+        ChunkCoord coord{cx, cy, cz};
+        Chunk* chunk = chunkManager->getChunk(coord);
+        if (!chunk) return 0.0f;
+
+        glm::vec3 chunkMin = glm::vec3(coord.x * chunkWorldSize,
+                                       coord.y * chunkWorldSize,
+                                       coord.z * chunkWorldSize);
+
+        glm::vec3 local = (worldPos - chunkMin) / VOXEL_SIZE;
+        int ix = glm::clamp((int)std::round(local.x), 0, CHUNK_SIZE);
+        int iy = glm::clamp((int)std::round(local.y), 0, CHUNK_SIZE);
+        int iz = glm::clamp((int)std::round(local.z), 0, CHUNK_SIZE);
+
+        const Voxel& v = chunk->voxels[ix][iy][iz];
+        if (v.type == 3 && v.density >= 0.0f) {
+            return v.density; // Returns positive density inside fluid
+        }
+        return 0.0f;
+    }
+    // Get fluid surface normal at a point (uses gradient of fluid density)
+    glm::vec3 CharacterController::getFluidNormalAtWorld(FixedGridChunkManager* chunkManager, const glm::vec3& worldPos) {
+        const float e = VOXEL_SIZE * 0.5f;
+        float dx = getFluidDensityAtWorld(chunkManager, worldPos + glm::vec3(e, 0, 0)) -
+                   getFluidDensityAtWorld(chunkManager, worldPos - glm::vec3(e, 0, 0));
+        float dy = getFluidDensityAtWorld(chunkManager, worldPos + glm::vec3(0, e, 0)) -
+                   getFluidDensityAtWorld(chunkManager, worldPos - glm::vec3(0, e, 0));
+        float dz = getFluidDensityAtWorld(chunkManager, worldPos + glm::vec3(0, 0, e)) -
+                   getFluidDensityAtWorld(chunkManager, worldPos - glm::vec3(0, 0, e));
+        glm::vec3 grad(dx, dy, dz);
+        float len = glm::length(grad);
+        if (len < 1e-6f) return glm::vec3(0.0f, 1.0f, 0.0f);
+        return -glm::normalize(grad); // Points toward fluid interior
     }
 }

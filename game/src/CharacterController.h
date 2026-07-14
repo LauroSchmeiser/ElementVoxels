@@ -51,6 +51,12 @@ namespace gl3 {
 
         // Camera / orientation smoothing
         float upLerpSpeed = 1.5f;                 // Medium speed (adaptive logic handles extremes)
+
+        float fluidResistance = 0.85f;        // Drag multiplier in fluid (0-1, lower = more drag)
+        float fluidBuoyancy = 2.5f;          // Upward force in fluid
+        float fluidSwimSpeed = 30.0f;         // Max swim speed
+        float fluidSwimAcceleration = 3.0f;   // Acceleration while swimming
+        float fluidDensity = 0.2f;            // Fluid density (affects buoyancy)
     };
 
     struct CharacterState {
@@ -81,6 +87,10 @@ namespace gl3 {
         glm::vec3 currentContactPoint = glm::vec3(0.0f);
         glm::vec3 currentContactNormal = glm::vec3(0.0f, 1.0f, 0.0f);
         bool hasWorldContact = false;
+
+        bool isInFluid = false;               // Currently inside fluid
+        float fluidDepth = 1.0f;              // Depth in fluid (for visual effects)
+        glm::vec3 fluidNormal = glm::vec3(0.0f, 1.0f, 0.0f);  // Surface normal
     };
 
     class CharacterController {
@@ -196,5 +206,11 @@ namespace gl3 {
                                   glm::vec3& outNormal, float& outPenetration) const;
 
         void enforceCameraClearanceAggressive();
+
+        bool isPointInFluid(FixedGridChunkManager *chunkManager, const glm::vec3 &worldPos);
+
+        float getFluidDensityAtWorld(FixedGridChunkManager *chunkManager, const glm::vec3 &worldPos);
+
+        glm::vec3 getFluidNormalAtWorld(FixedGridChunkManager *chunkManager, const glm::vec3 &worldPos);
     };
 }

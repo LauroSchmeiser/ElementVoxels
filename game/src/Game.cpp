@@ -543,7 +543,8 @@ namespace gl3 {
 
         bool inside = isPointInsideFluid(cameraPos);
         postShader->setInt("uCameraInsideFluid", inside ? 1 : 0);
-        postShader->setVec3("uFluidFogColor", glm::vec3(1.0f, 0.0f, 0.0f));
+        glm::vec3 currentFluidTint = sampleFluidColorAtWorld(cameraPos);
+        postShader->setVec3("uFluidFogColor", currentFluidTint);
         postShader->setFloat("uFluidFogDensity", 1.0f);
 
         glBindVertexArray(postVAO);
@@ -1896,9 +1897,9 @@ namespace gl3 {
         }
 
         // Create water planets (type 3)
-        std::uniform_real_distribution<float> waterDistColorR(1.0f, 1.0f);
-        std::uniform_real_distribution<float> waterDistColorG(0.0f, 0.0f);
-        std::uniform_real_distribution<float> waterDistColorB(0.0f, 0.0f);
+        std::uniform_real_distribution<float> waterDistColorR(0.0f, 0.1f);
+        std::uniform_real_distribution<float> waterDistColorG(0.4f, 0.9f);
+        std::uniform_real_distribution<float> waterDistColorB(0.5f, 1.0f);
 
         int waterCount = 14 ;
         for (int i = 0; i < waterCount; ++i) {
@@ -2700,108 +2701,95 @@ glDepthFunc(oldDepthFunc);
 glDepthMask(depthMask);
 }
 
-void Game::renderChunks()
-{
-TRACY_CPU_ZONE("Game::renderChunks");
-TRACY_GPU_ZONE("Chunks (total)");
+    void Game::renderChunks()
+    {
+        TRACY_CPU_ZONE("Game::renderChunks");
+        TRACY_GPU_ZONE("Chunks (total)");
 
-int built = 0;
-int lighted = 0;
+        int built = 0;
+        int lighted = 0;
 
-glPolygonMode(GL_FRONT_AND_BACK, DebugMode2 ? GL_LINE : GL_FILL);
+        glPolygonMode(GL_FRONT_AND_BACK, DebugMode2 ? GL_LINE : GL_FILL);
 
-float aspect = (windowHeight == 0) ? (float)windowWidth : (float)windowWidth / (float)windowHeight;
-glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
-glm::vec3 camUp = getCameraUp();
-glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
-glm::mat4 pv = projection * view;
+        float aspect = (windowHeight == 0) ? (float)windowWidth : (float)windowWidth / (float)windowHeight;
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
+        glm::vec3 camUp = getCameraUp();
+        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
+        glm::mat4 pv = projection * view;
 
-frameCounter++;
-chunkRenderer->frameCounter +=1;
+        frameCounter++;
+        chunkRenderer->frameCounter += 1;
 
-const int camCX = worldToChunk(cameraPos.x);
-const int camCY = worldToChunk(cameraPos.y);
-const int camCZ = worldToChunk(cameraPos.z);
-const int renderRadius = RenderingRange;
+        const int camCX = worldToChunk(cameraPos.x);
+        const int camCY = worldToChunk(cameraPos.y);
+        const int camCZ = worldToChunk(cameraPos.z);
+        const int renderRadius = RenderingRange;
 
-// Cleanup distant chunks periodically (every 60 frames)
-if (frameCounter % 60 == 0) {
-    TRACY_CPU_ZONE("renderChunks::cleanupDistantSlots");
-    chunkManager->cleanupDistantSlots(cameraPos, renderRadius);
-}
+        // Cleanup distant chunks periodically (every 60 frames)
+        if (frameCounter % 60 == 0) {
+            TRACY_CPU_ZONE("renderChunks::cleanupDistantSlots");
+            chunkManager->cleanupDistantSlots(cameraPos, renderRadius);
+        }
 
-// visibleDrawCmds.clear();
-visibleSlots.clear();
-visibleFluidSlots.clear();
-// visibleDrawCmds.reserve((2*renderRadius+1)*(2*renderRadius+1)*(2*renderRadius+1));
+        visibleSlots.clear();
+        visibleFluidSlots.clear();
 
-// Generate meshes / rebuild emissive lights
-{
-    TRACY_CPU_ZONE("renderChunks::PrepareMeshesAndLights");
-    const int R = chunkManager->radius();
+        // Generate meshes / rebuild emissive lights
+        {
+            TRACY_CPU_ZONE("renderChunks::PrepareMeshesAndLights");
+            const int R = chunkManager->radius();
 
-    const int minCX = std::max(camCX - renderRadius, -R);
-    const int maxCX = std::min(camCX + renderRadius,  R);
-    const int minCY = std::max(camCY - renderRadius, -R);
-    const int maxCY = std::min(camCY + renderRadius,  R);
-    const int minCZ = std::max(camCZ - renderRadius, -R);
-    const int maxCZ = std::min(camCZ + renderRadius,  R);
+            const int minCX = std::max(camCX - renderRadius, -R);
+            const int maxCX = std::min(camCX + renderRadius, R);
+            const int minCY = std::max(camCY - renderRadius, -R);
+            const int maxCY = std::min(camCY + renderRadius, R);
+            const int minCZ = std::max(camCZ - renderRadius, -R);
+            const int maxCZ = std::min(camCZ + renderRadius, R);
 
-    visibleFluidSlots.reserve(visibleSlots.size());
+            visibleFluidSlots.reserve(visibleSlots.size());
 
-    for (int cx = minCX; cx <= maxCX; ++cx)
-        for (int cy = minCY; cy <= maxCY; ++cy)
-            for (int cz = minCZ; cz <= maxCZ; ++cz)
-            {
-                ChunkCoord coord{cx, cy, cz};
-                Chunk* chunk = chunkManager->getChunk(coord);
-                if (!chunk) continue;
+            for (int cx = minCX; cx <= maxCX; ++cx) {
+                for (int cy = minCY; cy <= maxCY; ++cy) {
+                    for (int cz = minCZ; cz <= maxCZ; ++cz) {
+                        ChunkCoord coord{cx, cy, cz};
+                        Chunk* chunk = chunkManager->getChunk(coord);
+                        if (!chunk) continue;
 
-                // Skip empty chunks (no geometry)
-                if (chunk->isCleared) continue;
+                        // Skip empty chunks (no geometry)
+                        if (chunk->isCleared) continue;
 
-               /* // Allocate GPU slot if needed and chunk has content
-                if (chunk->gpuSlot == FixedGridChunkManager::INVALID_GPU_SLOT) {
-                    uint32_t slot = chunkManager->allocateGpuSlot(coord);
-                    if (slot == FixedGridChunkManager::INVALID_GPU_SLOT) {
-                        // No GPU slots available, skip this chunk for now
-                        continue;
-                    }
-                }*/
-/*
-                        if (built < MAX_CHUNKS_PER_FRAME && (chunk->meshDirty || !chunk->gpuCache.isValid)) {
-                            built++;
-                            generateChunkMesh(chunk);
-                        }
+                        // Check if this chunk has fluid
+                        bool hasFluid = chunkHasFluid(*chunk);
 
-                        if (lighted < MAX_CHUNKS_PER_FRAME && chunk->lightingDirty) {
-                            lighted++;
-                            rebuildChunkLights(chunk->coord);
-                            chunk->lightingDirty = false;
-                        }
-*/
+                        // If chunk has no solid mesh but has fluid, add to fluid list
                         if (!chunk->gpuCache.isValid) {
-#
-                            /*if (chunkHasFluid(*chunk)) {
+                            if (hasFluid) {
                                 visibleFluidSlots.push_back(chunk->gpuSlot);
-                            }*/
+                            }
                             continue;
                         }
 
+                        // Chunk has solid mesh
                         DrawArraysIndirectCommand cmd{};
-                        cmd.count         = chunk->gpuCache.vertexCount;
+                        cmd.count = chunk->gpuCache.vertexCount;
                         cmd.instanceCount = 1;
-                        cmd.first         = chunk->gpuSlot * (uint32_t)CHUNK_MAX_VERTS;
-                        cmd.baseInstance  = chunk->gpuSlot;
+                        cmd.first = chunk->gpuSlot * (uint32_t)CHUNK_MAX_VERTS;
+                        cmd.baseInstance = chunk->gpuSlot;
 
-                        if (cmd.count == 0) continue;
+                        if (cmd.count > 0) {
+                            visibleSlots.push_back(chunk->gpuSlot);
+                        }
 
-                        // visibleDrawCmds.push_back(cmd);
-                        visibleSlots.push_back(chunk->gpuSlot);
+                        // ALSO add to fluid list if it has fluid (even if it has solid mesh too)
+                        if (hasFluid) {
+                            visibleFluidSlots.push_back(chunk->gpuSlot);
+                        }
                     }
+                }
+            }
         }
 
-        // Draw
+        // Draw solid chunks
         {
             TRACY_CPU_ZONE("renderChunks::DrawBatched");
             TRACY_GPU_ZONE("Chunks::DrawBatched");
@@ -2846,7 +2834,6 @@ visibleFluidSlots.clear();
             glBindTexture(GL_TEXTURE_2D_ARRAY, materialAlbedoArrayTexId);
             voxelShader->setInt("uAlbedoArray", 0);
 
-
             glActiveTexture(GL_TEXTURE1);
             glBindTexture(GL_TEXTURE_2D_ARRAY, materialNormalArrayTexId);
             voxelShader->setInt("uNormalArray", 1);
@@ -2863,16 +2850,14 @@ visibleFluidSlots.clear();
             glBindTexture(GL_TEXTURE_2D_ARRAY, materialHeightArrayTexId);
             voxelShader->setInt("uHeightArray", 4);
 
-
             voxelShader->setFloatArray("uMatRoughness", rough.data(), 64);
-            voxelShader->setFloatArray("uMatSpecular",  spec.data(), 64);
-            voxelShader->setFloatArray("uUVScale",      uvScale.data(), 64);
+            voxelShader->setFloatArray("uMatSpecular", spec.data(), 64);
+            voxelShader->setFloatArray("uUVScale", uvScale.data(), 64);
             static float frameTime = 0.0f;
-            frameTime += deltaTime; // Accumulate time
-            voxelShader->setFloat("uTime", frameTime/1.5f);
+            frameTime += deltaTime;
+            voxelShader->setFloat("uTime", frameTime / 1.5f);
 
             if (DebugMode1) voxelShader->setInt("debugMode", activeDebugMode % 7);
-
 
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 10, chunkRenderer->ssboLights);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 11, chunkRenderer->ssboChunkLightIdx);
@@ -2888,6 +2873,7 @@ visibleFluidSlots.clear();
             glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
             glBindVertexArray(0);
         }
+
         std::vector<SunInstance> billboardRenderList = emissiveBillboards;
         appendSpellBillboards(billboardRenderList);
 
@@ -5005,14 +4991,24 @@ visibleFluidSlots.clear();
         fluidShader->setFloat("uTime", (float)glfwGetTime());
         fluidShader->setVec3("viewPos", cameraPos);
 
+        fluidShader->setInt("uPass", 0); // 0 = front faces
+
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glDisable(GL_CULL_FACE);
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
 
         glBindVertexArray(chunkRenderer->globalFluidVAO);
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, chunkRenderer->fluidIndirectBuffer);
 
-        for (uint32_t slot : visibleSlots) {
+        for (uint32_t slot : visibleFluidSlots) {
+            const GLsizeiptr offset = (GLsizeiptr)slot * (GLsizeiptr)sizeof(DrawArraysIndirectCommand);
+            glDrawArraysIndirect(GL_TRIANGLES, (const void*)offset);
+        }
+
+        fluidShader->setInt("uPass", 1); // 1 = back faces
+        glCullFace(GL_FRONT);
+        for (uint32_t slot : visibleFluidSlots) {
             const GLsizeiptr offset = (GLsizeiptr)slot * (GLsizeiptr)sizeof(DrawArraysIndirectCommand);
             glDrawArraysIndirect(GL_TRIANGLES, (const void*)offset);
         }
@@ -5022,6 +5018,7 @@ visibleFluidSlots.clear();
 
         glDisable(GL_BLEND);
         glEnable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
     }
 
     glm::vec3 Game::sampleFluidColorAtWorld(const glm::vec3& worldPos) const

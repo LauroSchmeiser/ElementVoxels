@@ -16,12 +16,21 @@ uniform float uTime;
 void main()
 {
     vec3 pos = aPos;
+    float t = uTime * 1.2;
 
-    float wobble =
-    sin(pos.x * 1.7 + uTime * 2.5) * 0.06 +
-    cos(pos.z * 1.3 + uTime * 2.0) * 0.04;
+    // Gentle surface wave - only affects Y slightly
+    float wave1 = sin(pos.x * 0.8 + t * 1.5) * 0.04;
+    float wave2 = cos(pos.z * 0.7 + t * 1.2) * 0.035;
+    float wave3 = sin((pos.x + pos.z) * 0.5 + t * 1.8) * 0.025;
 
-    pos.y += wobble;
+    // Apply wave only to Y (up direction) for a water surface effect
+    pos.y += wave1 + wave2 + wave3;
+
+    // Very subtle X/Z displacement for realism (much smaller)
+    float waveX = sin(pos.z * 0.6 + t * 0.9) * 0.015;
+    float waveZ = cos(pos.x * 0.6 + t * 0.9) * 0.015;
+    pos.x += waveX;
+    pos.z += waveZ;
 
     vec4 world = model * vec4(pos, 1.0);
     vWorldPos = world.xyz;

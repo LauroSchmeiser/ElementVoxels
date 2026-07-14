@@ -35,7 +35,7 @@ namespace gl3 {
         void setupChunkBatchBuffers(int maxChunksGpu);
 
     public:
-        int MAX_CHUNKS_GPU = 1350;
+        int MAX_CHUNKS_GPU = 1550;
 
         void generateChunkMesh(Chunk* chunk);
 
