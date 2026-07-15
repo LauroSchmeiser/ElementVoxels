@@ -545,7 +545,7 @@ namespace gl3 {
         postShader->setInt("uCameraInsideFluid", inside ? 1 : 0);
         glm::vec3 currentFluidTint = sampleFluidColorAtWorld(cameraPos);
         postShader->setVec3("uFluidFogColor", currentFluidTint);
-        postShader->setFloat("uFluidFogDensity", 1.0f);
+        postShader->setFloat("uFluidFogDensity", 0.1f);
 
         glBindVertexArray(postVAO);
         glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -1828,7 +1828,7 @@ namespace gl3 {
 
 
 
-    void Game::generateChunks() {
+    void Game:: generateChunks() {
         TRACY_CPU_ZONE("Game::generateChunks");
         int FilledChunks = 0;
         std::mt19937 rng(std::random_device{}());
@@ -1939,34 +1939,43 @@ namespace gl3 {
                         glm::vec3 chunkOrigin(cx * CHUNK_SIZE*VOXEL_SIZE, cy * CHUNK_SIZE*VOXEL_SIZE, cz * CHUNK_SIZE*VOXEL_SIZE);
                         bool chunkTouched = false;
 
-                        // Carve sphere into chunk - FIXED: Use SDF union operation
                         for (int lx = 0; lx <= CHUNK_SIZE; ++lx) {
                             for (int ly = 0; ly <= CHUNK_SIZE; ++ly) {
                                 for (int lz = 0; lz <= CHUNK_SIZE; ++lz) {
-                                    glm::vec3 worldPos = chunkOrigin + glm::vec3(lx, ly, lz)*VOXEL_SIZE;
+                                    glm::vec3 worldPos = chunkOrigin + glm::vec3(lx, ly, lz) * VOXEL_SIZE;
                                     float dist = glm::distance(worldPos, planet.worldPos);
 
                                     // Calculate this planet's SDF value
                                     float planetDensity = planet.radius - dist; // Positive inside, negative outside
 
-                                    // Get existing density (initialized to -1000 for air)
-                                    float existingDensity = chunk->voxels[lx][ly][lz].density;
+                                    Voxel& vox = chunk->voxels[lx][ly][lz];
 
-                                    // SDF UNION: Take the MAXIMUM density (most solid)
-                                    // For Marching Cubes, positive = inside, negative = outside
-                                    if (planetDensity > existingDensity) {
-                                        chunk->voxels[lx][ly][lz].density = planetDensity;
+                                    if (planet.type == 3) {
+                                        if (planetDensity > vox.fluidDensity) {
+                                            vox.fluidDensity = planetDensity;
 
-                                        // If this voxel participates in the field at all, give it a color.
-                                        // (You can still keep type/material logic near the surface if you want.)
-                                        chunk->voxels[lx][ly][lz].color = planet.color;
+                                            if (planetDensity >= 0.0f) {
 
-                                        if (planetDensity >= -1.0f) {
-                                            chunk->voxels[lx][ly][lz].type = planet.type;
-                                            chunk->voxels[lx][ly][lz].material = planet.material; // if you use it
-                                            if (planetDensity >= 0) {
-                                                solidVoxels++;
+                                                if (!vox.isSolid()) {
+                                                    vox.color = planet.color;
+                                                }
                                                 chunkTouched = true;
+                                            }
+                                        }
+                                    } else {
+                                        float existingDensity = vox.density;
+
+                                        if (planetDensity > existingDensity) {
+                                            vox.density = planetDensity;
+                                            vox.color = planet.color;
+
+                                            if (planetDensity >= -1.0f) {
+                                                vox.type = planet.type;
+                                                vox.material = planet.material;
+                                                if (planetDensity >= 0) {
+                                                    solidVoxels++;
+                                                    chunkTouched = true;
+                                                }
                                             }
                                         }
                                     }
@@ -3580,6 +3589,58 @@ glDepthMask(depthMask);
         return lerp(c0, c1, fz);
         }
 
+        float Game::sampleFluidDensityAtWorld(const glm::vec3 &worldPos) const {
+        if (!chunkManager) return -1000.0f;
+        const float chunkWorldSize = CHUNK_SIZE * VOXEL_SIZE;
+        int baseCX = worldToChunk(worldPos.x);
+        int baseCY = worldToChunk(worldPos.y);
+        int baseCZ = worldToChunk(worldPos.z);
+        glm::vec3 chunkMin = glm::vec3(baseCX * chunkWorldSize, baseCY * chunkWorldSize, baseCZ * chunkWorldSize);
+        glm::vec3 local = (worldPos - chunkMin) / VOXEL_SIZE;
+        int ix = static_cast<int>(std::floor(local.x));
+        int iy = static_cast<int>(std::floor(local.y));
+        int iz = static_cast<int>(std::floor(local.z));
+        float fx = local.x - ix;
+        float fy = local.y - iy;
+        float fz = local.z - iz;
+
+        auto sampleCorner = [&](int sx, int sy, int sz)->float {
+            glm::vec3 cornerWorld = chunkMin + glm::vec3((float)(ix + sx), (float)(iy + sy), (float)(iz + sz)) * VOXEL_SIZE;
+            int cx = worldToChunk(cornerWorld.x);
+            int cy = worldToChunk(cornerWorld.y);
+            int cz = worldToChunk(cornerWorld.z);
+            ChunkCoord coord{cx, cy, cz};
+            Chunk* chunk = chunkManager->getChunk(coord);
+            if (!chunk) return -1000.0f;
+            glm::vec3 localCorner = (cornerWorld - getChunkMin(coord)) / VOXEL_SIZE;
+            int lx = glm::clamp((int)std::round(localCorner.x), 0, CHUNK_SIZE);
+            int ly = glm::clamp((int)std::round(localCorner.y), 0, CHUNK_SIZE);
+            int lz = glm::clamp((int)std::round(localCorner.z), 0, CHUNK_SIZE);
+            return chunk->voxels[lx][ly][lz].fluidDensity;
+        };
+
+        float s000 = sampleCorner(0,0,0);
+        float s100 = sampleCorner(1,0,0);
+        float s010 = sampleCorner(0,1,0);
+        float s110 = sampleCorner(1,1,0);
+        float s001 = sampleCorner(0,0,1);
+        float s101 = sampleCorner(1,0,1);
+        float s011 = sampleCorner(0,1,1);
+        float s111 = sampleCorner(1,1,1);
+
+        auto lerp = [](float a, float b, float t){ return a + (b - a) * t; };
+        float c00 = lerp(s000, s100, fx);
+        float c10 = lerp(s010, s110, fx);
+        float c01 = lerp(s001, s101, fx);
+        float c11 = lerp(s011, s111, fx);
+
+        float c0 = lerp(c00, c10, fy);
+        float c1 = lerp(c01, c11, fy);
+        return lerp(c0, c1, fz);
+    }
+
+
+
     glm::vec3 Game::sampleNormalAtWorld(const glm::vec3 &worldPos) const {
         const float e = VOXEL_SIZE * 0.5f;
         float dx = sampleDensityAtWorld(worldPos + glm::vec3(e,0,0)) - sampleDensityAtWorld(worldPos - glm::vec3(e,0,0));
@@ -4927,9 +4988,7 @@ glDepthMask(depthMask);
 
     bool Game::isPointInsideFluid(const glm::vec3& worldPos) const
     {
-        uint8_t t = sampleTypeAtWorld(chunkManager.get(), worldPos);
-        float d = sampleDensityAtWorld(worldPos);
-        return t == 3u && d >= 0.0f;
+        return sampleFluidDensityAtWorld(worldPos) >= 0.0f;
     }
 
     void Game::initFluidFBO()
@@ -5039,14 +5098,14 @@ glDepthMask(depthMask);
         int iz = glm::clamp((int)std::round(local.z), 0, CHUNK_SIZE);
 
         const Voxel& v = chunk->voxels[ix][iy][iz];
-        return (v.type == 3) ? v.color : glm::vec3(0.1f, 0.3f, 0.8f);
+        return v.hasFluid() ? v.color : glm::vec3(0.1f, 0.3f, 0.8f);
     }
 
     bool Game::chunkHasFluid(const Chunk& chunk) {
         for (int x = 0; x <= CHUNK_SIZE; ++x)
             for (int y = 0; y <= CHUNK_SIZE; ++y)
                 for (int z = 0; z <= CHUNK_SIZE; ++z)
-                    if (chunk.voxels[x][y][z].type == 3)
+                    if (chunk.voxels[x][y][z].hasFluid())
                         return true;
         return false;
     }

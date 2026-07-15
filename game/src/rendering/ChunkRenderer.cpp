@@ -256,7 +256,7 @@ namespace gl3 {
 
                     // Copy data
                     voxels[idx].density = srcVoxel->density;
-                    voxels[idx].pad0 = voxels[idx].pad1 = voxels[idx].pad2 = 0.0f;
+                    voxels[idx].fluidDensity = srcVoxel->fluidDensity;
                     glm::vec3 col = overrideColor ? *overrideColor : srcVoxel->color;
 
                     voxels[idx].color[0] = col.r;

@@ -2,7 +2,10 @@
 layout (local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
 
 struct Voxel {
-    float density; float pad0; float pad1; float pad2;
+// pad0 repurposed to carry Voxel::fluidDensity from the CPU side - the
+// struct's size/layout is unchanged, so the CPU->GPU upload just needs to
+// write fluidDensity into this slot instead of leaving it zeroed.
+    float density; float fluidDensity; float pad1; float pad2;
     vec4 color;
     uint type; uint pad4; uint pad5; uint pad6;
     uint material; uint pad7; uint pad8; uint pad9;
@@ -48,8 +51,7 @@ ivec3 clampVoxel(ivec3 p) { return clamp(p, ivec3(0), voxelGridDim - ivec3(1)); 
 
 float sampleFluidDensity(ivec3 p) {
     int idx = voxelIndex(clampVoxel(p));
-    if (voxels[idx].type != 3u) return -1.0;
-    return voxels[idx].density;
+    return voxels[idx].fluidDensity;
 }
 
 vec3 sampleFluidColor(ivec3 p) {

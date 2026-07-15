@@ -89,7 +89,6 @@ void main()
     float isSky = step(0.9999, d01);
 
     // Pick a “sky fog target” color.
-    // If you want better matching, pass a uniform with your average nebula tint.
     vec3 skyFogColor = vec3(0.08, 0.10, 0.14);
 
     // Fog factor by distance (only on geometry pixels)
@@ -108,12 +107,6 @@ void main()
     // Composite
     color += glow;
 
-    // Final unified output transform
-    //color *= uExposure;
-    //color = tonemapReinhard(color);
-    //color = pow(max(color, vec3(0.0)), vec3(1.0 / uGamma));
-
-
     vec4 fluidSurface = texture(uFluidColor, vUV);
     float fluidDepth01 = texture(uFluidDepth, vUV).r;
     float thickness = texture(uFluidThickness, vUV).r;
@@ -124,23 +117,24 @@ void main()
         float fluidLin = linearizeDepth(fluidDepth01, uNear, uFar);
         float sceneLin = linearizeDepth(d01, uNear, uFar);
 
-        // If fluid is in front of or at the scene depth, blend it
         if (fluidLin <= sceneLin + 1e-3 || d01 >= 0.9999) {
-            // Use the thickness for fog
-            float fogAmount = thickness * 0.15;
-            vec3 foggedColor = mix(color, uFluidFogColor, fogAmount);
-
-            // Blend fluid surface with fog
-            float blendAlpha = fluidSurface.a * (1.0 - fogAmount * 0.3);
-            color = mix(foggedColor, fluidSurface.rgb, blendAlpha);
+            color = mix(color, fluidSurface.rgb, fluidSurface.a);
         }
     }
 
     if (uCameraInsideFluid != 0) {
-        // When inside fluid, apply strong fog
-        float depthFog = 1.0 - exp(-dLin * uFluidFogDensity * 0.3);
-        depthFog = clamp(depthFog + thickness * 0.1, 0.0, 1.0);
-        color = mix(color, uFluidFogColor, depthFog);
+        // When inside fluid, apply gentle fog - MUCH less aggressive
+        // Use a much lower density and only fog based on depth
+        float depthFog = 1.0 - exp(-dLin * uFluidFogDensity * 0.05); // Reduced from 0.3 to 0.05
+        depthFog = clamp(depthFog, 0.0, 0.4); // Cap at 40% fog max
+
+        // Use thickness to add subtle variation, but very subtle
+        float thicknessFog = thickness * 0.02;
+
+        float totalFog = max(depthFog, thicknessFog);
+        totalFog = clamp(totalFog, 0.0, 0.4);
+
+        color = mix(color, uFluidFogColor, totalFog);
     }
 
     FragColor = vec4(color, 1.0);

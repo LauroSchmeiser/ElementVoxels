@@ -117,7 +117,7 @@ namespace gl3 {
                                     if (v.density > 2.0f) newDensity = std::max(newDensity, 0.1f);
 
                                     v.density = newDensity;
-                                    v.type = (newDensity < densityThreshold) ? 0 : 1;
+                                    v.type = (newDensity < densityThreshold) ? 0 : v.type;
 
                                     touched = true;
                                 }

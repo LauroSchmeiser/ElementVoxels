@@ -39,22 +39,22 @@ namespace gl3 {
         float airSlamImpactThreshold = 15.0f;     // Velocity threshold for impact effects
 
         // Ground detection
-        float groundCheckDistance = 0.2f;         // How far below character to check for ground
+        float groundCheckDistance = 0.2f;
 
         // Surface landing / adhesion
-        float landingMinApproachSpeed = 0.05f;    // Low threshold for gentle landings
+        float landingMinApproachSpeed = 0.025f;
         float adhesionDuration = 0.5f;
         float adhesionMaxDistance = 20.0f;
-        float adhesionSnapDistance = 1.0f;        // Can afford larger since detection is tighter
+        float adhesionSnapDistance = 1.0f;
         float adhesionAcceleration = 0.5f;
         float minGroundNormalDot = 0.15f;          // More lenient for angled surfaces
 
         // Camera / orientation smoothing
         float upLerpSpeed = 1.5f;                 // Medium speed (adaptive logic handles extremes)
 
-        float fluidResistance = 0.85f;        // Drag multiplier in fluid (0-1, lower = more drag)
-        float fluidBuoyancy = 2.5f;          // Upward force in fluid
-        float fluidSwimSpeed = 30.0f;         // Max swim speed
+        float fluidResistance = 0.85f;        // Drag multiplier in fluid
+        float fluidBuoyancy = 1.0f;          // Upward force in fluid
+        float fluidSwimSpeed = 35.0f;         // Max swim speed
         float fluidSwimAcceleration = 3.0f;   // Acceleration while swimming
         float fluidDensity = 0.2f;            // Fluid density (affects buoyancy)
     };
@@ -207,10 +207,9 @@ namespace gl3 {
 
         void enforceCameraClearanceAggressive();
 
-        bool isPointInFluid(FixedGridChunkManager *chunkManager, const glm::vec3 &worldPos);
+        bool isPointInFluid(FixedGridChunkManager* chunkManager, const glm::vec3& worldPos) const;
 
-        float getFluidDensityAtWorld(FixedGridChunkManager *chunkManager, const glm::vec3 &worldPos);
-
-        glm::vec3 getFluidNormalAtWorld(FixedGridChunkManager *chunkManager, const glm::vec3 &worldPos);
+        float getFluidDensityAtWorld(FixedGridChunkManager* chunkManager, const glm::vec3& worldPos) const;
+        glm::vec3 getFluidNormalAtWorld(FixedGridChunkManager* chunkManager, const glm::vec3& worldPos) const;
     };
 }

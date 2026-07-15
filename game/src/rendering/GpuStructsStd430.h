@@ -4,7 +4,7 @@
 
 struct alignas(16) CpuVoxelStd430 {
     float density;   // offset 0
-    float pad0;      // offset 4
+    float fluidDensity;      // offset 4
     float pad1;      // offset 8
     float pad2;      // offset 12
     float color[4];  // offset 16..31

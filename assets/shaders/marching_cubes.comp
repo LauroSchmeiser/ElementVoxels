@@ -2,7 +2,8 @@
 layout (local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
 
 struct Voxel {
-    float density; float pad0; float pad1; float pad2;
+// Layout must match fluid_marching_cubes.comp / the CPU-side Voxel struct
+    float density; float fluidDensity; float pad1; float pad2;
     vec4 color;
     uint type; uint pad4; uint pad5; uint pad6;
     uint material; uint pad7; uint pad8; uint pad9;
@@ -48,7 +49,11 @@ ivec3 clampVoxel(ivec3 p) { return clamp(p, ivec3(0), voxelGridDim - ivec3(1)); 
 float sampleDensity(ivec3 p) {
     int idx = voxelIndex(clampVoxel(p));
     uint t = voxels[idx].type;
-    if (t == 0u || t == 3u) return -1.0;
+    if(voxels[idx].fluidDensity>0)
+    {
+        return -1.0;
+    }
+    if (t == 0u) return -1.0;
     return voxels[idx].density;
 }
 
@@ -212,13 +217,13 @@ void main() {
         verts[idx+2].pos=vec4(v2,1); verts[idx+2].normal=vec4(n2,0); verts[idx+2].color=vec4(col2,1);
         verts[idx+2].uv=computePlanarUV(v2); verts[idx+2].flags=uvec4(packedFlags,0,0,0);
     }
-/*
-    if (all(equal(gl_GlobalInvocationID, uvec3(0,0,0)))) {
-        memoryBarrierBuffer();
+    /*
+        if (all(equal(gl_GlobalInvocationID, uvec3(0,0,0)))) {
+            memoryBarrierBuffer();
 
-        cmds[uChunkSlot].count         = vertexCounter;
-        cmds[uChunkSlot].instanceCount = 1u;
-        cmds[uChunkSlot].first         = baseVert;
-        cmds[uChunkSlot].baseInstance  = uChunkSlot;
-    }*/
+            cmds[uChunkSlot].count         = vertexCounter;
+            cmds[uChunkSlot].instanceCount = 1u;
+            cmds[uChunkSlot].first         = baseVert;
+            cmds[uChunkSlot].baseInstance  = uChunkSlot;
+        }*/
 }

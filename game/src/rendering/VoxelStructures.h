@@ -15,8 +15,10 @@ namespace gl3 {
         uint32_t material = 0;
         float density = 1.0f;
         glm::vec3 color = glm::vec3(1.0f);
+        float fluidDensity = -1000.0f;
 
         bool isSolid() const { return type != 0; }
+        bool hasFluid() const { return fluidDensity >= 0.0f; }
         // 0==Empty, 1==base, 2==fire, 3==fluid
         // 0==stone, 1==earth, 2==ice etc....
     };

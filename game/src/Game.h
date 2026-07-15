@@ -533,6 +533,8 @@ namespace gl3 {
         RayCastResult rayCastFromCamera(float maxDistance = 1000.0f);
         glm::vec3 calculateNormalAt(Chunk* chunk, const glm::ivec3& pos);
         float sampleDensityAtWorld(const glm::vec3 &worldPos) const;
+        float sampleFluidDensityAtWorld(const glm::vec3 &worldPos) const;
+
         glm::vec3 sampleNormalAtWorld(const glm::vec3 &worldPos) const;
         void updateCamera();
         void createNoiseTexture();

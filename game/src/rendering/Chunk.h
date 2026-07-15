@@ -54,7 +54,8 @@ namespace gl3 {
                 for (int y = 0; y < CHUNK_SIZE + 1; ++y) {
                     for (int z = 0; z < CHUNK_SIZE + 1; ++z) {
                         voxels[x][y][z].type = 0;
-                        voxels[x][y][z].density = -10.0f;
+                        voxels[x][y][z].density = -1000.0f;
+                        voxels[x][y][z].fluidDensity = -1000.0f;
                         voxels[x][y][z].color = glm::vec3(0.0f);
                     }
                 }
