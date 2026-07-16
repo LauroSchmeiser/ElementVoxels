@@ -8,8 +8,8 @@ namespace gl3 {
 
     struct CharacterSettings {
         // Movement
-        float walkSpeed = 50.0f;
-        float sprintSpeed = 150.0f;
+        float walkSpeed = 75.0f;
+        float sprintSpeed = 200.0f;
         float crouchSpeed = 20.5f;
         float acceleration = 5.0f;
         float friction = 6.0f;
@@ -17,14 +17,14 @@ namespace gl3 {
         float airControl = 0.3f;
 
         // Jumping
-        float jumpForce = 55.0f;
+        float jumpForce = 75.0f;
         glm::vec3 gravityDir = glm::vec3(0.0f, -1.0f, 0.0f);
         glm::vec3 lastGravPoint = glm::vec3(0.0f, 0.0f, 0.0f);;
-        float gravity= 10.0f;
+        float gravity= 15.0f;
         float gravityMaxIntensity = 50.0f;
         float gravityMinIntensity = 0.1f;
 
-        float terminalVelocity = 850.0f;
+        float terminalVelocity = 1000.0f;
         float coyoteTimeDuration = 3.5f;
         float jumpBufferDuration = 0.75f;
 
@@ -32,7 +32,7 @@ namespace gl3 {
         float crouchHeightMultiplier = 0.5f;
 
         // NEW: Air slam settings
-        float airSlamGravityMultiplier = 1.75f;    // How much faster you fall during slam
+        float airSlamGravityMultiplier = 2.5f;    // How much faster you fall during slam
         float fallingGravityMultiplier = 1.0f;    // Normal falling gravity multiplier
         float airSlamInitialVelocity = 10.0f;     // Initial downward velocity when starting slam
         float airSlamDuration = 2.0f;             // How long slam effect lasts
@@ -53,7 +53,7 @@ namespace gl3 {
         float upLerpSpeed = 1.5f;                 // Medium speed (adaptive logic handles extremes)
 
         float fluidResistance = 0.85f;        // Drag multiplier in fluid
-        float fluidBuoyancy = 1.0f;          // Upward force in fluid
+        float fluidBuoyancy = 3.0f;          // Upward force in fluid
         float fluidSwimSpeed = 35.0f;         // Max swim speed
         float fluidSwimAcceleration = 3.0f;   // Acceleration while swimming
         float fluidDensity = 0.2f;            // Fluid density (affects buoyancy)
