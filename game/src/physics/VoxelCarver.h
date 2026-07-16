@@ -247,9 +247,10 @@ namespace gl3 {
                 auto it = chunkDirty.find(update.coord);
                 if (it == chunkDirty.end()) {
                     chunkDirty[update.coord] = true;
-
                     chunk->meshDirty = true;
                     chunk->lightingDirty = true;
+
+                    chunk->updateTypeFlags();
 
                     modifiedChunks.push_back(update.coord);
                 }

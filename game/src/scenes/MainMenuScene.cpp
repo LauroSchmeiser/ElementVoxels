@@ -22,6 +22,7 @@ namespace gl3 {
         loadStartButtonTexture(gl3::resolveAssetPath("textures/cobble.jpg").string());
         loadSettingsButtonTexture(gl3::resolveAssetPath("textures/marble_rock_03_diff_4k.jpg").string());
         loadExitButtonTexture(gl3::resolveAssetPath("textures/aerial_rocks_02_diff_4k.jpg").string());
+        game.applyAudioSettings();
 
     }
 
@@ -211,6 +212,10 @@ namespace gl3 {
                 ImGui::SameLine();
                 if (ImGui::Button("Apply Display", bigBtn2)) {
                     game.applyDisplaySettings();
+                }
+                if(changed)
+                {
+                    game.applyAudioSettings();
                 }
 
             }

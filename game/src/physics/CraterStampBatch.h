@@ -141,6 +141,7 @@ namespace gl3 {
                         if (touched) {
                             chunk->meshDirty = true;
                             chunk->lightingDirty = true;
+                            chunk->updateTypeFlags();
                         }
                     }
                 }

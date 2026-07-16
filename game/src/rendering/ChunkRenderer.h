@@ -20,12 +20,13 @@ namespace gl3 {
         size_t voxelCount = DIM * DIM * DIM; //How many voxels can be in one Chunk
 
         size_t maxVerts = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5 * 3;
-        GLuint ssboVoxels = 0, ssboEdgeTable = 0, ssboTriTable = 0,
+        GLuint ssboEdgeTable = 0, ssboTriTable = 0,
                 ssboCounter = 0, ssboTriangles = 0, particleSSBO = 0, fieldBitsSSBO = 0;
 
         GLuint globalChunkVertexBuffer = 0;
 
         size_t CHUNK_MAX_VERTS = 0;
+        size_t vertLimit=10000;
 
         void setupSSBOsAndTables();
         bool tryResolveChunkVertexCount(Chunk* chunk);
@@ -82,6 +83,11 @@ namespace gl3 {
         GLuint fluidIndirectBuffer = 0;
         GLuint globalFluidVAO = 0;
 
+        GLuint ssboVoxels = 0;
+
+        GLuint ssboGasVoxels = 0;
+
+        void uploadVoxelChunkToGasSlot(const Chunk &chunk);
     };
 
 }

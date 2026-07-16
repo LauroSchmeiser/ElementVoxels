@@ -19,7 +19,7 @@ namespace gl3 {
 
         bool isSolid() const { return type != 0; }
         bool hasFluid() const { return fluidDensity >= 0.0f; }
-        // 0==Empty, 1==base, 2==fire, 3==fluid
+        // 0==Empty, 1==base, 2==fire, 3==fluid, 4==gas
         // 0==stone, 1==earth, 2==ice etc....
     };
 

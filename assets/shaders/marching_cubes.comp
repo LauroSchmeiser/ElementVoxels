@@ -53,7 +53,7 @@ float sampleDensity(ivec3 p) {
     {
         return -1.0;
     }
-    if (t == 0u) return -1.0;
+    if (t != 1u&&t != 2u) return -1.0;
     return voxels[idx].density;
 }
 

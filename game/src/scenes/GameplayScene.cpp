@@ -10,6 +10,9 @@ namespace gl3 {
         glfwSetInputMode(game.getWindow(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
         escWasDown = false;
         game.setPaused(false);
+        game.applyAudioSettings();
+        game.audio.setPauseAll(true);
+        game.audio.playBackground(*game.backgroundMusic);
     }
 
     void GameplayScene::onExit(Game& game) {

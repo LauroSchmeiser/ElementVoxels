@@ -18,18 +18,13 @@ void main()
     vec3 pos = aPos;
     float t = uTime * 1.2;
 
-    // Gentle surface wave - only affects Y slightly
-    float wave1 = sin(pos.x * 0.8 + t * 1.5) * 0.04;
-    float wave2 = cos(pos.z * 0.7 + t * 1.2) * 0.035;
-    float wave3 = sin((pos.x + pos.z) * 0.5 + t * 1.8) * 0.025;
+    // X/Z/Y displacement
+    float waveX = sin(pos.z * 0.6 + t * 0.9) * 0.85;
+    float waveY = cos(pos.y * 0.6 + t * 0.9) * 0.85;
+    float waveZ = cos(pos.x * 0.6 + t * 0.9) * 0.85;
 
-    // Apply wave only to Y (up direction) for a water surface effect
-    pos.y += wave1 + wave2 + wave3;
-
-    // Very subtle X/Z displacement for realism (much smaller)
-    float waveX = sin(pos.z * 0.6 + t * 0.9) * 0.015;
-    float waveZ = cos(pos.x * 0.6 + t * 0.9) * 0.015;
     pos.x += waveX;
+    pos.y += waveZ;
     pos.z += waveZ;
 
     vec4 world = model * vec4(pos, 1.0);

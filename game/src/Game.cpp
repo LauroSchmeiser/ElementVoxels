@@ -123,6 +123,7 @@ namespace gl3 {
             game->windowHeight = height;
             game->initPostFBO();
             game->initFluidFBO();
+            game->initGasFBO();
             game->initCompositeFBO();
         }
     }
@@ -173,6 +174,7 @@ namespace gl3 {
         skyboxRuntimeShader = std::make_unique<Shader>("shaders/skybox.vert", "shaders/skybox_runtime.frag");
         voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel.frag");
         fluidShader = std::make_unique<Shader>("shaders/fluid_voxel.vert", "shaders/fluid_voxel.frag");
+        gasRayMarchShader = std::make_unique<Shader>("shaders/gas_ray_march.comp");
         marchingCubesShader = std::make_unique<Shader>("shaders/marching_cubes.comp");
         spellPreviewShader = std::make_unique<Shader>("shaders/spell_prev.vert", "shaders/spell_prev.frag");
         postShader = std::make_unique<Shader>("shaders/post_fullscreen.vert", "shaders/post_fog_glow.frag");
@@ -192,6 +194,26 @@ namespace gl3 {
         sceneManager.applyPendingChange();
         applyDisplaySettings();
         //pickResolutionFromNativeMonitor(true);
+
+        //init Music:
+        backgroundMusic = std::make_unique<SoLoud::Wav>();
+        mainMenuTheme = std::make_unique<SoLoud::Wav>();
+        mainMenuTheme->load(resolveAssetPath("audio/charlvera-eclipse-of-the-cosmos-241713.mp3").string().c_str());
+        backgroundMusic->load(resolveAssetPath("audio/charlvera-dancing-among-comets-241708.mp3").string().c_str());
+        mainMenuTheme->setLooping(true);
+        backgroundMusic->setLooping(true);
+
+        //init sound effects:
+        collisionEffect.load(resolveAssetPath("audio/lordsonny-small-rock-break-194553.mp3").string().c_str());
+        collisionEffect.setSingleInstance(true);
+        collisionEffect.set3dMinMaxDistance(2.0f, 500.0f);
+        collisionEffect.set3dAttenuation(
+                SoLoud::AudioSource::INVERSE_DISTANCE,
+                0.01f
+                );
+
+        //start with main menu music:
+        audio.playBackground(*mainMenuTheme);
             }
 
 
@@ -508,7 +530,10 @@ namespace gl3 {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         renderFluids();
 
-        // 3) final composite - render to compositeFBO
+        // 3) gas pass - render to gasFBO
+        //renderGas();
+
+        // 4) final composite - render to compositeFBO
         glBindFramebuffer(GL_FRAMEBUFFER, compositeFBO);
         glViewport(0, 0, windowWidth, windowHeight);
         glDisable(GL_DEPTH_TEST);
@@ -538,6 +563,18 @@ namespace gl3 {
         glBindTexture(GL_TEXTURE_2D, fluidThicknessTex);
         postShader->setInt("uFluidThickness", 4);
 
+        glActiveTexture(GL_TEXTURE5);
+        glBindTexture(GL_TEXTURE_2D, gasColorTex);
+        postShader->setInt("uGasColor", 5);
+
+        glActiveTexture(GL_TEXTURE6);
+        glBindTexture(GL_TEXTURE_2D, gasDensityTex);
+        postShader->setInt("uGasDensity", 6);
+
+        glActiveTexture(GL_TEXTURE7);
+        glBindTexture(GL_TEXTURE_2D, gasDepthTex);
+        postShader->setInt("uGasDepth", 7);
+
         postShader->setFloat("uNear", 0.1f);
         postShader->setFloat("uFar", 500.0f);
 
@@ -551,10 +588,10 @@ namespace gl3 {
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glBindVertexArray(0);
 
-        // 4) Render speed lines - use composite texture as input
-        renderSpeedLines(compositeColorTex);  // Pass the composite texture
+        // 5) Render speed lines - use composite texture as input
+        renderSpeedLines(compositeColorTex);
 
-        // 5) Render final result to screen (default framebuffer)
+        // 6) Render final result to screen (default framebuffer)
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glViewport(0, 0, windowWidth, windowHeight);
         glDisable(GL_DEPTH_TEST);
@@ -565,7 +602,7 @@ namespace gl3 {
         // Simple shader to render the composite texture to screen
         renderTextureToScreen(compositeColorTex);
 
-        // 6) Render UI on top
+        // 7) Render UI on top
         renderGameplayUI();
 
         glEnable(GL_DEPTH_TEST);
@@ -620,6 +657,7 @@ namespace gl3 {
                 preloadStageName = "Preparing Post-processing...";
                 initPostFBO();
                 initFluidFBO();
+                initGasFBO();
                 initCompositeFBO();
                 preloadStage = PreloadStage::Boot_SSBOs;
                 return 0.25f;
@@ -892,6 +930,8 @@ namespace gl3 {
                     if (ImGui::Button("Back to Main Menu", btnSize)) {
                         setPaused(false);
                         requestSceneChange(SceneId::MainMenu);
+                        audio.setPauseAll(true);
+                        audio.playBackground(*mainMenuTheme);
                     }
 
                     ImGui::Spacing();
@@ -935,10 +975,10 @@ namespace gl3 {
                     }
 
                     ImGui::Spacing();
-                    //if (changed) {
-                     //   applyAudioSettings();
+                    if (changed) {
+                        applyAudioSettings();
                      //   applyVisualSettings();
-                    //}
+                    }
 
                     ImGui::Spacing();
                     if (ImGui::Button("Apply Display", ImVec2(180, 38))) {
@@ -1411,6 +1451,16 @@ namespace gl3 {
             convertSolidWorldToType(hitPos, (body->radius * 1.5f), 0);
             return;
         }*/
+        collisionEffect.setVolume(settings.sfxVolume * settings.masterVolume);
+
+        SoLoud::handle h = audio.play3d(
+                collisionEffect,
+                hitPos.x,
+                hitPos.y,
+                hitPos.z
+        );
+
+        audio.update3dAudio();
 
         std::mt19937 rng(std::random_device{}());
         std::uniform_real_distribution<float> dist(-0.5f, 0.5f);
@@ -1901,13 +1951,28 @@ namespace gl3 {
         std::uniform_real_distribution<float> waterDistColorG(0.4f, 0.9f);
         std::uniform_real_distribution<float> waterDistColorB(0.5f, 1.0f);
 
-        int waterCount = 14 ;
+        int waterCount = 15 ;
         for (int i = 0; i < waterCount; ++i) {
             WorldPlanet p;
             p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
             p.radius = distScale(rng) * CHUNK_SIZE;
             p.color = glm::vec3(waterDistColorR(rng), waterDistColorG(rng), waterDistColorB(rng));
             p.type = 3;
+            worldPlanets.push_back(p);
+        }
+
+        // Create gas planets (type 4)
+        std::uniform_real_distribution<float> gasDistColorR(0.0f, 0.0f);
+        std::uniform_real_distribution<float> gasDistColorG(1.0f, 1.0f);
+        std::uniform_real_distribution<float> gasDistColorB(0.0f, 0.0f);
+
+        int gasCount = 0;
+        for (int i = 0; i < gasCount; ++i) {
+            WorldPlanet p;
+            p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
+            p.radius = distScale(rng) * CHUNK_SIZE;
+            p.color = glm::vec3(gasDistColorR(rng), gasDistColorG(rng), gasDistColorB(rng));
+            p.type = 4;
             worldPlanets.push_back(p);
         }
 
@@ -1953,16 +2018,28 @@ namespace gl3 {
                                     if (planet.type == 3) {
                                         if (planetDensity > vox.fluidDensity) {
                                             vox.fluidDensity = planetDensity;
+                                            vox.color = planet.color;
 
                                             if (planetDensity >= 0.0f) {
-
-                                                if (!vox.isSolid()) {
-                                                    vox.color = planet.color;
-                                                }
                                                 chunkTouched = true;
+                                                chunk->hasFluid=true;
                                             }
                                         }
-                                    } else {
+                                    }else if (planet.type == 4) {
+                                        // Gas handling - MUCH LESS DENSE
+                                        if (planetDensity > -0.5f) {
+                                            vox.color = planet.color;
+                                            vox.type = 4;
+                                            if (planetDensity >= 0.0f) {
+                                                vox.density = 0.6f + (planetDensity / planet.radius) * 0.4f;
+                                                vox.density = glm::clamp(vox.density, 0.25f, 1.0f);
+                                            } else {
+                                                vox.density = glm::clamp((planetDensity + 1.0f) * 0.25f, 0.0f, 0.25f);
+                                            }
+                                            chunkTouched = true;
+                                            chunk->hasGas = true;
+                                        }
+                                    }else {
                                         float existingDensity = vox.density;
 
                                         if (planetDensity > existingDensity) {
@@ -2433,11 +2510,17 @@ void Game::update() {
         refreshMergedEmissiveBillboards();
     }
     {
-    TRACY_CPU_ZONE("Game::Recalc Meshes and Lights");
+    TRACY_CPU_ZONE("Game::Recalc Solid Meshes and Lights");
     chunkManager->rebuildDirtyChunks([this](Chunk* chunk) {
         chunkRenderer->generateChunkMesh(chunk);
-        chunkRenderer->generateFluidMesh(chunk);
     },cameraPos);
+
+    {
+        TRACY_CPU_ZONE("Game::Recalc Fluid Meshes and Lights");
+            chunkManager->rebuildDirtyChunks([this](Chunk *chunk) {
+                chunkRenderer->generateFluidMesh(chunk);
+            }, cameraPos);
+        }
     }
 
 // per-chunk light index buffer
@@ -2454,6 +2537,8 @@ if(frameCounter % 311 == 0)
 if(getPlayerHealth()<=0)
 {
     requestSceneChange(SceneId::MainMenu);
+    audio.setPauseAll(true);
+    audio.playBackground(*mainMenuTheme);
 }
 {
     TRACY_CPU_ZONE("SunBurns()");
@@ -2755,8 +2840,6 @@ glDepthMask(depthMask);
             const int minCZ = std::max(camCZ - renderRadius, -R);
             const int maxCZ = std::min(camCZ + renderRadius, R);
 
-            visibleFluidSlots.reserve(visibleSlots.size());
-
             for (int cx = minCX; cx <= maxCX; ++cx) {
                 for (int cy = minCY; cy <= maxCY; ++cy) {
                     for (int cz = minCZ; cz <= maxCZ; ++cz) {
@@ -2767,12 +2850,9 @@ glDepthMask(depthMask);
                         // Skip empty chunks (no geometry)
                         if (chunk->isCleared) continue;
 
-                        // Check if this chunk has fluid
-                        bool hasFluid = chunkHasFluid(*chunk);
-
                         // If chunk has no solid mesh but has fluid, add to fluid list
                         if (!chunk->gpuCache.isValid) {
-                            if (hasFluid) {
+                            if (chunk->hasFluid) {
                                 visibleFluidSlots.push_back(chunk->gpuSlot);
                             }
                             continue;
@@ -2790,7 +2870,7 @@ glDepthMask(depthMask);
                         }
 
                         // ALSO add to fluid list if it has fluid (even if it has solid mesh too)
-                        if (hasFluid) {
+                        if (chunk->hasFluid) {
                             visibleFluidSlots.push_back(chunk->gpuSlot);
                         }
                     }
@@ -3429,6 +3509,141 @@ glDepthMask(depthMask);
         glDisable(GL_BLEND);
     }
 
+    void Game::renderFluids()
+    {
+        fluidShader->use();
+
+        float aspect = (windowHeight == 0) ? (float)windowWidth : (float)windowWidth / (float)windowHeight;
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
+        glm::vec3 camUp = getCameraUp();
+        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
+        glm::mat4 pv = projection * view;
+
+        fluidShader->setMatrix("model", glm::mat4(1.0f));
+        fluidShader->setMatrix("mvp", pv);
+        fluidShader->setFloat("uTime", (float)glfwGetTime());
+        fluidShader->setVec3("viewPos", cameraPos);
+
+        fluidShader->setInt("uPass", 0); // 0 = front faces
+
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
+
+        glBindVertexArray(chunkRenderer->globalFluidVAO);
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, chunkRenderer->fluidIndirectBuffer);
+
+        for (uint32_t slot : visibleFluidSlots) {
+            const GLsizeiptr offset = (GLsizeiptr)slot * (GLsizeiptr)sizeof(DrawArraysIndirectCommand);
+            glDrawArraysIndirect(GL_TRIANGLES, (const void*)offset);
+        }
+
+        fluidShader->setInt("uPass", 1); // 1 = back faces
+        glCullFace(GL_FRONT);
+        for (uint32_t slot : visibleFluidSlots) {
+            const GLsizeiptr offset = (GLsizeiptr)slot * (GLsizeiptr)sizeof(DrawArraysIndirectCommand);
+            glDrawArraysIndirect(GL_TRIANGLES, (const void*)offset);
+        }
+
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+        glBindVertexArray(0);
+
+        glDisable(GL_BLEND);
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
+    }
+
+    void Game::renderGas() {
+        if (!gasRayMarchShader) return;
+
+        // Collect gas chunks in view
+        struct GasChunkData {
+            glm::vec3 origin;
+            uint32_t baseIndex;
+            glm::ivec3 dims;
+        };
+        std::vector<GasChunkData> gasChunkData;
+
+        const int R = chunkManager->radius();
+        const int camCX = worldToChunk(cameraPos.x);
+        const int camCY = worldToChunk(cameraPos.y);
+        const int camCZ = worldToChunk(cameraPos.z);
+        const int renderRadius = RenderingRange;
+
+        // Check each chunk in view
+        for (int cx = std::max(camCX - renderRadius, -R); cx <= std::min(camCX + renderRadius, R); ++cx) {
+            for (int cy = std::max(camCY - renderRadius, -R); cy <= std::min(camCY + renderRadius, R); ++cy) {
+                for (int cz = std::max(camCZ - renderRadius, -R); cz <= std::min(camCZ + renderRadius, R); ++cz) {
+                    Chunk* chunk = chunkManager->getChunk({cx, cy, cz});
+                    if (!chunk) continue;
+
+                    if (chunk->hasGas && chunk->gpuSlot != FixedGridChunkManager::INVALID_GPU_SLOT) {
+                        chunkRenderer->uploadVoxelChunkToGasSlot(*chunk);
+
+                        GasChunkData data;
+                        data.origin = getChunkMin({cx, cy, cz});
+                        data.baseIndex = chunk->gpuSlot * ((CHUNK_SIZE + 2) * (CHUNK_SIZE + 2) * (CHUNK_SIZE + 2));
+                        data.dims = glm::ivec3(CHUNK_SIZE + 2);
+                        gasChunkData.push_back(data);
+                    }
+                }
+            }
+        }
+
+        if (gasChunkData.empty()) {
+            return;
+        }
+
+        // Calculate matrices
+        float aspect = (windowHeight == 0) ? (float)windowWidth : (float)windowWidth / (float)windowHeight;
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
+        glm::vec3 camUp = getCameraUp();
+        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
+        glm::mat4 pv = projection * view;
+
+        // Bind gas FBO
+        glBindFramebuffer(GL_FRAMEBUFFER, gasFBO);
+        glViewport(0, 0, windowWidth, windowHeight);
+        glClearColor(0, 0, 0, 0);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        gasRayMarchShader->use();
+        glm::mat4 invPV = glm::inverse(pv);
+        gasRayMarchShader->setMatrix("uInvViewProjection", invPV);
+        gasRayMarchShader->setMatrix("uViewProjection", pv);
+        gasRayMarchShader->setMatrix("uView", view);
+        gasRayMarchShader->setVec3("uCameraPos", cameraPos);
+        gasRayMarchShader->setFloat("uVoxelSize", VOXEL_SIZE);
+        gasRayMarchShader->setFloat("uNear", 0.1f);
+        gasRayMarchShader->setFloat("uFar", 500.0f);
+        gasRayMarchShader->setInt("uChunkCount", (int)gasChunkData.size());
+
+        // Upload gas chunk data to SSBO
+        static GLuint gasChunkSSBO = 0;
+        if (gasChunkSSBO == 0) {
+            glGenBuffers(1, &gasChunkSSBO);
+        }
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, gasChunkSSBO);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, gasChunkData.size() * sizeof(GasChunkData), gasChunkData.data(), GL_DYNAMIC_DRAW);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, gasChunkSSBO);
+
+        // Bind main voxel SSBO
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, chunkRenderer->ssboGasVoxels);
+
+        // Bind images
+        glBindImageTexture(0, gasColorTex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
+        glBindImageTexture(1, gasDensityTex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_R16F);
+
+        // Dispatch at half resolution for performance
+        int groupsX = (windowWidth + 7) / 8;
+        int groupsY = (windowHeight + 7) / 8;
+        glDispatchCompute(groupsX, groupsY, 1);
+
+        glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+
 ////----Helper Functions------------------------------------------------------------------------------------------------------------------------
     Game::RayCastResult Game::rayCastFromCamera(float maxDistance) {
         RayCastResult result;
@@ -3639,7 +3854,52 @@ glDepthMask(depthMask);
         return lerp(c0, c1, fz);
     }
 
+     float Game::getGasDensityAtWorld(FixedGridChunkManager* chunkManager, const glm::vec3& worldPos) {
+        if (!chunkManager) return 0.0f;
 
+        const float chunkWorldSize = CHUNK_SIZE * VOXEL_SIZE;
+        int cx = static_cast<int>(std::floor(worldPos.x / chunkWorldSize));
+        int cy = static_cast<int>(std::floor(worldPos.y / chunkWorldSize));
+        int cz = static_cast<int>(std::floor(worldPos.z / chunkWorldSize));
+
+        ChunkCoord coord{cx, cy, cz};
+        Chunk* chunk = chunkManager->getChunk(coord);
+        if (!chunk) return 0.0f;
+
+        glm::vec3 chunkMin = glm::vec3(coord.x * chunkWorldSize,
+                                       coord.y * chunkWorldSize,
+                                       coord.z * chunkWorldSize);
+
+        glm::vec3 local = (worldPos - chunkMin) / VOXEL_SIZE;
+        int ix = glm::clamp((int)std::round(local.x), 0, CHUNK_SIZE);
+        int iy = glm::clamp((int)std::round(local.y), 0, CHUNK_SIZE);
+        int iz = glm::clamp((int)std::round(local.z), 0, CHUNK_SIZE);
+
+        const Voxel& v = chunk->voxels[ix][iy][iz];
+        if (v.type == 4 && v.density >= 0.0f) {
+            return v.density;
+        }
+        return 0.0f;
+    }
+
+    glm::vec3 Game::getGasColorAtWorld(FixedGridChunkManager* chunkManager, const glm::vec3& worldPos) {
+        const float chunkWorldSize = CHUNK_SIZE * VOXEL_SIZE;
+        int cx = static_cast<int>(std::floor(worldPos.x / chunkWorldSize));
+        int cy = static_cast<int>(std::floor(worldPos.y / chunkWorldSize));
+        int cz = static_cast<int>(std::floor(worldPos.z / chunkWorldSize));
+
+        Chunk* chunk = chunkManager->getChunk({cx, cy, cz});
+        if (!chunk) return glm::vec3(0.5f, 0.6f, 0.7f);
+
+        glm::vec3 chunkMin = getChunkMin({cx, cy, cz});
+        glm::vec3 local = (worldPos - chunkMin) / VOXEL_SIZE;
+        int ix = glm::clamp((int)std::round(local.x), 0, CHUNK_SIZE);
+        int iy = glm::clamp((int)std::round(local.y), 0, CHUNK_SIZE);
+        int iz = glm::clamp((int)std::round(local.z), 0, CHUNK_SIZE);
+
+        const Voxel& v = chunk->voxels[ix][iy][iz];
+        return (v.type == 4) ? v.color : glm::vec3(0.5f, 0.6f, 0.7f);
+    }
 
     glm::vec3 Game::sampleNormalAtWorld(const glm::vec3 &worldPos) const {
         const float e = VOXEL_SIZE * 0.5f;
@@ -3768,6 +4028,7 @@ glDepthMask(depthMask);
             glm::vec3 normal = sampleNormalAtWorld( cameraPos);
             cameraPos += normal * (sdf + VOXEL_SIZE * 0.05f);
         }
+        updatePlayerAudio();
     }
 
     void Game::alignCameraRollToUp(const glm::vec3& targetUp, float dt)
@@ -4893,6 +5154,7 @@ glDepthMask(depthMask);
                 break;
         }
     }
+
     int Game::findBestResolutionIndexForMonitor(GLFWmonitor* monitor) const
     {
         if (commonResolutions.empty()) return 0;
@@ -4940,6 +5202,25 @@ glDepthMask(depthMask);
         if (applyNow) {
             applyDisplaySettings();
         }
+    }
+
+    void Game::applyAudioSettings()
+    {
+        audio.setGlobalVolume(settings.musicVolume*settings.masterVolume);
+    }
+
+    void Game::updatePlayerAudio() {
+        audio.set3dListenerPosition(cameraPos.x, cameraPos.y, cameraPos.z);
+
+        // If your camera rotates:
+        audio.set3dListenerParameters(
+                cameraPos.x, cameraPos.y, cameraPos.z,
+                characterController->getVelocity().x, characterController->getVelocity().y, characterController->getVelocity().z,
+                getCameraFront().x, getCameraFront().y, getCameraFront().z,
+                getCameraUp().x, getCameraUp().y, getCameraUp().z
+        );
+
+        audio.update3dAudio();
     }
 
     void Game::applyMaterial9BurnAlongSegment(const glm::vec3& from, const glm::vec3& to, float radius)
@@ -5035,49 +5316,50 @@ glDepthMask(depthMask);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }
 
-    void Game::renderFluids()
-    {
-        fluidShader->use();
-
-        float aspect = (windowHeight == 0) ? (float)windowWidth : (float)windowWidth / (float)windowHeight;
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
-        glm::vec3 camUp = getCameraUp();
-        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
-        glm::mat4 pv = projection * view;
-
-        fluidShader->setMatrix("model", glm::mat4(1.0f));
-        fluidShader->setMatrix("mvp", pv);
-        fluidShader->setFloat("uTime", (float)glfwGetTime());
-        fluidShader->setVec3("viewPos", cameraPos);
-
-        fluidShader->setInt("uPass", 0); // 0 = front faces
-
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glEnable(GL_CULL_FACE);
-        glCullFace(GL_BACK);
-
-        glBindVertexArray(chunkRenderer->globalFluidVAO);
-        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, chunkRenderer->fluidIndirectBuffer);
-
-        for (uint32_t slot : visibleFluidSlots) {
-            const GLsizeiptr offset = (GLsizeiptr)slot * (GLsizeiptr)sizeof(DrawArraysIndirectCommand);
-            glDrawArraysIndirect(GL_TRIANGLES, (const void*)offset);
+    void Game::initGasFBO() {
+        if (gasFBO) {
+            glDeleteFramebuffers(1, &gasFBO);
+            glDeleteTextures(1, &gasColorTex);
+            glDeleteTextures(1, &gasDepthTex);
+            glDeleteTextures(1, &gasDensityTex);
+            gasFBO = gasColorTex = gasDepthTex = gasDensityTex = 0;
         }
 
-        fluidShader->setInt("uPass", 1); // 1 = back faces
-        glCullFace(GL_FRONT);
-        for (uint32_t slot : visibleFluidSlots) {
-            const GLsizeiptr offset = (GLsizeiptr)slot * (GLsizeiptr)sizeof(DrawArraysIndirectCommand);
-            glDrawArraysIndirect(GL_TRIANGLES, (const void*)offset);
+        glGenFramebuffers(1, &gasFBO);
+        glBindFramebuffer(GL_FRAMEBUFFER, gasFBO);
+
+        // Color texture (gas color)
+        glGenTextures(1, &gasColorTex);
+        glBindTexture(GL_TEXTURE_2D, gasColorTex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, windowWidth, windowHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, gasColorTex, 0);
+
+        // Density texture (for thickness)
+        glGenTextures(1, &gasDensityTex);
+        glBindTexture(GL_TEXTURE_2D, gasDensityTex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, windowWidth, windowHeight, 0, GL_RED, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, gasDensityTex, 0);
+
+        // Depth texture
+        glGenTextures(1, &gasDepthTex);
+        glBindTexture(GL_TEXTURE_2D, gasDepthTex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, windowWidth, windowHeight, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, gasDepthTex, 0);
+
+        GLenum bufs[] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
+        glDrawBuffers(2, bufs);
+
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+            std::cerr << "gasFBO incomplete!\n";
         }
 
-        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
-        glBindVertexArray(0);
-
-        glDisable(GL_BLEND);
-        glEnable(GL_CULL_FACE);
-        glCullFace(GL_BACK);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }
 
     glm::vec3 Game::sampleFluidColorAtWorld(const glm::vec3& worldPos) const
@@ -5099,15 +5381,6 @@ glDepthMask(depthMask);
 
         const Voxel& v = chunk->voxels[ix][iy][iz];
         return v.hasFluid() ? v.color : glm::vec3(0.1f, 0.3f, 0.8f);
-    }
-
-    bool Game::chunkHasFluid(const Chunk& chunk) {
-        for (int x = 0; x <= CHUNK_SIZE; ++x)
-            for (int y = 0; y <= CHUNK_SIZE; ++y)
-                for (int z = 0; z <= CHUNK_SIZE; ++z)
-                    if (chunk.voxels[x][y][z].hasFluid())
-                        return true;
-        return false;
     }
 
     void Game::initCompositeFBO() {

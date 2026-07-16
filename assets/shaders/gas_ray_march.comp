@@ -1,0 +1,206 @@
+#version 430 core
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+struct Voxel {
+    float density;
+    float fluidDensity;
+    float pad1;
+    float pad2;
+    vec4 color;
+    uint type;
+    uint pad4;
+    uint pad5;
+    uint pad6;
+    uint material;
+    uint pad7;
+    uint pad8;
+    uint pad9;
+};
+
+struct GasChunkInfo {
+    vec3 origin;
+    uint baseIndex;
+    ivec3 dims;
+};
+
+layout(std430, binding = 0) readonly buffer Voxels { Voxel voxels[]; };
+layout(std430, binding = 1) readonly buffer GasChunks { GasChunkInfo chunks[]; };
+
+layout(rgba8, binding = 0) uniform image2D uGasColor;
+layout(r16f, binding = 1) uniform image2D uGasDensity;
+
+uniform mat4 uViewProjection;
+uniform mat4 uInvViewProjection;
+uniform vec3 uCameraPos;
+uniform float uVoxelSize;
+uniform int uChunkCount;
+uniform float uNear;
+uniform float uFar;
+
+const int CHUNK_SIZE = 16;
+const int DIM = CHUNK_SIZE + 2;
+
+int localVoxelIndex(ivec3 p, uint baseIndex) {
+    return int(baseIndex) + p.x + p.y * DIM + p.z * DIM * DIM;
+}
+
+bool pointInChunk(vec3 worldPos, vec3 origin) {
+    return worldPos.x >= origin.x - uVoxelSize &&
+    worldPos.y >= origin.y - uVoxelSize &&
+    worldPos.z >= origin.z - uVoxelSize &&
+    worldPos.x <  origin.x + float(CHUNK_SIZE + 1) * uVoxelSize &&
+    worldPos.y <  origin.y + float(CHUNK_SIZE + 1) * uVoxelSize &&
+    worldPos.z <  origin.z + float(CHUNK_SIZE + 1) * uVoxelSize;
+}
+
+float sampleGasDensityAtWorld(vec3 worldPos) {
+    for (int i = 0; i < uChunkCount; ++i) {
+        vec3 origin = chunks[i].origin;
+        if (!pointInChunk(worldPos, origin)) continue;
+
+        vec3 local = (worldPos - origin) / uVoxelSize + vec3(1.0);
+        ivec3 p = clamp(ivec3(floor(local)), ivec3(0), ivec3(DIM - 1));
+        int idx = localVoxelIndex(p, chunks[i].baseIndex);
+
+        if (voxels[idx].type == 4u)
+        return max(voxels[idx].density, 0.0);
+
+        return 0.0;
+    }
+    return 0.0;
+}
+
+vec3 sampleGasColorAtWorld(vec3 worldPos) {
+    for (int i = 0; i < uChunkCount; ++i) {
+        vec3 origin = chunks[i].origin;
+        if (!pointInChunk(worldPos, origin)) continue;
+
+        vec3 local = (worldPos - origin) / uVoxelSize + vec3(1.0);
+        ivec3 p = clamp(ivec3(floor(local)), ivec3(0), ivec3(DIM - 1));
+        int idx = localVoxelIndex(p, chunks[i].baseIndex);
+
+        if (voxels[idx].type == 4u)
+        return voxels[idx].color.xyz;
+
+        return vec3(0.0);
+    }
+    return vec3(0.0);
+}
+
+float sampleGasDensityTrilinear(vec3 worldPos) {
+    vec3 g = worldPos / uVoxelSize;
+    ivec3 i0 = ivec3(floor(g));
+    vec3 f = fract(g);
+
+    vec3 p000 = vec3(i0 + ivec3(0,0,0)) * uVoxelSize;
+    vec3 p100 = vec3(i0 + ivec3(1,0,0)) * uVoxelSize;
+    vec3 p010 = vec3(i0 + ivec3(0,1,0)) * uVoxelSize;
+    vec3 p110 = vec3(i0 + ivec3(1,1,0)) * uVoxelSize;
+    vec3 p001 = vec3(i0 + ivec3(0,0,1)) * uVoxelSize;
+    vec3 p101 = vec3(i0 + ivec3(1,0,1)) * uVoxelSize;
+    vec3 p011 = vec3(i0 + ivec3(0,1,1)) * uVoxelSize;
+    vec3 p111 = vec3(i0 + ivec3(1,1,1)) * uVoxelSize;
+
+    float d000 = sampleGasDensityAtWorld(p000);
+    float d100 = sampleGasDensityAtWorld(p100);
+    float d010 = sampleGasDensityAtWorld(p010);
+    float d110 = sampleGasDensityAtWorld(p110);
+    float d001 = sampleGasDensityAtWorld(p001);
+    float d101 = sampleGasDensityAtWorld(p101);
+    float d011 = sampleGasDensityAtWorld(p011);
+    float d111 = sampleGasDensityAtWorld(p111);
+
+    float d00 = mix(d000, d100, f.x);
+    float d10 = mix(d010, d110, f.x);
+    float d01 = mix(d001, d101, f.x);
+    float d11 = mix(d011, d111, f.x);
+
+    float d0 = mix(d00, d10, f.y);
+    float d1 = mix(d01, d11, f.y);
+
+    return mix(d0, d1, f.z);
+}
+
+bool intersectAABB(vec3 ro, vec3 rd, vec3 bmin, vec3 bmax, out float tNear, out float tFar) {
+    vec3 t1 = (bmin - ro) / rd;
+    vec3 t2 = (bmax - ro) / rd;
+    vec3 tmin3 = min(t1, t2);
+    vec3 tmax3 = max(t1, t2);
+    tNear = max(max(tmin3.x, tmin3.y), tmin3.z);
+    tFar  = min(min(tmax3.x, tmax3.y), tmax3.z);
+    return tNear <= tFar && tFar > 0.0;
+}
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 sizePx = imageSize(uGasColor);
+    if (pixel.x >= sizePx.x || pixel.y >= sizePx.y) return;
+
+    if (uChunkCount == 0) {
+        imageStore(uGasColor, pixel, vec4(0.0));
+        imageStore(uGasDensity, pixel, vec4(0.0));
+        return;
+    }
+
+    vec2 uv = (vec2(pixel) + 0.5) / vec2(sizePx);
+    vec4 clip = vec4(uv * 2.0 - 1.0, -1.0, 1.0);
+    vec4 worldNear = uInvViewProjection * clip;
+    worldNear /= worldNear.w;
+
+    vec3 rayDir = normalize(worldNear.xyz - uCameraPos);
+
+    bool hitAny = false;
+    float globalTMin = 1e20;
+    float globalTMax = -1.0;
+
+    for (int i = 0; i < uChunkCount; ++i) {
+        vec3 origin = chunks[i].origin;
+        vec3 bmin = origin - vec3(uVoxelSize);
+        vec3 bmax = origin + vec3(float(CHUNK_SIZE + 1) * uVoxelSize);
+
+        float t0, t1;
+        if (intersectAABB(uCameraPos, rayDir, bmin, bmax, t0, t1)) {
+            hitAny = true;
+            globalTMin = min(globalTMin, t0);
+            globalTMax = max(globalTMax, t1);
+        }
+    }
+
+    if (!hitAny) {
+        imageStore(uGasColor, pixel, vec4(0.0));
+        imageStore(uGasDensity, pixel, vec4(0.0));
+        return;
+    }
+
+    float t = max(globalTMin, 0.0);
+    float endT = min(globalTMax, 500.0);
+
+    float stepSize = uVoxelSize * 5.0;
+    const int maxSteps = 10;
+
+    vec3 accumColor = vec3(0.0);
+    float accumAlpha = 0.0;
+    const float maxAlpha = 0.45;
+
+    for (int i = 0; i < maxSteps && t < endT && accumAlpha < maxAlpha; ++i) {
+        vec3 worldPos = uCameraPos + rayDir * t;
+
+        float density = sampleGasDensityTrilinear(worldPos);
+        if (density > 0.01) {
+            vec3 color = sampleGasColorAtWorld(worldPos);
+
+            float extinction = density * stepSize * 0.12;
+            float alpha = 1.0 - exp(-extinction);
+
+            vec3 contrib = color * alpha * (1.0 - accumAlpha);
+            accumColor += contrib;
+            accumAlpha += alpha * (1.0 - accumAlpha);
+        }
+
+        t += stepSize;
+    }
+
+    imageStore(uGasColor, pixel, vec4(accumColor, accumAlpha));
+    imageStore(uGasDensity, pixel, vec4(accumAlpha, 0.0, 0.0, 0.0));
+}

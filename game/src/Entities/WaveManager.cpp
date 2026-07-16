@@ -138,8 +138,16 @@ namespace gl3 {
         consumer.radius = 4.0f * VOXEL_SIZE;
         consumer.cooldownsSec = { 6.0f, 10.0f, 0.0f };
 
+        std::vector<EnemyArchetype> enemies;
+        enemies.push_back(basic);
+        if(currentWave>3)
+        {
+            enemies.push_back(dasher);
+            enemies.push_back(consumer);
+        }
+        std::uniform_real_distribution<float> distEnemies(0, enemies.size());
 
-        enemyManager->spawn(basic, spawnPos);
+        enemyManager->spawn(enemies.at((int)distEnemies(rng)), spawnPos);
         enemiesSpawned++;
     }
 

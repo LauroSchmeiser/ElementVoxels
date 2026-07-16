@@ -346,6 +346,7 @@ namespace gl3 {
         //General Rendering:
     public:
         void renderSkybox();
+
     private:
         void renderChunks();
         void renderAnimatedVoxels();
@@ -360,8 +361,7 @@ namespace gl3 {
         ////Basic-variables:
         GLFWwindow *window = nullptr;
         int windowWidth = 800, windowHeight = 600;
-        SoLoud::Soloud audio;
-        std::unique_ptr<SoLoud::Wav> backgroundMusic;
+
         Frustum currentFrustum;
 
 
@@ -534,6 +534,8 @@ namespace gl3 {
         glm::vec3 calculateNormalAt(Chunk* chunk, const glm::ivec3& pos);
         float sampleDensityAtWorld(const glm::vec3 &worldPos) const;
         float sampleFluidDensityAtWorld(const glm::vec3 &worldPos) const;
+        float getGasDensityAtWorld(FixedGridChunkManager* chunkManager, const glm::vec3& worldPos);
+        glm::vec3 Game::getGasColorAtWorld(FixedGridChunkManager* chunkManager, const glm::vec3& worldPos);
 
         glm::vec3 sampleNormalAtWorld(const glm::vec3 &worldPos) const;
         void updateCamera();
@@ -716,6 +718,15 @@ namespace gl3 {
         GLuint compositeFBO = 0;
         GLuint compositeColorTex = 0;
 
+        GLuint gasFBO = 0;
+        GLuint gasColorTex = 0;      // RGBA8 for gas color
+        GLuint gasDepthTex = 0;      // Depth for composite
+        GLuint gasDensityTex = 0;    // R16F for accumulated density
+
+        std::unique_ptr<Shader> gasRayMarchShader;
+        void initGasFBO();
+        void renderGas();
+
     public:
         void convertWorldToMaterial(const glm::vec3& center, float radius, uint32_t material);
         int Game::consumeWorldOfMaterial(const glm::vec3& center, float radius, uint32_t material);
@@ -763,7 +774,7 @@ namespace gl3 {
         };
 
         void applyDisplaySettings();
-        //void applyAudioSettings();
+        void applyAudioSettings();
         //void applyVisualSettings();
 
         void pickResolutionFromNativeMonitor(bool applyNow);
@@ -803,6 +814,13 @@ namespace gl3 {
         void initCompositeFBO();
 
         void renderTextureToScreen(GLuint textureID);
+
+        SoLoud::Soloud audio;
+        std::unique_ptr<SoLoud::Wav> backgroundMusic;
+        std::unique_ptr<SoLoud::Wav> mainMenuTheme;
+        SoLoud::Wav collisionEffect;
+
+        void updatePlayerAudio();
     };
 
 }

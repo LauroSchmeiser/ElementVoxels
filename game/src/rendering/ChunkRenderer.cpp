@@ -46,6 +46,14 @@ namespace gl3 {
         glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(unsigned int), &zero, GL_DYNAMIC_DRAW);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, ssboCounter);
 
+
+        glGenBuffers(1, &ssboGasVoxels);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboGasVoxels);
+        glBufferData(GL_SHADER_STORAGE_BUFFER,
+                     MAX_CHUNKS_GPU * voxelCount * sizeof(CpuVoxelStd430),
+                     nullptr,
+                     GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
         /*  // 4: triangles SSBO (output)
           glGenBuffers(1, &ssboTriangles);
           glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboTriangles);
@@ -294,7 +302,7 @@ namespace gl3 {
         MAX_CHUNKS_GPU = maxChunksGpu;
         CHUNK_MAX_VERTS = (DIM - 1) * (DIM - 1) * (DIM - 1) * 5 * 3;
 
-        const int MAX_VERTS_PER_CHUNK = 10000;
+        const int MAX_VERTS_PER_CHUNK = vertLimit;
         CHUNK_MAX_VERTS = std::min(
                 (int)chunkMaxVertices(DIM),
                 MAX_VERTS_PER_CHUNK
@@ -663,7 +671,7 @@ namespace gl3 {
 
     void ChunkRenderer::setupFluidBatchBuffers(int maxChunksGpu)
     {
-        FLUID_CHUNK_MAX_VERTS = 10000;
+        FLUID_CHUNK_MAX_VERTS = vertLimit;
 
         glGenBuffers(1, &globalFluidVertexBuffer);
         glBindBuffer(GL_ARRAY_BUFFER, globalFluidVertexBuffer);
@@ -760,5 +768,78 @@ namespace gl3 {
                         sizeof(DrawArraysIndirectCommand),
                         &cmd);
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+    }
+
+    void ChunkRenderer::uploadVoxelChunkToGasSlot(const Chunk& chunk)
+    {
+        if (chunk.gpuSlot >= (uint32_t)MAX_CHUNKS_GPU) return;
+
+        const int localDIM = DIM;
+        const size_t total = size_t(localDIM) * localDIM * localDIM;
+        std::vector<CpuVoxelStd430> voxels(total);
+
+        for (int x = -1; x <= CHUNK_SIZE; ++x) {
+            for (int y = -1; y <= CHUNK_SIZE; ++y) {
+                for (int z = -1; z <= CHUNK_SIZE; ++z) {
+                    int idxX = x + 1;
+                    int idxY = y + 1;
+                    int idxZ = z + 1;
+                    int idx = idxX + idxY * localDIM + idxZ * localDIM * localDIM;
+
+                    const Voxel* srcVoxel = nullptr;
+
+                    if (x == -1 || x == CHUNK_SIZE ||
+                        y == -1 || y == CHUNK_SIZE ||
+                        z == -1 || z == CHUNK_SIZE) {
+
+                        ChunkCoord neighborCoord = chunk.coord;
+                        int localX = x;
+                        int localY = y;
+                        int localZ = z;
+
+                        if (x == -1) { neighborCoord.x -= 1; localX = CHUNK_SIZE - 1; }
+                        else if (x == CHUNK_SIZE) { neighborCoord.x += 1; localX = 0; }
+
+                        if (y == -1) { neighborCoord.y -= 1; localY = CHUNK_SIZE - 1; }
+                        else if (y == CHUNK_SIZE) { neighborCoord.y += 1; localY = 0; }
+
+                        if (z == -1) { neighborCoord.z -= 1; localZ = CHUNK_SIZE - 1; }
+                        else if (z == CHUNK_SIZE) { neighborCoord.z += 1; localZ = 0; }
+
+                        Chunk* neighbor = chunkManager->getChunk(neighborCoord);
+                        if (neighbor &&
+                            localX >= 0 && localX <= CHUNK_SIZE &&
+                            localY >= 0 && localY <= CHUNK_SIZE &&
+                            localZ >= 0 && localZ <= CHUNK_SIZE) {
+                            srcVoxel = &neighbor->voxels[localX][localY][localZ];
+                        }
+                    }
+
+                    if (!srcVoxel) {
+                        int clampX = glm::clamp(x, 0, CHUNK_SIZE);
+                        int clampY = glm::clamp(y, 0, CHUNK_SIZE);
+                        int clampZ = glm::clamp(z, 0, CHUNK_SIZE);
+                        srcVoxel = &chunk.voxels[clampX][clampY][clampZ];
+                    }
+
+                    voxels[idx].density = srcVoxel->density;
+                    voxels[idx].fluidDensity = srcVoxel->fluidDensity;
+                    glm::vec3 col = srcVoxel->color;
+                    voxels[idx].color[0] = col.r;
+                    voxels[idx].color[1] = col.g;
+                    voxels[idx].color[2] = col.b;
+                    voxels[idx].color[3] = 1.0f;
+                    voxels[idx].type = srcVoxel->type;
+                    voxels[idx].material = srcVoxel->material;
+                }
+            }
+        }
+
+        const GLsizeiptr chunkBytes = GLsizeiptr(voxels.size() * sizeof(CpuVoxelStd430));
+        const GLintptr offset = GLintptr(chunk.gpuSlot) * chunkBytes;
+
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboGasVoxels);
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, offset, chunkBytes, voxels.data());
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     }
 }
