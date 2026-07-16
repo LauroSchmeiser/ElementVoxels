@@ -27,10 +27,6 @@ uniform int uCameraInsideFluid;
 uniform vec3 uFluidFogColor;
 uniform float uFluidFogDensity;
 
-uniform sampler2D uGasColor;
-uniform sampler2D uGasDepth;
-uniform sampler2D uGasDensity;
-
 float linearizeDepth(float z01, float near, float far) {
     float z = z01 * 2.0 - 1.0;
     return (2.0 * near * far) / (far + near - z * (far - near));
@@ -126,18 +122,6 @@ void main()
         }
     }
 
-    vec4 gasColor = texture(uGasColor, vUV);
-    float gasDensity = texture(uGasDensity, vUV).r;
-
-    bool hasGas = gasColor.a > 0.001 || gasDensity > 0.001;
-
-    if (hasGas) {
-        float blendAlpha = clamp(gasColor.a, 0.0, 1.0);
-        color = mix(color, gasColor.rgb, blendAlpha);
-
-        float gasGlow = gasDensity * 0.15;
-        color += gasColor.rgb * gasGlow;
-    }
 
 
     if (uCameraInsideFluid != 0) {

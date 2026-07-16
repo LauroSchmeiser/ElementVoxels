@@ -2,9 +2,6 @@
 layout (local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
 
 struct Voxel {
-// pad0 repurposed to carry Voxel::fluidDensity from the CPU side - the
-// struct's size/layout is unchanged, so the CPU->GPU upload just needs to
-// write fluidDensity into this slot instead of leaving it zeroed.
     float density; float fluidDensity; float pad1; float pad2;
     vec4 color;
     uint type; uint pad4; uint pad5; uint pad6;

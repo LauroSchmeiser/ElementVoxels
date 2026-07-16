@@ -46,14 +46,19 @@ int voxelIndex(ivec3 p) {
     return p.x + p.y * voxelGridDim.x + p.z * voxelGridDim.x * voxelGridDim.y;
 }
 ivec3 clampVoxel(ivec3 p) { return clamp(p, ivec3(0), voxelGridDim - ivec3(1)); }
+
 float sampleDensity(ivec3 p) {
     int idx = voxelIndex(clampVoxel(p));
     uint t = voxels[idx].type;
-    if(voxels[idx].fluidDensity>0)
-    {
+
+    if (t != 1u && t != 2u) {
         return -1.0;
     }
-    if (t != 1u&&t != 2u) return -1.0;
+
+    if (voxels[idx].fluidDensity > 0.0) {
+        return -1.0;
+    }
+
     return voxels[idx].density;
 }
 

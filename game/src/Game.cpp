@@ -123,7 +123,7 @@ namespace gl3 {
             game->windowHeight = height;
             game->initPostFBO();
             game->initFluidFBO();
-            game->initGasFBO();
+            //game->initGasFBO();
             game->initCompositeFBO();
         }
     }
@@ -209,7 +209,7 @@ namespace gl3 {
         collisionEffect.set3dMinMaxDistance(2.0f, 500.0f);
         collisionEffect.set3dAttenuation(
                 SoLoud::AudioSource::INVERSE_DISTANCE,
-                0.01f
+                1.0f
                 );
 
         //start with main menu music:
@@ -530,10 +530,7 @@ namespace gl3 {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         renderFluids();
 
-        // 3) gas pass - render to gasFBO
-        //renderGas();
-
-        // 4) final composite - render to compositeFBO
+        // 3) final composite - render to compositeFBO
         glBindFramebuffer(GL_FRAMEBUFFER, compositeFBO);
         glViewport(0, 0, windowWidth, windowHeight);
         glDisable(GL_DEPTH_TEST);
@@ -563,18 +560,6 @@ namespace gl3 {
         glBindTexture(GL_TEXTURE_2D, fluidThicknessTex);
         postShader->setInt("uFluidThickness", 4);
 
-        glActiveTexture(GL_TEXTURE5);
-        glBindTexture(GL_TEXTURE_2D, gasColorTex);
-        postShader->setInt("uGasColor", 5);
-
-        glActiveTexture(GL_TEXTURE6);
-        glBindTexture(GL_TEXTURE_2D, gasDensityTex);
-        postShader->setInt("uGasDensity", 6);
-
-        glActiveTexture(GL_TEXTURE7);
-        glBindTexture(GL_TEXTURE_2D, gasDepthTex);
-        postShader->setInt("uGasDepth", 7);
-
         postShader->setFloat("uNear", 0.1f);
         postShader->setFloat("uFar", 500.0f);
 
@@ -588,10 +573,10 @@ namespace gl3 {
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glBindVertexArray(0);
 
-        // 5) Render speed lines - use composite texture as input
-        renderSpeedLines(compositeColorTex);
+        // 4) Render speed lines - use composite texture as input
+        renderSpeedLines(compositeColorTex);  // Pass the composite texture
 
-        // 6) Render final result to screen (default framebuffer)
+        // 5) Render final result to screen (default framebuffer)
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glViewport(0, 0, windowWidth, windowHeight);
         glDisable(GL_DEPTH_TEST);
@@ -602,7 +587,7 @@ namespace gl3 {
         // Simple shader to render the composite texture to screen
         renderTextureToScreen(compositeColorTex);
 
-        // 7) Render UI on top
+        // 6) Render UI on top
         renderGameplayUI();
 
         glEnable(GL_DEPTH_TEST);
@@ -657,7 +642,7 @@ namespace gl3 {
                 preloadStageName = "Preparing Post-processing...";
                 initPostFBO();
                 initFluidFBO();
-                initGasFBO();
+                //initGasFBO();
                 initCompositeFBO();
                 preloadStage = PreloadStage::Boot_SSBOs;
                 return 0.25f;
@@ -2021,25 +2006,11 @@ namespace gl3 {
                                             vox.color = planet.color;
 
                                             if (planetDensity >= 0.0f) {
-                                                chunkTouched = true;
                                                 chunk->hasFluid=true;
+                                                chunkTouched = true;
                                             }
                                         }
-                                    }else if (planet.type == 4) {
-                                        // Gas handling - MUCH LESS DENSE
-                                        if (planetDensity > -0.5f) {
-                                            vox.color = planet.color;
-                                            vox.type = 4;
-                                            if (planetDensity >= 0.0f) {
-                                                vox.density = 0.6f + (planetDensity / planet.radius) * 0.4f;
-                                                vox.density = glm::clamp(vox.density, 0.25f, 1.0f);
-                                            } else {
-                                                vox.density = glm::clamp((planetDensity + 1.0f) * 0.25f, 0.0f, 0.25f);
-                                            }
-                                            chunkTouched = true;
-                                            chunk->hasGas = true;
-                                        }
-                                    }else {
+                                    } else {
                                         float existingDensity = vox.density;
 
                                         if (planetDensity > existingDensity) {
@@ -2883,6 +2854,10 @@ glDepthMask(depthMask);
             TRACY_CPU_ZONE("renderChunks::DrawBatched");
             TRACY_GPU_ZONE("Chunks::DrawBatched");
 
+            glDisable(GL_BLEND);
+            glEnable(GL_DEPTH_TEST);
+            glDepthMask(GL_TRUE);
+
             voxelShader->use();
 
             if (actions["CastSphere"].isHeld) {
@@ -3137,6 +3112,10 @@ glDepthMask(depthMask);
 
         voxelShader->setFloat("scale", 1.0f);
 
+        glDisable(GL_BLEND);
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_TRUE);
+
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D_ARRAY, materialAlbedoArrayTexId);
         voxelShader->setInt("uAlbedoArray", 0);
@@ -3240,6 +3219,9 @@ glDepthMask(depthMask);
         voxelShader->setVec3("viewPos", cameraPos);
         voxelShader->setVec3("ambientColor", glm::vec3(0.85f));
 
+        glDisable(GL_BLEND);
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_TRUE);
 
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D_ARRAY, materialAlbedoArrayTexId);
@@ -3550,8 +3532,8 @@ glDepthMask(depthMask);
         glBindVertexArray(0);
 
         glDisable(GL_BLEND);
-        glEnable(GL_CULL_FACE);
         glCullFace(GL_BACK);
+        glDisable(GL_CULL_FACE);
     }
 
     void Game::renderGas() {

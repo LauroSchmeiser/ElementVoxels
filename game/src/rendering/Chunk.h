@@ -86,20 +86,12 @@ namespace gl3 {
 
         void updateTypeFlags() {
             hasFluid = false;
-            hasEmissive=false;
-            hasGas=false;
             for (int x = 0; x < CHUNK_SIZE; ++x) {
                 for (int y = 0; y < CHUNK_SIZE; ++y) {
                     for (int z = 0; z < CHUNK_SIZE; ++z) {
-                        if(hasFluid&&hasGas&&hasEmissive)
-                        {
-                            return;
-                        }else if (voxels[x][y][z].type == 2) {
-                            hasEmissive = true;
-                        }else if (voxels[x][y][z].type == 3) {
+                        if (voxels[x][y][z].type == 3) {
                             hasFluid = true;
-                        } else if(voxels[x][y][z].type == 4){
-                            hasGas = true;
+                            break;
                         }
                     }
                 }
