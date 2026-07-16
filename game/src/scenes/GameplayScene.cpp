@@ -12,7 +12,7 @@ namespace gl3 {
         game.setPaused(false);
         game.applyAudioSettings();
         game.audio.setPauseAll(true);
-        game.audio.playBackground(*game.backgroundMusic);
+        game.musicHandle = game.audio.play(*game.backgroundMusic);
     }
 
     void GameplayScene::onExit(Game& game) {

@@ -198,10 +198,13 @@ namespace gl3 {
         //init Music:
         backgroundMusic = std::make_unique<SoLoud::Wav>();
         mainMenuTheme = std::make_unique<SoLoud::Wav>();
+        bossTheme = std::make_unique<SoLoud::Wav>();
         mainMenuTheme->load(resolveAssetPath("audio/charlvera-eclipse-of-the-cosmos-241713.mp3").string().c_str());
         backgroundMusic->load(resolveAssetPath("audio/charlvera-dancing-among-comets-241708.mp3").string().c_str());
+        bossTheme->load(resolveAssetPath("audio/charlvera-dancing-among-comets-241708.mp3").string().c_str());
         mainMenuTheme->setLooping(true);
         backgroundMusic->setLooping(true);
+        bossTheme->setLooping(true);
 
         //init sound effects:
         collisionEffect.load(resolveAssetPath("audio/lordsonny-small-rock-break-194553.mp3").string().c_str());
@@ -212,8 +215,24 @@ namespace gl3 {
                 1.0f
                 );
 
+        buttonClick.load(resolveAssetPath("audio/creatorshome-digital-click-357350.mp3").string().c_str());
+        buttonClick.setSingleInstance(true);
+        buttonHover.load(resolveAssetPath("audio/lesiakower-minimalist-button-hover-sound-effect-399749.mp3").string().c_str());
+        buttonHover.setSingleInstance(true);
+        menuClose.load(resolveAssetPath("audio/litupsubway-ui-close-sfx-513359.mp3").string().c_str());
+        menuClose.setSingleInstance(true);
+
+        //sound effects
+        /*SoLoud::Wav waterSplashEffect;
+        SoLoud::Wav fireEffect;
+        SoLoud::Wav crunchEffect;
+        SoLoud::Wav stepEffect;
+        SoLoud::Wav runEffect;
+        SoLoud::Wav jumpEffect;
+        SoLoud::Wav landEffect;*/
+
         //start with main menu music:
-        audio.playBackground(*mainMenuTheme);
+        musicHandle = audio.playBackground(*mainMenuTheme);
             }
 
 
@@ -916,7 +935,7 @@ namespace gl3 {
                         setPaused(false);
                         requestSceneChange(SceneId::MainMenu);
                         audio.setPauseAll(true);
-                        audio.playBackground(*mainMenuTheme);
+                        musicHandle = audio.playBackground(*mainMenuTheme);
                     }
 
                     ImGui::Spacing();
@@ -1436,7 +1455,7 @@ namespace gl3 {
             convertSolidWorldToType(hitPos, (body->radius * 1.5f), 0);
             return;
         }*/
-        collisionEffect.setVolume(settings.sfxVolume * settings.masterVolume);
+        collisionEffect.setVolume(settings.sfxVolume);
 
         SoLoud::handle h = audio.play3d(
                 collisionEffect,
@@ -2509,7 +2528,7 @@ if(getPlayerHealth()<=0)
 {
     requestSceneChange(SceneId::MainMenu);
     audio.setPauseAll(true);
-    audio.playBackground(*mainMenuTheme);
+    musicHandle = audio.playBackground(*mainMenuTheme);
 }
 {
     TRACY_CPU_ZONE("SunBurns()");
@@ -5188,7 +5207,12 @@ glDepthMask(depthMask);
 
     void Game::applyAudioSettings()
     {
-        audio.setGlobalVolume(settings.musicVolume*settings.masterVolume);
+        audio.setGlobalVolume(settings.masterVolume);
+
+        buttonClick.setVolume(settings.sfxVolume);
+        buttonHover.setVolume(settings.sfxVolume);
+        menuClose.setVolume(settings.sfxVolume);
+
     }
 
     void Game::updatePlayerAudio() {

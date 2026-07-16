@@ -120,6 +120,7 @@ namespace gl3 {
                 ImGui::SetCursorPosX((panelW - btnSize.x) * 0.5f);
 
                 if (DrawTexturedMenuButton("btn_start", "Start Game", (ImTextureID) (intptr_t) startBtnTex, btnSize)) {
+                    game.audio.play(game.buttonClick);
                     game.requestSceneChange(SceneId::Loading);
                 }
 
@@ -128,6 +129,7 @@ namespace gl3 {
                 ImGui::SetCursorPosX((panelW - btnSize.x) * 0.5f);
                 if (DrawTexturedMenuButton("btn_settings", "Settings", (ImTextureID) (intptr_t) settingsBtnTex,
                                            btnSize)) {
+                    game.audio.play(game.buttonClick);
                     showSettings = true;
                 }
 
@@ -136,6 +138,7 @@ namespace gl3 {
                 ImGui::SetCursorPosX((panelW - btnSize.x) * 0.5f);
                 if (DrawTexturedMenuButton("btn_desktop", "Back to desktop", (ImTextureID) (intptr_t) exitBtnTex,
                                            btnSize)) {
+                    game.audio.play(game.buttonClick);
                     glfwSetWindowShouldClose(game.getWindow(), true);
                 }
 
@@ -176,6 +179,7 @@ namespace gl3 {
                 const char *modeLabels[] = {"Fullscreen", "Windowed", "Borderless"};
                 int mode = static_cast<int>(game.settings.displayMode);
                 if (ImGui::Combo(" Display Mode", &mode, modeLabels, IM_ARRAYSIZE(modeLabels))) {
+                    game.audio.play(game.buttonClick);
                     game.settings.displayMode = static_cast<Game::DisplayMode>(mode);
                     changed = true;
                 }
@@ -188,6 +192,7 @@ namespace gl3 {
 
                 if (ImGui::Combo(" Resolution", &game.settings.resolutionIndex, resLabels.data(),
                                  (int) resLabels.size())) {
+                    game.audio.play(game.buttonClick);
                     changed = true;
                 }
 
@@ -199,22 +204,26 @@ namespace gl3 {
                 const ImVec2 bigBtn2(419.0f, 52.0f);
 
                 if (ImGui::Button("Set Native Resolution", bigBtn1)) {
+                    game.audio.play(game.buttonClick);
                     game.pickResolutionFromNativeMonitor(false);
                 }
 
                 ImGui::Dummy(ImVec2(0.0f, 22.0f));
 
                 if (ImGui::Button("Back", bigBtn2)) {
+                    game.audio.play(game.buttonClick);
                     showSettings = false;
                 }
                 ImGui::SameLine();
                 ImGui::Dummy(ImVec2(11.0f, 0.0f));
                 ImGui::SameLine();
                 if (ImGui::Button("Apply Display", bigBtn2)) {
+                    game.audio.play(game.buttonClick);
                     game.applyDisplaySettings();
                 }
                 if(changed)
                 {
+                    game.audio.play(game.buttonClick);
                     game.applyAudioSettings();
                 }
 
