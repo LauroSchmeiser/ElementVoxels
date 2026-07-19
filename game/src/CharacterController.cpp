@@ -406,9 +406,16 @@ namespace gl3 {
             float penetration;
             bool collided = false;
 
-            // Check voxel world collision - this now skips fluid entirely
             if (checkCollision(state.position, normal, penetration)) {
-                // We know checkCollision already skipped fluid, so this is a solid collision
+                glm::vec3 up = getUpDirection();
+                float halfSegment = glm::max(0.0f, (currentHeight * 0.5f) - radius);
+
+                glm::vec3 bottomSphereCenter = state.position - up * halfSegment;
+                glm::vec3 topSphereCenter = state.position + up * halfSegment;
+
+                // Measure approach speed BEFORE removing velocity into the surface.
+                float approachSpeed = glm::max(0.0f, -glm::dot(state.velocity, normal));
+
                 state.position += normal * (penetration + VOXEL_SIZE * 0.01f);
 
                 float velDotNormal = glm::dot(state.velocity, normal);
@@ -416,33 +423,32 @@ namespace gl3 {
                     state.velocity -= normal * velDotNormal;
                 }
 
-                glm::vec3 up = getUpDirection();
-                float halfSegment = glm::max(0.0f, (currentHeight * 0.5f) - radius);
-
-                glm::vec3 bottomSphereCenter = state.position - up * halfSegment;
-                glm::vec3 topSphereCenter = state.position + up * halfSegment;
-
-                glm::vec3 capsuleDir = topSphereCenter - bottomSphereCenter;
-                float capsuleLength = glm::length(capsuleDir);
+                glm::vec3 capsuleSeg = topSphereCenter - bottomSphereCenter;
+                float capsuleSegLenSq = glm::dot(capsuleSeg, capsuleSeg);
 
                 glm::vec3 contactPoint;
-                if (capsuleLength > 1e-6f) {
-                    capsuleDir /= capsuleLength;
-                    float t = glm::clamp(glm::dot(-normal, capsuleDir), 0.0f, 1.0f);
-                    glm::vec3 closestOnSegment = glm::mix(bottomSphereCenter, topSphereCenter, t);
+                if (capsuleSegLenSq > 1e-6f) {
+                    glm::vec3 surfacePointEstimate = state.position - normal * radius;
+                    float t = glm::clamp(
+                            glm::dot(surfacePointEstimate - bottomSphereCenter, capsuleSeg) / capsuleSegLenSq,
+                            0.0f, 1.0f
+                    );
+                    glm::vec3 closestOnSegment = bottomSphereCenter + capsuleSeg * t;
                     contactPoint = closestOnSegment - normal * radius;
                 } else {
                     contactPoint = state.position - normal * radius;
                 }
+
                 state.currentContactPoint = contactPoint;
                 state.currentContactNormal = normal;
                 state.currentContactMaterial = Game::sampleMaterialAtWorld(chunkManager, contactPoint);
                 state.currentContactType = Game::sampleTypeAtWorld(chunkManager, contactPoint);
                 state.hasWorldContact = true;
 
-                if (shouldLandOnContact(normal)) {
+                if (shouldLandOnContact(normal, approachSpeed)) {
                     beginSurfaceAdhesion(contactPoint, normal);
                 }
+
                 collided = true;
             }
 
@@ -771,36 +777,29 @@ namespace gl3 {
         resolveCollisions();
 
         enforceCameraClearance();
-        enforceCameraClearanceAggressive();
 
         updateOrientation(deltaTime);
 
         // Ground detection - only when NOT in fluid
         if (!state.isInFluid) {
             if (state.isSurfaceAdhered) {
-                bool stillGrounded = checkIfGrounded();
+                glm::vec3 gp, gn;
+                float gd = 0.0f;
 
-                if (!stillGrounded) {
+                if (!findGroundContact(gp, gn, gd)) {
                     state.isGrounded = false;
                     state.isSurfaceAdhered = false;
                     state.coyoteTime = settings.coyoteTimeDuration;
                 } else {
-                    glm::vec3 gp, gn;
-                    float gd = 0.0f;
-                    if (findGroundContact(gp, gn, gd)) {
-                        state.lastGroundPoint = gp;
-                        state.adheredNormal = glm::normalize(gn);
-                        state.isGrounded = true;
-                        setGravityDirection(-state.adheredNormal);
+                    beginSurfaceAdhesion(gp, gn, false);
 
-                        state.currentContactPoint = gp;
-                        state.currentContactNormal = gn;
-                        state.currentContactMaterial = Game::sampleMaterialAtWorld(chunkManager, gp);
-                        state.currentContactType = Game::sampleTypeAtWorld(chunkManager, gp);
-                        state.hasWorldContact = true;
-                    }
+                    state.currentContactPoint = gp;
+                    state.currentContactNormal = gn;
+                    state.currentContactMaterial = Game::sampleMaterialAtWorld(chunkManager, gp);
+                    state.currentContactType = Game::sampleTypeAtWorld(chunkManager, gp);
+                    state.hasWorldContact = true;
                 }
-            } else {
+            }else {
                 float velDown = glm::dot(state.velocity, settings.gravityDir);
 
                 if (checkIfGrounded() && velDown >= 0.0f) {
@@ -818,7 +817,6 @@ namespace gl3 {
                 }
             }
         } else {
-            // In fluid - can't be grounded
             state.isGrounded = false;
             state.isSurfaceAdhered = false;
         }
@@ -956,37 +954,45 @@ namespace gl3 {
         return found;
     }
 
-    bool CharacterController::shouldLandOnContact(const glm::vec3& contactNormal) const {
+    bool CharacterController::shouldLandOnContact(const glm::vec3& contactNormal, float approachSpeed) const {
         glm::vec3 n = glm::normalize(contactNormal);
-        float speedIntoSurface = -glm::dot(state.velocity, n); // positive if moving into wall/floor
 
-        if (speedIntoSurface < settings.landingMinApproachSpeed) {
+        if (approachSpeed < settings.landingMinApproachSpeed) {
             return false;
         }
 
-        // Don't treat ceilings as landing surfaces relative to current body up
-        glm::vec3 currentUp = getUpDirection();
-        if (glm::dot(n, currentUp) < -0.35f) {
-            return false;
+        // If already adhered, still reject surfaces that are strongly opposite to the
+        // current attached orientation to avoid snapping to a "ceiling" accidentally.
+        // But while free-flying, allow side impacts to become valid landings.
+        if (state.isSurfaceAdhered) {
+            glm::vec3 currentUp = getUpDirection();
+            if (glm::dot(n, currentUp) < -0.6f) {
+                return false;
+            }
         }
 
         return true;
     }
 
-    void CharacterController::beginSurfaceAdhesion(const glm::vec3& contactPoint, const glm::vec3& contactNormal) {
+    void CharacterController::beginSurfaceAdhesion(const glm::vec3& contactPoint,
+                                                   const glm::vec3& contactNormal,
+                                                   bool resetTimer) {
         glm::vec3 n = glm::normalize(contactNormal);
 
         state.isGrounded = true;
         state.isSurfaceAdhered = true;
         state.adheredNormal = n;
         state.lastGroundPoint = contactPoint;
-        state.adhesionTimer = settings.adhesionDuration;
+
+        if (resetTimer) {
+            state.adhesionTimer = settings.adhesionDuration;
+        }
+
         state.coyoteTime = settings.coyoteTimeDuration;
         state.airSlamAvailable = true;
 
         settings.gravityDir = -n;
 
-        // Remove velocity into surface
         float vn = glm::dot(state.velocity, n);
         if (vn < 0.0f) {
             state.velocity -= n * vn;
@@ -998,17 +1004,31 @@ namespace gl3 {
 
         state.adhesionTimer -= deltaTime;
 
+        glm::vec3 gp, gn;
+        float gd = 0.0f;
+        bool hasNearbyGround = findGroundContact(gp, gn, gd);
+
+        if (hasNearbyGround) {
+            state.lastGroundPoint = gp;
+            state.adheredNormal = glm::normalize(gn);
+            state.isGrounded = true;
+
+            // Refresh adhesion timer while we still have valid nearby support.
+            state.adhesionTimer = settings.adhesionDuration;
+            settings.gravityDir = -state.adheredNormal;
+        } else {
+            float distFromAnchor = glm::length(state.position - state.lastGroundPoint);
+            if (distFromAnchor > settings.adhesionMaxDistance || state.adhesionTimer <= 0.0f) {
+                state.isSurfaceAdhered = false;
+                state.isGrounded = false;
+                return;
+            }
+        }
+
         glm::vec3 surfaceNormal = glm::normalize(state.adheredNormal);
         glm::vec3 down = -surfaceNormal;
 
-        float distFromAnchor = glm::length(state.position - state.lastGroundPoint);
-        if (distFromAnchor > settings.adhesionMaxDistance || state.adhesionTimer <= 0.0f) {
-            state.isSurfaceAdhered = false;
-            state.isGrounded = false;
-            return;
-        }
-
-        state.velocity += down * settings.adhesionAcceleration * deltaTime * 0.25f; // 25% strength
+        state.velocity += down * settings.adhesionAcceleration * deltaTime * 0.25f;
     }
 
     void CharacterController::updateOrientation(float deltaTime) {
@@ -1079,68 +1099,29 @@ namespace gl3 {
 
         return movedAny;
     }
-
     void CharacterController::enforceCameraClearance() {
         glm::vec3 up = getUpDirection();
         float eyeOffset = getEyeHeight();
-
-        // Use smaller radius for head to allow closer to surfaces
         const float eyeRadius = glm::max(VOXEL_SIZE * 0.12f, radius * 0.35f);
 
-        // Get current camera position
         glm::vec3 eye = state.position + up * eyeOffset;
-        glm::vec3 originalEye = eye;
-
-        // Resolve camera collision (now handles fluid)
         resolveCameraCollision(eye, eyeRadius);
-
-        // Only adjust character position if camera was pushed significantly
-        float pushDist = glm::length(eye - originalEye);
-        if (pushDist > VOXEL_SIZE * 0.02f) {
-            // Check if we're in fluid - if so, don't push the character
-            if (isPointInFluid(chunkManager, eye)) {
-                // We're in fluid, don't push the character
-                return;
-            }
-
-            glm::vec3 newPosition = eye - up * eyeOffset;
-
-            // Check if new position is valid (not inside geometry)
-            float sdf = sampleDensityAtWorld(chunkManager, newPosition);
-            bool inFluid2 = isPointInFluid(chunkManager, newPosition);
-            uint8_t t2 = Game::sampleTypeAtWorld(chunkManager, newPosition);
-            if ((sdf < radius * 0.5f || inFluid2) && t2 != 1u) {
-                state.position = newPosition;
-            } else {
-                // Option 2: Only move partially
-                glm::vec3 partialMove = (newPosition - state.position) * 0.3f;
-                state.position += partialMove;
-            }
-        }
     }
-
     bool CharacterController::checkCameraCollision(glm::vec3& cameraPos, float eyeRadius,
                                                    glm::vec3& outNormal, float& outPenetration) const {
         if (!chunkManager) return false;
 
-        // Check if we're in fluid - if so, no collision
         if (isPointInFluid(chunkManager, cameraPos)) {
-            // In fluid - allow free movement
             outNormal = glm::vec3(0.0f, 1.0f, 0.0f);
             outPenetration = 0.0f;
-            return false; // No collision
+            return false;
         }
 
         float sdf = sampleDensityAtWorld(chunkManager, cameraPos);
-
-        // Push camera out of solid geometry
-        if (sdf > 0.0f) {
-            glm::vec3 normal = sampleNormalAtWorld(chunkManager, cameraPos);
-            cameraPos += normal * (sdf + VOXEL_SIZE * 0.05f);
-        }
-
         float pen = sdf - eyeRadius;
-        if (pen <= 0.0f) return false;
+        if (pen <= 0.0f) {
+            return false;
+        }
 
         glm::vec3 normal = sampleNormalAtWorld(chunkManager, cameraPos);
         float nLen = glm::length(normal);
@@ -1156,31 +1137,42 @@ namespace gl3 {
     }
 
     void CharacterController::resolveCameraCollision(glm::vec3& cameraPos, float eyeRadius) const {
-        const int maxIterations = 20;
-        const float skinWidth = VOXEL_SIZE * 0.04f;
+        if (!chunkManager) return;
 
-        for (int i = 0; i < maxIterations; i++) {
-            glm::vec3 normal;
-            float penetration;
+        const int sweepSteps = 12;
+        const int resolveIterations = 6;
+        const float skinWidth = VOXEL_SIZE * 0.05f;
 
-            if (!checkCameraCollision(cameraPos, eyeRadius, normal, penetration)) {
-                break;
+        glm::vec3 start = getCameraPosition();
+        glm::vec3 end = cameraPos;
+        glm::vec3 delta = end - start;
+
+        glm::vec3 cur = start;
+
+        for (int s = 1; s <= sweepSteps; ++s) {
+            float t = (float)s / (float)sweepSteps;
+            glm::vec3 target = start + delta * t;
+            glm::vec3 stepPos = target;
+
+            for (int i = 0; i < resolveIterations; ++i) {
+                glm::vec3 normal;
+                float penetration;
+                if (!checkCameraCollision(stepPos, eyeRadius, normal, penetration)) {
+                    break;
+                }
+
+                if (penetration <= 0.0f) {
+                    break;
+                }
+
+                stepPos += normal * (penetration + skinWidth);
             }
 
-            // If penetration is 0, we're in fluid - no push needed
-            if (penetration <= 0.0f) {
-                break;
-            }
-
-            // Push camera out of solid geometry
-            float push = penetration + skinWidth;
-            cameraPos += normal * push;
-
-            // Prevent infinite loops
-            if (i == maxIterations - 1) break;
+            cur = stepPos;
         }
-    }
 
+        cameraPos = cur;
+    }
     void CharacterController::enforceCameraClearanceAggressive() {
         glm::vec3 up = getUpDirection();
         float eyeOffset = getEyeHeight();

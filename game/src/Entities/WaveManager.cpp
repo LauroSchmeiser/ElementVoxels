@@ -96,7 +96,7 @@ namespace gl3 {
             spawnBoss();
         } else {
             config.waveNumber = currentWave;
-            config.totalEnemies = 4 + (currentWave - 1)*2;
+            config.totalEnemies = 1 + (currentWave - 1)*2;
             config.enemyBaseHealth+=(currentWave)*50;
             config.isBossWave = false;
             enemiesToSpawn = config.totalEnemies;

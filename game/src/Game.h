@@ -748,7 +748,7 @@ namespace gl3 {
         };
 
         struct GameSettings {
-            float sensitivity = 0.12f;
+            float sensitivity = 0.70f;
             float masterVolume = 1.0f;
             float sfxVolume = 1.0f;
             float musicVolume = 0.8f;

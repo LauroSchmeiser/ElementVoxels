@@ -42,12 +42,12 @@ namespace gl3 {
         float groundCheckDistance = 0.2f;
 
         // Surface landing / adhesion
-        float landingMinApproachSpeed = 0.025f;
-        float adhesionDuration = 0.5f;
-        float adhesionMaxDistance = 20.0f;
-        float adhesionSnapDistance = 1.0f;
-        float adhesionAcceleration = 0.5f;
-        float minGroundNormalDot = 0.15f;          // More lenient for angled surfaces
+        float landingMinApproachSpeed = 0.01f;
+        float adhesionDuration = 0.75f;
+        float adhesionMaxDistance = 24.0f;
+        float adhesionSnapDistance = 1.5f;
+        float adhesionAcceleration = 1.0f;
+        float minGroundNormalDot = 0.05f;
 
         // Camera / orientation smoothing
         float upLerpSpeed = 1.5f;                 // Medium speed (adaptive logic handles extremes)
@@ -110,6 +110,9 @@ namespace gl3 {
 
         void resolveCameraCollision(glm::vec3& cameraPos, float eyeRadius) const;
 
+        bool checkCameraCollision(glm::vec3& cameraPos, float eyeRadius,
+                                  glm::vec3& outNormal, float& outPenetration) const;
+
     private:
         // Collision detection
         bool checkCollision(const glm::vec3& testPosition,
@@ -134,8 +137,8 @@ namespace gl3 {
         void updateAirSlam(float deltaTime);
 
         bool findGroundContact(glm::vec3& outPoint, glm::vec3& outNormal, float& outDistance) const;
-        bool shouldLandOnContact(const glm::vec3& contactNormal) const;
-        void beginSurfaceAdhesion(const glm::vec3& contactPoint, const glm::vec3& contactNormal);
+        bool shouldLandOnContact(const glm::vec3& contactNormal, float approachSpeed) const;
+        void beginSurfaceAdhesion(const glm::vec3& contactPoint, const glm::vec3& contactNormal, bool resetTimer = true);
         void updateSurfaceAdhesion(float deltaTime);
         void updateOrientation(float deltaTime);
 
@@ -202,8 +205,6 @@ namespace gl3 {
         PlayerBodyCollisionCallback playerBodyCollisionCallback;
         bool depenetrateSphere(glm::vec3& center, float sphereRadius, int maxIterations = 8) const;
         void enforceCameraClearance();
-        bool checkCameraCollision(glm::vec3& cameraPos, float eyeRadius,
-                                  glm::vec3& outNormal, float& outPenetration) const;
 
         void enforceCameraClearanceAggressive();
 

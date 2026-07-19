@@ -69,7 +69,7 @@ namespace gl3 {
         WaveConfig config;
 
         // Constants
-        static constexpr uint32_t BOSS_WAVE_INTERVAL = 3;
+        static constexpr uint32_t BOSS_WAVE_INTERVAL = 5;
         static constexpr float MIN_SPAWN_DISTANCE = 50.0f*VOXEL_SIZE;
         static constexpr float MAX_SPAWN_DISTANCE = 100.0f*VOXEL_SIZE;
 

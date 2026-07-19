@@ -16,7 +16,7 @@ uniform float uLineCount = 24.0;
 uniform float uLineWidth = 0.008;
 uniform float uLineSharpness = 0.95;
 uniform float uInnerRadius = 0.15;      // Clear center zone
-uniform float uOuterFade = 0.85;        // Where lines start fading at edges
+uniform float uOuterFade = 0.72;        // Where lines start fading at edges
 uniform float uVignetteStrength = 0.4;
 uniform vec3 uLineColor = vec3(1.0, 1.0, 1.0);
 uniform float uLineOpacity = 0.7;
@@ -56,12 +56,21 @@ void main()
     }
 
     // Create STATIC radial lines (no rotation/animation)
-    float angleNormalized = (angle + 3.14159) / (2.0 * 3.14159); // 0 to 1
-    float linePattern = fract(angleNormalized * uLineCount);
+    float angleNormalized = (angle + 3.14159265) / (2.0 * 3.14159265);
+    float stripeCoord = angleNormalized * uLineCount;
+    float stripePhase = fract(stripeCoord);
 
-    // Sharp line edges
-    float line = smoothstep(0.5 + uLineWidth, 0.5, linePattern) *
-    smoothstep(0.5 - uLineWidth, 0.5, linePattern);
+    // distance from center of stripe, 0 at stripe center
+    float stripeDist = abs(stripePhase - 0.5);
+
+    // derivative-based AA width
+    float aa = fwidth(stripeCoord) * 0.5;
+
+    // stripe width should be interpreted in 0..0.5 range
+    float halfWidth = clamp(uLineWidth, 0.001, 0.49);
+
+    // anti-aliased line
+    float line = 1.0 - smoothstep(halfWidth - aa, halfWidth + aa, stripeDist);
 
     // Add variation to line intensity (some lines brighter/darker)
     float lineIndex = floor(angleNormalized * uLineCount);
@@ -74,6 +83,8 @@ void main()
     // Fade lines at outer edges
     float edgeFade = 1.0 - smoothstep(uOuterFade, 1.0, dist);
     line *= edgeFade;
+    float outerSoftFade = 1.0 - smoothstep(0.75, 1.0, dist);
+    line *= outerSoftFade;
 
     // Fade based on distance from center (stronger at edges)
     float distanceFactor = smoothstep(uInnerRadius, uOuterFade, dist);
@@ -87,7 +98,7 @@ void main()
 
     // Optional: subtle radial blur
     vec3 blurredColor = sceneColor.rgb;
-    const int samples = 6;
+    const int samples = 12;
     float blurAmount = speedIntensity * 0.015;
 
     vec2 blurDir = normalize(centeredUV);

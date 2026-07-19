@@ -215,6 +215,13 @@ namespace gl3 {
                 1.0f
                 );
 
+        fireEffect.load(resolveAssetPath("audio/alice_soundz-fire-sound-effects-224089.mp3").string().c_str());
+        fireEffect.setSingleInstance(true);
+        fireEffect.set3dMinMaxDistance(2.0f, 500.0f);
+        fireEffect.set3dAttenuation(
+                SoLoud::AudioSource::INVERSE_DISTANCE,
+                1.0f);
+
         buttonClick.load(resolveAssetPath("audio/creatorshome-digital-click-357350.mp3").string().c_str());
         buttonClick.setSingleInstance(true);
         buttonHover.load(resolveAssetPath("audio/lesiakower-minimalist-button-hover-sound-effect-399749.mp3").string().c_str());
@@ -981,6 +988,7 @@ namespace gl3 {
                     ImGui::Spacing();
                     if (changed) {
                         applyAudioSettings();
+
                      //   applyVisualSettings();
                     }
 
@@ -1776,7 +1784,7 @@ namespace gl3 {
                                 GLFW_KEY_SPACE, GLFW_KEY_LEFT_SHIFT, GLFW_KEY_LEFT_CONTROL,
                                 GLFW_KEY_TAB, GLFW_KEY_ESCAPE,GLFW_KEY_E,GLFW_KEY_R,GLFW_KEY_F,
                                 GLFW_KEY_1, GLFW_KEY_2, GLFW_KEY_3, GLFW_KEY_4, GLFW_KEY_5, GLFW_KEY_6,
-                                GLFW_KEY_T, GLFW_KEY_Q, GLFW_KEY_I
+                                GLFW_KEY_T, GLFW_KEY_Q, GLFW_KEY_I,GLFW_KEY_X,GLFW_KEY_C
                         });
 
         // Character movement
@@ -1787,6 +1795,8 @@ namespace gl3 {
         actions.addAction("Jump", {GLFW_KEY_SPACE});
         actions.addAction("Sprint", {GLFW_KEY_LEFT_SHIFT});
         actions.addAction("Crouch", {GLFW_KEY_LEFT_CONTROL});
+        actions.addAction("RollRight", {GLFW_KEY_E});
+        actions.addAction("RollLeft", {GLFW_KEY_Q});
 
         // Debug/UI actions
         actions.addAction("ToggleDebug", {GLFW_KEY_TAB});
@@ -1800,13 +1810,13 @@ namespace gl3 {
 
 
         actions.addAction("Escape", {GLFW_KEY_ESCAPE});
-        actions.addAction("CastSphere", {GLFW_KEY_E});
-        actions.addAction("CastFleshSphere", {GLFW_KEY_Q});
+        actions.addAction("CastSphere", {GLFW_KEY_F});
+        actions.addAction("CastFleshSphere", {GLFW_KEY_X});
         actions.addAction("CastFireSphere", {GLFW_KEY_I});
 
 
         actions.addAction("CastWall", {GLFW_KEY_R});
-        actions.addAction("AirReset", {GLFW_KEY_F});
+        actions.addAction("AirReset", {GLFW_KEY_C});
 
     }
 
@@ -1902,7 +1912,7 @@ namespace gl3 {
 
 
         // Create solid planets (type 1)
-        int planetCount = 20;
+        int planetCount = 24;
 
         WorldPlanet p;
         p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
@@ -1955,7 +1965,7 @@ namespace gl3 {
         std::uniform_real_distribution<float> waterDistColorG(0.4f, 0.9f);
         std::uniform_real_distribution<float> waterDistColorB(0.5f, 1.0f);
 
-        int waterCount = 15 ;
+        int waterCount = 5 ;
         for (int i = 0; i < waterCount; ++i) {
             WorldPlanet p;
             p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
@@ -2541,6 +2551,16 @@ if(getPlayerHealth()<=0)
         if(distsq<std::sqrt(light.intensity) * 0.15f)
         {
             registerPlayerDamage(0.005f*distsq*(glm::sqrt(light.intensity*0.00001f)));
+            fireEffect.setVolume(settings.sfxVolume);
+
+            SoLoud::handle h = audio.play3d(
+                    fireEffect,
+                    light.pos.x,
+                    light.pos.y,
+                    light.pos.z
+            );
+
+            audio.update3dAudio();
         }
         float gravity = glm::pow(light.intensity,1.0f)-distsq;
         if(gravity>bestGravity&&!characterController->isSurfaceAdhered())
@@ -3512,6 +3532,8 @@ glDepthMask(depthMask);
 
     void Game::renderFluids()
     {
+        TRACY_CPU_ZONE("Game::renderFluids");
+        TRACY_GPU_ZONE("FluidChunks (total)");
         fluidShader->use();
 
         float aspect = (windowHeight == 0) ? (float)windowWidth : (float)windowWidth / (float)windowHeight;
@@ -3966,12 +3988,11 @@ glDepthMask(depthMask);
 
     void Game::updateCamera() {
         glm::vec3 targetPos = characterController->getCameraPosition();
-        glm::vec3 targetUp  = glm::normalize(characterController->getUpDirection());
 
         glm::vec2 mouseDelta = getMouseDelta();
         if (!paused) {
-            float yawAmount   = -mouseDelta.x * cameraSensitivity;
-            float pitchAmount = -mouseDelta.y * cameraSensitivity;
+            float yawAmount   = -mouseDelta.x * cameraSensitivity * settings.sensitivity;
+            float pitchAmount = -mouseDelta.y * cameraSensitivity * settings.sensitivity;
 
             // yaw around current camera up
             if (std::abs(yawAmount) > 1e-6f) {
@@ -3991,44 +4012,51 @@ glDepthMask(depthMask);
                     cameraForward = candidateForward;
                 }
             }
-        }
 
-        // roll-only align to targetUp
-        alignCameraRollToUp(targetUp, deltaTime);
+            // Manual roll only
+            float rollAmount = 0.0f;
+            const float rollSpeedDeg = 120.0f;
+
+            if (actions["RollLeft"].isPressed)  rollAmount += rollSpeedDeg * deltaTime;
+            if (actions["RollRight"].isPressed) rollAmount -= rollSpeedDeg * deltaTime;
+
+            if (std::abs(rollAmount) > 1e-6f) {
+                glm::quat qRoll = glm::angleAxis(glm::radians(rollAmount), glm::normalize(cameraForward));
+                cameraUp = glm::normalize(qRoll * cameraUp);
+            }
+        }
 
         cameraRight = glm::normalize(glm::cross(cameraForward, cameraUp));
         cameraUp    = glm::normalize(glm::cross(cameraRight, cameraForward));
 
-        // Start with the character's camera position
         glm::vec3 desiredCameraPos = characterController->getCameraPosition();
 
-        // If there's a distance offset, try to maintain it with collision
         const float cameraDistance = 0.0f;
         if (cameraDistance > 0.0f) {
             desiredCameraPos = targetPos - cameraForward * cameraDistance;
         }
 
-        // Apply camera collision resolution
         float eyeRadius = glm::max(VOXEL_SIZE * 0.12f,
                                    characterController->getRadius() * 0.35f);
 
-        // Use the character controller's camera collision resolution
-        // You'll need to make this method public or add a getter
+        // Resolve desired eye position with swept collision
         characterController->resolveCameraCollision(desiredCameraPos, eyeRadius);
 
         // Smooth camera movement
-        float smoothTime = 0.1f;
-
+        float smoothTime = characterController->getState().isSurfaceAdhered ? 0.025f : 0.06f;
         float smoothFactor = 1.0f - exp(-deltaTime / smoothTime);
         cameraPos = cameraPos + (desiredCameraPos - cameraPos) * smoothFactor;
 
-        // Final safety check - if camera is inside geometry, push it out
-        float sdf = sampleDensityAtWorld( cameraPos);
-        if (sdf > 0.0f) {
-            // Emergency push out
-            glm::vec3 normal = sampleNormalAtWorld( cameraPos);
-            cameraPos += normal * (sdf + VOXEL_SIZE * 0.05f);
+        // Re-resolve after smoothing too, because smoothing itself can drift into geometry
+        characterController->resolveCameraCollision(cameraPos, eyeRadius);
+
+        // Final emergency correction
+        glm::vec3 emergencyNormal;
+        float emergencyPen;
+        if (characterController->checkCameraCollision(cameraPos, eyeRadius, emergencyNormal, emergencyPen)) {
+            cameraPos += emergencyNormal * (emergencyPen + VOXEL_SIZE * 0.05f);
         }
+
         updatePlayerAudio();
     }
 
@@ -4527,7 +4555,7 @@ glDepthMask(depthMask);
         float speed = glm::length(velocity);
 
         // Normalize speed (adjust maxSpeed to your game's scale)
-        const float maxSpeed = 100.0f;
+        const float maxSpeed = 50.0f;
         float normalizedSpeed = glm::clamp(speed / maxSpeed, 0.0f, 1.5f) * speedLinesIntensity;
 
         if (normalizedSpeed < 0.05f) return; // Skip if too slow
@@ -4561,11 +4589,11 @@ glDepthMask(depthMask);
         speedLinesShader->setVec3("uCameraPos", cameraPos);
 
         // RADIAL LINE SETTINGS
-        speedLinesShader->setFloat("uLineCount", 10.0f);
-        speedLinesShader->setFloat("uLineWidth", 0.15f);
+        speedLinesShader->setFloat("uLineCount", 12.0f);
+        speedLinesShader->setFloat("uLineWidth", 0.05f);
         speedLinesShader->setFloat("uLineSharpness", 0.95f);
-        speedLinesShader->setFloat("uInnerRadius", 0.35f);
-        speedLinesShader->setFloat("uOuterFade", 0.85f);
+        speedLinesShader->setFloat("uInnerRadius", 0.30f);
+        speedLinesShader->setFloat("uOuterFade", 0.50f);
         speedLinesShader->setFloat("uVignetteStrength", 0.4f);
         speedLinesShader->setFloat("uLineOpacity", 0.7f);
 
@@ -4575,15 +4603,19 @@ glDepthMask(depthMask);
         if (characterController->getState().isSprinting) {
             lineColor = glm::vec3(0.3f, 0.7f, 1.0f);
             speedLinesShader->setFloat("uLineCount", 22.0f);
-            speedLinesShader->setFloat("uLineWidth", 0.1f);
-            speedLinesShader->setFloat("uInnerRadius", 0.25f);
+            speedLinesShader->setFloat("uLineWidth", 0.075f);
+            speedLinesShader->setFloat("uInnerRadius", 0.20f);
+            speedLinesShader->setFloat("uOuterFade", 0.50f);
+            speedLinesShader->setFloat("uVignetteStrength", 0.4f);
             speedLinesShader->setFloat("uLineOpacity", 0.9f);
         }
         if (characterController->getState().isAirSlamming) {
             lineColor = glm::vec3(1.0f, 0.3f, 0.3f);
             speedLinesShader->setFloat("uLineCount", 18.0f);
-            speedLinesShader->setFloat("uLineWidth", 0.15f);
-            speedLinesShader->setFloat("uInnerRadius", 0.30f);
+            speedLinesShader->setFloat("uLineWidth", 0.09f);
+            speedLinesShader->setFloat("uInnerRadius", 0.25f);
+            speedLinesShader->setFloat("uOuterFade", 0.50f);
+            speedLinesShader->setFloat("uVignetteStrength", 0.4f);
             speedLinesShader->setFloat("uLineOpacity", 0.8f);
         }
 
@@ -5154,6 +5186,10 @@ glDepthMask(depthMask);
                 glfwSetWindowAttrib(win, GLFW_DECORATED, GLFW_FALSE);
                 break;
         }
+
+        initPostFBO();
+        initFluidFBO();
+        initCompositeFBO();
     }
 
     int Game::findBestResolutionIndexForMonitor(GLFWmonitor* monitor) const
@@ -5207,11 +5243,13 @@ glDepthMask(depthMask);
 
     void Game::applyAudioSettings()
     {
-        audio.setGlobalVolume(settings.masterVolume);
+        audio.setPauseAll(true);
+        audio.setGlobalVolume(settings.masterVolume*settings.musicVolume);
 
-        buttonClick.setVolume(settings.sfxVolume);
-        buttonHover.setVolume(settings.sfxVolume);
-        menuClose.setVolume(settings.sfxVolume);
+        buttonClick.setVolume(settings.sfxVolume/settings.musicVolume);
+        buttonHover.setVolume(settings.sfxVolume/settings.musicVolume);
+        menuClose.setVolume(settings.sfxVolume/glm::clamp(settings.musicVolume,0.01f,1.0f));
+        audio.setPauseAll(false);
 
     }
 
