@@ -246,7 +246,7 @@ namespace gl3 {
                                          float radiusWorld,
                                          float strength)
     {
-        EnemyRuntime* e = find(enemyId);
+        EnemyRuntime* e = findByBodyId(enemyId);
         if (!e) return;
 
         glm::vec3 hitLocal = (hitWorldPos - e->inst.position);
@@ -264,8 +264,17 @@ namespace gl3 {
         e->inst.meshDirty = true;
     }
 
-    EnemyRuntime* EnemyManager::find(uint64_t id) {
-        for (auto& e : enemies) if (e.inst.bodyId == id) return &e;
+    EnemyRuntime* EnemyManager::findByBodyId(uint64_t bodyId) {
+        for (auto& e : enemies) {
+            if (e.inst.bodyId == bodyId) return &e;
+        }
+        return nullptr;
+    }
+
+    const EnemyRuntime* EnemyManager::findByBodyId(uint64_t bodyId) const {
+        for (const auto& e : enemies) {
+            if (e.inst.bodyId == bodyId) return &e;
+        }
         return nullptr;
     }
 

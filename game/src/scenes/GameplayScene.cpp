@@ -11,8 +11,8 @@ namespace gl3 {
         escWasDown = false;
         game.setPaused(false);
         game.applyAudioSettings();
-        game.audio.setPauseAll(true);
-        game.musicHandle = game.audio.play(*game.backgroundMusic);
+        SoLoud::handle musicHandle = g_SoundManager.playMusic(SoundID::BackgroundMusic, true, 1.0f);
+
     }
 
     void GameplayScene::onExit(Game& game) {

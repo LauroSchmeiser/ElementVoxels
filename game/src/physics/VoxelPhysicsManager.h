@@ -114,5 +114,12 @@ namespace gl3 {
 
         bool sphereIntersectsWorld(const VoxelPhysicsBody &body, const glm::vec3 &center, glm::vec3 &outNormal,
                                    float &outPenetration);
+
+        float sampleFluidDensityTrilinear(const glm::vec3& worldPos);
+        bool isPointInFluid(const glm::vec3& worldPos);
+
+        float fluidDrag = 0.85f;
+        float fluidBuoyancy = 3.0f;
+        float fluidDensityScale = 0.2f;
     };
 }

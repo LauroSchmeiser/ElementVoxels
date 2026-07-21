@@ -179,11 +179,6 @@ namespace gl3 {
         spellPreviewShader = std::make_unique<Shader>("shaders/spell_prev.vert", "shaders/spell_prev.frag");
         postShader = std::make_unique<Shader>("shaders/post_fullscreen.vert", "shaders/post_fog_glow.frag");
 
-
-        //Sound Setup
-        audio.init();
-        audio.setGlobalVolume(0.1f);
-
         //SceneManager Setup
         sceneManager.registerScene(SceneId::MainMenu, std::make_unique<MainMenuScene>());
         sceneManager.registerScene(SceneId::Gameplay, std::make_unique<GameplayScene>());
@@ -196,50 +191,10 @@ namespace gl3 {
         //pickResolutionFromNativeMonitor(true);
 
         //init Music:
-        backgroundMusic = std::make_unique<SoLoud::Wav>();
-        mainMenuTheme = std::make_unique<SoLoud::Wav>();
-        bossTheme = std::make_unique<SoLoud::Wav>();
-        mainMenuTheme->load(resolveAssetPath("audio/charlvera-eclipse-of-the-cosmos-241713.mp3").string().c_str());
-        backgroundMusic->load(resolveAssetPath("audio/charlvera-dancing-among-comets-241708.mp3").string().c_str());
-        bossTheme->load(resolveAssetPath("audio/charlvera-dancing-among-comets-241708.mp3").string().c_str());
-        mainMenuTheme->setLooping(true);
-        backgroundMusic->setLooping(true);
-        bossTheme->setLooping(true);
+        g_SoundManager.init();
+        initAudio();
 
-        //init sound effects:
-        collisionEffect.load(resolveAssetPath("audio/lordsonny-small-rock-break-194553.mp3").string().c_str());
-        collisionEffect.setSingleInstance(true);
-        collisionEffect.set3dMinMaxDistance(2.0f, 500.0f);
-        collisionEffect.set3dAttenuation(
-                SoLoud::AudioSource::INVERSE_DISTANCE,
-                1.0f
-                );
-
-        fireEffect.load(resolveAssetPath("audio/alice_soundz-fire-sound-effects-224089.mp3").string().c_str());
-        fireEffect.setSingleInstance(true);
-        fireEffect.set3dMinMaxDistance(2.0f, 500.0f);
-        fireEffect.set3dAttenuation(
-                SoLoud::AudioSource::INVERSE_DISTANCE,
-                1.0f);
-
-        buttonClick.load(resolveAssetPath("audio/creatorshome-digital-click-357350.mp3").string().c_str());
-        buttonClick.setSingleInstance(true);
-        buttonHover.load(resolveAssetPath("audio/lesiakower-minimalist-button-hover-sound-effect-399749.mp3").string().c_str());
-        buttonHover.setSingleInstance(true);
-        menuClose.load(resolveAssetPath("audio/litupsubway-ui-close-sfx-513359.mp3").string().c_str());
-        menuClose.setSingleInstance(true);
-
-        //sound effects
-        /*SoLoud::Wav waterSplashEffect;
-        SoLoud::Wav fireEffect;
-        SoLoud::Wav crunchEffect;
-        SoLoud::Wav stepEffect;
-        SoLoud::Wav runEffect;
-        SoLoud::Wav jumpEffect;
-        SoLoud::Wav landEffect;*/
-
-        //start with main menu music:
-        musicHandle = audio.playBackground(*mainMenuTheme);
+        SoLoud::handle musicHandle = g_SoundManager.playMusic(SoundID::MainMenuTheme, true, 1.0f);
             }
 
 
@@ -270,6 +225,7 @@ namespace gl3 {
             glDeleteTextures(1, &materialRoughArrayTexId);
             materialRoughArrayTexId = 0;
         }
+        g_SoundManager.shutdown();
         glfwTerminate();
     }
 
@@ -501,6 +457,40 @@ namespace gl3 {
         enemyManager->init(voxelPhysics.get(),chunkManager.get(), this);
 
         waveManager.init(enemyManager.get());
+    }
+
+    bool Game::initAudio() {
+        if (!g_SoundManager.init()) {
+            return false;
+        }
+
+        // Load all sounds using SoundIDs
+        g_SoundManager.loadMusic(SoundID::MainMenuTheme,
+                                 resolveAssetPath("audio/charlvera-eclipse-of-the-cosmos-241713.mp3").string());
+        g_SoundManager.loadMusic(SoundID::BackgroundMusic,
+                                 resolveAssetPath("audio/charlvera-dancing-among-comets-241708.mp3").string());
+        g_SoundManager.loadMusic(SoundID::BossTheme,
+                                 resolveAssetPath("audio/charlvera-dancing-among-comets-241708.mp3").string());
+
+        g_SoundManager.loadSound(SoundID::Collision,
+                                 resolveAssetPath("audio/lordsonny-small-rock-break-194553.mp3").string());
+        g_SoundManager.loadSound(SoundID::Fire,
+                                 resolveAssetPath("audio/alice_soundz-fire-sound-effects-224089.mp3").string());
+        g_SoundManager.loadSound(SoundID::WaterSplash,
+                                 resolveAssetPath("audio/universfield-water-splash-199583.mp3").string());
+
+        g_SoundManager.loadSound(SoundID::ButtonClick,
+                                 resolveAssetPath("audio/creatorshome-digital-click-357350.mp3").string());
+        g_SoundManager.loadSound(SoundID::ButtonHover,
+                                 resolveAssetPath("audio/lesiakower-minimalist-button-hover-sound-effect-399749.mp3").string());
+        g_SoundManager.loadSound(SoundID::MenuClose,
+                                 resolveAssetPath("audio/litupsubway-ui-close-sfx-513359.mp3").string());
+
+        // Set initial volumes
+        g_SoundManager.setMusicVolume(0.8f);
+        g_SoundManager.setSFXVolume(1.0f);
+
+        return true;
     }
 
     void Game::updateGameplayFrame() {
@@ -930,25 +920,54 @@ namespace gl3 {
                     ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
 
                     ImGui::SetCursorPosX((520.0f - btnSize.x) * 0.5f);
-                    if (ImGui::Button("Resume", btnSize)) setPaused(false);
+                    if (ImGui::Button("Resume", btnSize))
+                    {
+                        g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
+                        setPaused(false);
+                    }
+                    const char* resumeBtnId = "menu_resume";
+                    if (ImGui::IsItemHovered() && lastHoveredButton != resumeBtnId) {
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                        lastHoveredButton = resumeBtnId;
+                    }
 
                     ImGui::Spacing();
                     ImGui::SetCursorPosX((520.0f - btnSize.x) * 0.5f);
-                    if (ImGui::Button("Settings", btnSize)) pauseSubmenu = PauseSubmenu::Settings;
+                    if (ImGui::Button("Settings", btnSize))
+                    {
+                        g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
+                        pauseSubmenu = PauseSubmenu::Settings;
+                    }
+                    const char* settingsBtnId = "menu_settings";
+                    if (ImGui::IsItemHovered() && lastHoveredButton != settingsBtnId) {
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                        lastHoveredButton = settingsBtnId;
+                    }
 
                     ImGui::Spacing();
                     ImGui::SetCursorPosX((520.0f - btnSize.x) * 0.5f);
                     if (ImGui::Button("Back to Main Menu", btnSize)) {
+                        g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
                         setPaused(false);
                         requestSceneChange(SceneId::MainMenu);
-                        audio.setPauseAll(true);
-                        musicHandle = audio.playBackground(*mainMenuTheme);
+                        SoLoud::handle musicHandle = g_SoundManager.playMusic(SoundID::MainMenuTheme, true, 1.0f);
+                    }
+                    const char* mainMenuBtnId = "menu_mainMenu";
+                    if (ImGui::IsItemHovered() && lastHoveredButton != mainMenuBtnId) {
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                        lastHoveredButton = mainMenuBtnId;
                     }
 
                     ImGui::Spacing();
                     ImGui::SetCursorPosX((520.0f - btnSize.x) * 0.5f);
                     if (ImGui::Button("Exit to Desktop", btnSize)) {
+                        g_SoundManager.playSound(SoundID::MenuClose, 1.0f, 1.0f);
                         glfwSetWindowShouldClose(getWindow(), true);
+                    }
+                    const char* escapeBtnId = "menu_escape";
+                    if (ImGui::IsItemHovered() && lastHoveredButton != escapeBtnId) {
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                        lastHoveredButton = escapeBtnId;
                     }
                 }
                 else // Settings submenu
@@ -961,17 +980,58 @@ namespace gl3 {
                     bool changed = false;
 
                     changed |= ImGui::SliderFloat("Mouse Sensitivity", &settings.sensitivity, 0.01f, 1.0f, "%.3f");
+                    const char* sensitivityBtnId = "settings_sensitivity";
+                    if (ImGui::IsItemHovered() && lastHoveredButton != sensitivityBtnId) {
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                        lastHoveredButton = sensitivityBtnId;
+                    }
+
                     changed |= ImGui::SliderFloat("Master Volume", &settings.masterVolume, 0.0f, 1.0f, "%.2f");
+                    const char* masterBtnId = "settings_master";
+                    if (ImGui::IsItemHovered() && lastHoveredButton != masterBtnId) {
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                        lastHoveredButton = masterBtnId;
+                    }
+
                     changed |= ImGui::SliderFloat("SFX Volume", &settings.sfxVolume, 0.0f, 1.0f, "%.2f");
+                    const char* sfxBtnId = "settings_sfx";
+                    if (ImGui::IsItemHovered() && lastHoveredButton != sfxBtnId) {
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                        lastHoveredButton = sfxBtnId;
+                    }
+
                     changed |= ImGui::SliderFloat("Music Volume", &settings.musicVolume, 0.0f, 1.0f, "%.2f");
+                    const char* musicBtnId = "settings_music";
+                    if (ImGui::IsItemHovered() && lastHoveredButton != musicBtnId) {
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                        lastHoveredButton = musicBtnId;
+                    }
+
                     changed |= ImGui::SliderFloat("Gamma", &settings.gamma, 1.6f, 3.0f, "%.2f");
+                    const char* gammaBtnId = "settings_gamma";
+                    if (ImGui::IsItemHovered() && lastHoveredButton != gammaBtnId) {
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                        lastHoveredButton = gammaBtnId;
+                    }
+
                     changed |= ImGui::SliderFloat("Brightness", &settings.brightness, 0.5f, 1.5f, "%.2f");
+                    const char* brightnessBtnId = "settings_brightness";
+                    if (ImGui::IsItemHovered() && lastHoveredButton != brightnessBtnId) {
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                        lastHoveredButton = brightnessBtnId;
+                    }
 
                     const char* modeLabels[] = {"Fullscreen", "Windowed", "Borderless"};
                     int mode = static_cast<int>(settings.displayMode);
                     if (ImGui::Combo("Display Mode", &mode, modeLabels, IM_ARRAYSIZE(modeLabels))) {
+                        g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
                         settings.displayMode = static_cast<DisplayMode>(mode);
                         changed = true;
+                    }
+                    const char* displayModeBtnId = "settings_displayMode";
+                    if (ImGui::IsItemHovered() && lastHoveredButton != displayModeBtnId) {
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                        lastHoveredButton = displayModeBtnId;
                     }
 
                     std::vector<const char*> resLabels;
@@ -979,26 +1039,50 @@ namespace gl3 {
                     for (auto& r : commonResolutions) resLabels.push_back(r.label);
 
                     if (ImGui::Combo("Resolution", &settings.resolutionIndex, resLabels.data(), (int)resLabels.size())) {
+                        g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
                         changed = true;
                     }
+                    const char* pickResolutionBtnId = "settings_pickResolution";
+                    if (ImGui::IsItemHovered() && lastHoveredButton != pickResolutionBtnId) {
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                        lastHoveredButton = pickResolutionBtnId;
+                    }
                     if (ImGui::Button("Set native display resolution.", ImVec2(180, 38))) {
+                        g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
                         pickResolutionFromNativeMonitor(false);
+                    }
+                    const char* setNativeBtnId = "settings_setNative";
+                    if (ImGui::IsItemHovered() && lastHoveredButton != setNativeBtnId) {
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                        lastHoveredButton = setNativeBtnId;
                     }
 
                     ImGui::Spacing();
                     if (changed) {
+                        g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
                         applyAudioSettings();
-
                      //   applyVisualSettings();
                     }
 
                     ImGui::Spacing();
                     if (ImGui::Button("Apply Display", ImVec2(180, 38))) {
+                        g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
                         applyDisplaySettings();
+                    }
+                    const char* applyBtnId = "settings_apply";
+                    if (ImGui::IsItemHovered() && lastHoveredButton != applyBtnId) {
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                        lastHoveredButton = applyBtnId;
                     }
                     ImGui::SameLine();
                     if (ImGui::Button("Back", ImVec2(140, 38))) {
+                        g_SoundManager.playSound(SoundID::MenuClose, 1.0f, 1.0f);
                         pauseSubmenu = PauseSubmenu::Main;
+                    }
+                    const char* backBtnId = "settings_back";
+                    if (ImGui::IsItemHovered() && lastHoveredButton != backBtnId) {
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                        lastHoveredButton = backBtnId;
                     }
                 }
 
@@ -1425,19 +1509,24 @@ namespace gl3 {
         const auto& rule = materialRules[body->material];
 
         if (decision.ignoreCollision) return;
-        bool isEnemy = false;
-        uint64_t enemyID;
-        for(auto& enemy : enemyManager->all())
+        EnemyRuntime* enemy = nullptr;
+        for (auto& e : enemyManager->all())
         {
-            if(body==enemy.inst.body)
+            if (body == e.inst.body)
             {
-                isEnemy=true;
-                enemyID = enemy.inst.id;
+                enemy = &e;
                 break;
             }
         }
 
-        if (decision.stick&&!isEnemy) {
+        if (enemy && std::strcmp(enemy->inst.type.name, "Consumer") == 0)
+        {
+            int amount = consumeWorldOfMaterial(body->position, body->radius * 1.5f, 7);
+            enemy->inst.hp += amount;
+            std::cout << "amount is: " << amount << "\n";
+        }
+
+        if (decision.stick&&body!=enemy->inst.body) {
             body->stuck = true;
             body->angularVelocity = glm::vec3(0.0f);
             body->position = hitPos + hitNormal * body->radius;
@@ -1450,29 +1539,16 @@ namespace gl3 {
             convertSolidWorldToMaterial(hitPos, r, body->material);
         }
 
-        if(isEnemy&&strcmp(enemyManager->find(enemyID)->inst.type.name, "Consumer") == 0)
-        {
-            int amount = consumeWorldOfMaterial(body->position,body->radius*1.5f,7);
-            enemyManager->setEnemyHP(enemyID,enemyManager->getEnemyHP(enemyID)+amount);
-            std::cout<<"amount is: "<<amount<<"\n";
-           // body->radius=body->radius+glm::sqrt(amount);
-            //TODO:: Fix radius scaling
-
-        }
         /*if (decision.destroyOther) {
             convertSolidWorldToType(hitPos, (body->radius * 1.5f), 0);
             return;
         }*/
-        collisionEffect.setVolume(settings.sfxVolume);
-
-        SoLoud::handle h = audio.play3d(
-                collisionEffect,
-                hitPos.x,
-                hitPos.y,
-                hitPos.z
+        SoLoud::handle h = g_SoundManager.playSound3D(
+                SoundID::Collision,
+                hitPos,
+                glm::sqrt(impactSpeed)/100,  // volume
+                1.0f   // pitch
         );
-
-        audio.update3dAudio();
 
         std::mt19937 rng(std::random_device{}());
         std::uniform_real_distribution<float> dist(-0.5f, 0.5f);
@@ -2537,8 +2613,7 @@ if(frameCounter % 311 == 0)
 if(getPlayerHealth()<=0)
 {
     requestSceneChange(SceneId::MainMenu);
-    audio.setPauseAll(true);
-    musicHandle = audio.playBackground(*mainMenuTheme);
+    SoLoud::handle musicHandle = g_SoundManager.playMusic(SoundID::MainMenuTheme, true, 1.0f);
 }
 {
     TRACY_CPU_ZONE("SunBurns()");
@@ -2551,16 +2626,12 @@ if(getPlayerHealth()<=0)
         if(distsq<std::sqrt(light.intensity) * 0.15f)
         {
             registerPlayerDamage(0.005f*distsq*(glm::sqrt(light.intensity*0.00001f)));
-            fireEffect.setVolume(settings.sfxVolume);
-
-            SoLoud::handle h = audio.play3d(
-                    fireEffect,
-                    light.pos.x,
-                    light.pos.y,
-                    light.pos.z
+            SoLoud::handle h = g_SoundManager.playSound3D(
+                    SoundID::Fire,
+                    light.pos,
+                    1.0f,
+                    1.0f
             );
-
-            audio.update3dAudio();
         }
         float gravity = glm::pow(light.intensity,1.0f)-distsq;
         if(gravity>bestGravity&&!characterController->isSurfaceAdhered())
@@ -2575,7 +2646,7 @@ if(getPlayerHealth()<=0)
         {
             characterController->settings.lastGravPoint=best.pos;
             glm::vec3 gravDir = glm::normalize(best.pos - cameraPos);
-            characterController->settings.gravityDir = gravDir;
+            characterController->setGravityDirection(gravDir);
             //float pitch = glm::degrees(glm::asin(gravDir.y));
             //float yaw = glm::degrees(glm::atan(gravDir.z, gravDir.x));
             //cameraRotation = glm::vec2(pitch, yaw);
@@ -5243,28 +5314,24 @@ glDepthMask(depthMask);
 
     void Game::applyAudioSettings()
     {
-        audio.setPauseAll(true);
-        audio.setGlobalVolume(settings.masterVolume*settings.musicVolume);
-
-        buttonClick.setVolume(settings.sfxVolume/settings.musicVolume);
-        buttonHover.setVolume(settings.sfxVolume/settings.musicVolume);
-        menuClose.setVolume(settings.sfxVolume/glm::clamp(settings.musicVolume,0.01f,1.0f));
-        audio.setPauseAll(false);
-
+        g_SoundManager.setSFXVolume(settings.sfxVolume);
+        g_SoundManager.setMusicVolume(settings.musicVolume);
+        g_SoundManager.setMasterVolume(settings.masterVolume);
     }
 
     void Game::updatePlayerAudio() {
-        audio.set3dListenerPosition(cameraPos.x, cameraPos.y, cameraPos.z);
+        g_SoundManager.set3dListenerPosition(cameraPos);
 
-        // If your camera rotates:
-        audio.set3dListenerParameters(
-                cameraPos.x, cameraPos.y, cameraPos.z,
-                characterController->getVelocity().x, characterController->getVelocity().y, characterController->getVelocity().z,
-                getCameraFront().x, getCameraFront().y, getCameraFront().z,
-                getCameraUp().x, getCameraUp().y, getCameraUp().z
+        // Update listener parameters (position, velocity, forward, up)
+        g_SoundManager.set3dListenerParameters(
+                cameraPos,
+                characterController->getVelocity(),
+                getCameraFront(),
+                getCameraUp()
         );
 
-        audio.update3dAudio();
+        // Update 3D audio
+        g_SoundManager.update3dAudio();
     }
 
     void Game::applyMaterial9BurnAlongSegment(const glm::vec3& from, const glm::vec3& to, float radius)

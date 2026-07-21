@@ -45,5 +45,6 @@ namespace gl3 {
     glm::vec3 stuckOffset;
 
     float impactVfxCooldown = 0.0f;
+    bool inFluid = false;
 };
 }

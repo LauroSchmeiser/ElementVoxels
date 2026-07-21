@@ -117,34 +117,38 @@ namespace gl3 {
 
                 ImGui::SetCursorPosY(120.0f);
 
+                // START BUTTON - The DrawTexturedMenuButton now handles hover sound internally
                 ImGui::SetCursorPosX((panelW - btnSize.x) * 0.5f);
-
-                if (DrawTexturedMenuButton("btn_start", "Start Game", (ImTextureID) (intptr_t) startBtnTex, btnSize)) {
-                    game.audio.play(game.buttonClick);
+                if (DrawTexturedMenuButton("btn_start", "Start Game",
+                                           (ImTextureID)(intptr_t)startBtnTex, btnSize)) {
+                    g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
                     game.requestSceneChange(SceneId::Loading);
                 }
 
                 ImGui::Dummy(ImVec2(0.0f, 18.0f));
 
+                // SETTINGS BUTTON
                 ImGui::SetCursorPosX((panelW - btnSize.x) * 0.5f);
-                if (DrawTexturedMenuButton("btn_settings", "Settings", (ImTextureID) (intptr_t) settingsBtnTex,
-                                           btnSize)) {
-                    game.audio.play(game.buttonClick);
+                if (DrawTexturedMenuButton("btn_settings", "Settings",
+                                           (ImTextureID)(intptr_t)settingsBtnTex, btnSize)) {
+                    g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
                     showSettings = true;
                 }
 
                 ImGui::Dummy(ImVec2(0.0f, 18.0f));
 
+                // EXIT BUTTON
                 ImGui::SetCursorPosX((panelW - btnSize.x) * 0.5f);
-                if (DrawTexturedMenuButton("btn_desktop", "Back to desktop", (ImTextureID) (intptr_t) exitBtnTex,
-                                           btnSize)) {
-                    game.audio.play(game.buttonClick);
+                if (DrawTexturedMenuButton("btn_desktop", "Back to desktop",
+                                           (ImTextureID)(intptr_t)exitBtnTex, btnSize)) {
+                    g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
                     glfwSetWindowShouldClose(game.getWindow(), true);
                 }
 
                 ImGui::PopStyleVar(2);
                 ImGui::PopStyleColor(4);
-            } else {
+            } else
+            {
                 ImGui::SetWindowFontScale(3.5f);
                 ImGui::SetCursorPosY(28.0f);
                 ImGui::SetCursorPosX(28.0f);
@@ -159,29 +163,64 @@ namespace gl3 {
                 ImGui::PushItemWidth(panelW * 0.42f);
 
                 changed |= ImGui::SliderFloat(" Mouse Sensitivity", &game.settings.sensitivity, 0.01f, 1.0f, "%.3f");
+                const char* sensitivityBtnId = "settings_sensitivity";
+                if (ImGui::IsItemHovered() && lastHoveredButton != sensitivityBtnId) {
+                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                    lastHoveredButton = sensitivityBtnId;
+                }
                 ImGui::Dummy(ImVec2(0.0f, 10.0f));
 
                 changed |= ImGui::SliderFloat(" Master Volume", &game.settings.masterVolume, 0.0f, 1.0f, "%.2f");
+                const char* masterBtnId = "settings_master";
+                if (ImGui::IsItemHovered() && lastHoveredButton != masterBtnId) {
+                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                    lastHoveredButton = masterBtnId;
+                }
                 ImGui::Dummy(ImVec2(0.0f, 10.0f));
 
                 changed |= ImGui::SliderFloat(" SFX Volume", &game.settings.sfxVolume, 0.0f, 1.0f, "%.2f");
+                const char* sfxBtnId = "settings_sfx";
+                if (ImGui::IsItemHovered() && lastHoveredButton != sfxBtnId) {
+                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                    lastHoveredButton = sfxBtnId;
+                }
                 ImGui::Dummy(ImVec2(0.0f, 10.0f));
 
                 changed |= ImGui::SliderFloat(" Music Volume", &game.settings.musicVolume, 0.0f, 1.0f, "%.2f");
+                const char* musicBtnId = "settings_music";
+                if (ImGui::IsItemHovered() && lastHoveredButton != musicBtnId) {
+                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                    lastHoveredButton = musicBtnId;
+                }
                 ImGui::Dummy(ImVec2(0.0f, 10.0f));
 
                 changed |= ImGui::SliderFloat(" Gamma", &game.settings.gamma, 1.6f, 3.0f, "%.2f");
+                const char* gammaBtnId = "settings_gamma";
+                if (ImGui::IsItemHovered() && lastHoveredButton != gammaBtnId) {
+                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                    lastHoveredButton = gammaBtnId;
+                }
                 ImGui::Dummy(ImVec2(0.0f, 10.0f));
 
                 changed |= ImGui::SliderFloat(" Brightness", &game.settings.brightness, 0.5f, 1.5f, "%.2f");
+                const char* brightnessBtnId = "settings_brightness";
+                if (ImGui::IsItemHovered() && lastHoveredButton != brightnessBtnId) {
+                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                    lastHoveredButton = brightnessBtnId;
+                }
                 ImGui::Dummy(ImVec2(0.0f, 14.0f));
 
                 const char *modeLabels[] = {"Fullscreen", "Windowed", "Borderless"};
                 int mode = static_cast<int>(game.settings.displayMode);
                 if (ImGui::Combo(" Display Mode", &mode, modeLabels, IM_ARRAYSIZE(modeLabels))) {
-                    game.audio.play(game.buttonClick);
+                    g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
                     game.settings.displayMode = static_cast<Game::DisplayMode>(mode);
                     changed = true;
+                }
+                const char* displayModeBtnId = "settings_displayMode";
+                if (ImGui::IsItemHovered() && lastHoveredButton != displayModeBtnId) {
+                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                    lastHoveredButton = displayModeBtnId;
                 }
 
                 ImGui::Dummy(ImVec2(0.0f, 10.0f));
@@ -192,8 +231,13 @@ namespace gl3 {
 
                 if (ImGui::Combo(" Resolution", &game.settings.resolutionIndex, resLabels.data(),
                                  (int) resLabels.size())) {
-                    game.audio.play(game.buttonClick);
+                    g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
                     changed = true;
+                }
+                const char* pickResolutionBtnId = "settings_pickResolution";
+                if (ImGui::IsItemHovered() && lastHoveredButton != pickResolutionBtnId) {
+                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                    lastHoveredButton = pickResolutionBtnId;
                 }
 
                 ImGui::PopItemWidth();
@@ -204,26 +248,42 @@ namespace gl3 {
                 const ImVec2 bigBtn2(419.0f, 52.0f);
 
                 if (ImGui::Button("Set Native Resolution", bigBtn1)) {
-                    game.audio.play(game.buttonClick);
+                    g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
                     game.pickResolutionFromNativeMonitor(false);
+                }
+                const char* setNativeBtnId = "settings_setNative";
+                if (ImGui::IsItemHovered() && lastHoveredButton != setNativeBtnId) {
+                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                    lastHoveredButton = setNativeBtnId;
                 }
 
                 ImGui::Dummy(ImVec2(0.0f, 22.0f));
 
                 if (ImGui::Button("Back", bigBtn2)) {
-                    game.audio.play(game.buttonClick);
+                    g_SoundManager.playSound(SoundID::MenuClose, 1.0f, 0.5f);
                     showSettings = false;
                 }
+                const char* backBtnId = "settings_back";
+                if (ImGui::IsItemHovered() && lastHoveredButton != backBtnId) {
+                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                    lastHoveredButton = backBtnId;
+                }
+
                 ImGui::SameLine();
                 ImGui::Dummy(ImVec2(11.0f, 0.0f));
                 ImGui::SameLine();
                 if (ImGui::Button("Apply Display", bigBtn2)) {
-                    game.audio.play(game.buttonClick);
+                    g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
                     game.applyDisplaySettings();
+                }
+                const char* applyBtnId = "settings_apply";
+                if (ImGui::IsItemHovered() && lastHoveredButton != applyBtnId) {
+                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                    lastHoveredButton = applyBtnId;
                 }
                 if(changed)
                 {
-                    game.audio.play(game.buttonClick);
+                    g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
                     game.applyAudioSettings();
                 }
 
@@ -379,16 +439,39 @@ namespace gl3 {
                                                const ImVec2& size)
     {
         if (!tex) {
+            // Check hover state for regular button
+            bool hovered = ImGui::IsItemHovered();
+            if (hovered && lastHoveredButton != id) {
+                g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                lastHoveredButton = id;
+            }
+            if (!hovered && lastHoveredButton == id) {
+                lastHoveredButton = nullptr;
+            }
             return ImGui::Button(label, size);
         }
+
         ImGui::SetWindowFontScale(5.0);
 
         ImVec2 basePos = ImGui::GetCursorScreenPos();
 
+        // Create the invisible button - this is where the interaction happens
         ImGui::InvisibleButton(id, size);
+
+        // Check hover state IMMEDIATELY after creating the button
         const bool hovered = ImGui::IsItemHovered();
-        const bool held    = ImGui::IsItemActive();
+        const bool held = ImGui::IsItemActive();
         const bool clicked = ImGui::IsItemClicked();
+
+        // Play hover sound if this is a new button being hovered
+        if (hovered && lastHoveredButton != id) {
+            g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+            lastHoveredButton = id;
+        }
+        // Reset if not hovering
+        if (!hovered && lastHoveredButton == id) {
+            lastHoveredButton = nullptr;
+        }
 
         // Hover / press effects
         float scale = hovered ? 1.035f : 1.0f;
@@ -401,12 +484,12 @@ namespace gl3 {
         );
 
         if (held) {
-            drawPos.y += 3.0f; // pressed offset
+            drawPos.y += 3.0f;
         }
 
         ImVec4 tint(1.0f, 1.0f, 1.0f, 1.0f);
         if (hovered) {
-            tint = ImVec4(1.10f, 1.05f, 1.15f, 1.0f); // subtle colored highlight
+            tint = ImVec4(1.10f, 1.05f, 1.15f, 1.0f);
         }
         if (held) {
             tint = ImVec4(0.82f, 0.82f, 0.90f, 1.0f);
@@ -446,7 +529,7 @@ namespace gl3 {
             );
         }
 
-        // Text
+        // Text rendering
         ImVec2 textSize = ImGui::CalcTextSize(label);
         ImVec2 textPos(
                 drawPos.x + (drawSize.x - textSize.x) * 0.5f,
@@ -457,7 +540,6 @@ namespace gl3 {
             textPos.y += 1.0f;
         }
 
-        // Shadow + label
         const ImU32 outlineCol = IM_COL32(0, 0, 0, 220);
         const float o = 2.0f;
 
@@ -465,12 +547,10 @@ namespace gl3 {
         dl->AddText(ImVec2(textPos.x + o, textPos.y), outlineCol, label);
         dl->AddText(ImVec2(textPos.x, textPos.y - o), outlineCol, label);
         dl->AddText(ImVec2(textPos.x, textPos.y + o), outlineCol, label);
-
         dl->AddText(ImVec2(textPos.x - o, textPos.y - o), outlineCol, label);
         dl->AddText(ImVec2(textPos.x + o, textPos.y - o), outlineCol, label);
         dl->AddText(ImVec2(textPos.x - o, textPos.y + o), outlineCol, label);
         dl->AddText(ImVec2(textPos.x + o, textPos.y + o), outlineCol, label);
-
         dl->AddText(textPos, IM_COL32(255, 255, 255, 255), label);
 
         return clicked;

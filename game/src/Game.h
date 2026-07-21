@@ -40,6 +40,7 @@
 #include "rendering/ChunkRenderer.h"
 #include "Entities/WaveManager.h"
 #include "physics/MaterialCollisionPolicy.h"
+#include "Sounds/SoundManager.h"
 
 #undef NEAR
 #undef FAR
@@ -726,6 +727,7 @@ namespace gl3 {
         std::unique_ptr<Shader> gasRayMarchShader;
         void initGasFBO();
         void renderGas();
+        const char* lastHoveredButton = nullptr;
 
     public:
         void convertWorldToMaterial(const glm::vec3& center, float radius, uint32_t material);
@@ -815,31 +817,9 @@ namespace gl3 {
 
         void renderTextureToScreen(GLuint textureID);
 
-        SoLoud::Soloud audio;
-
-        //Background music
-        SoLoud::handle musicHandle;
-
-        std::unique_ptr<SoLoud::Wav> backgroundMusic;
-        std::unique_ptr<SoLoud::Wav> mainMenuTheme;
-        std::unique_ptr<SoLoud::Wav> bossTheme;
-
-        //UI sounds
-        SoLoud::Wav buttonClick;
-        SoLoud::Wav buttonHover;
-        SoLoud::Wav menuClose;
-
-        //sound effects
-        SoLoud::Wav collisionEffect;
-        SoLoud::Wav waterSplashEffect;
-        SoLoud::Wav fireEffect;
-        SoLoud::Wav crunchEffect;
-        SoLoud::Wav stepEffect;
-        SoLoud::Wav runEffect;
-        SoLoud::Wav jumpEffect;
-        SoLoud::Wav landEffect;
-
         void updatePlayerAudio();
+
+        bool initAudio();
     };
 
 }

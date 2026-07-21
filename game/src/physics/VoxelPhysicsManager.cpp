@@ -1,4 +1,6 @@
 #include "VoxelPhysicsManager.h"
+#include "soloud.h"
+#include "../Sounds/SoundManager.h"
 #include <glm/gtc/quaternion.hpp>
 #include <algorithm>
 
@@ -426,7 +428,49 @@ namespace gl3 {
 
             body->impactVfxCooldown = glm::max(0.0f, body->impactVfxCooldown - dt);
 
-            body->velocity += gravity * dt;
+            bool wasInFluid=body->inFluid;
+            float fluid = sampleFluidDensityTrilinear(body->position);
+            body->inFluid = fluid >= 0.0f;
+            if(!wasInFluid&&body->inFluid)
+            {
+                SoLoud::handle h = g_SoundManager.playSound3D(
+                    SoundID::WaterSplash,
+                    body->position,
+                    1.0f,
+                    1.0f
+            );
+            }
+
+            if (body->inFluid) {
+                const float fluidAmount = glm::clamp(fluid * fluidDensityScale, 0.0f, 1.0f);
+                const glm::vec3 up = -glm::normalize(gravity);
+
+                // Much weaker gravity while submerged
+                body->velocity += gravity * (0.15f * dt);
+
+                // Mild buoyancy, mostly noticeable on lighter bodies
+                const float buoyancyStrength = fluidBuoyancy * fluidAmount / glm::max(body->mass, 0.001f);
+                body->velocity += up * buoyancyStrength * dt;
+
+                // Strong linear drag
+                const float dragStrength = fluidDrag * 7.0f * fluidAmount;
+                float linearDragFactor = 1.0f - dragStrength * dt;
+                linearDragFactor = glm::clamp(linearDragFactor, 0.3f, 1.0f);
+                body->velocity *= linearDragFactor;
+
+                // Extra quadratic drag for fast projectiles
+                float speed = glm::length(body->velocity);
+                if (speed > 0.001f) {
+                    float quadraticDrop = speed * speed * 0.02f * fluidAmount * dt;
+                    float newSpeed = glm::max(speed - quadraticDrop, 0.0f);
+                    body->velocity *= (newSpeed / speed);
+                }
+
+                // Also damp spin in fluid
+                body->angularVelocity *= glm::clamp(1.0f - 6.0f * dt * fluidAmount, 0.1f, 1.0f);
+            } else {
+                body->velocity += gravity * dt;
+            }
 
             if (glm::length(body->angularVelocity) > 0.001f) {
                 glm::quat spin = glm::quat(
@@ -474,10 +518,11 @@ namespace gl3 {
                         int cz = chunkManager->worldToChunk(p.z);
 
                         ChunkCoord coord{cx, cy, cz};
-                        Chunk* chunk = chunkManager->getChunk(coord);
                         const float impactVfxBaseCooldown = 2.0f;
+                        Chunk* chunk = chunkManager->getChunk(coord);
+                        const bool inEmissive = (chunk && chunk->inEmissiveList);
 
-                        if (sphereIntersectsWorld(*body, p, n, pen) && !chunk->inEmissiveList) {
+                        if (sphereIntersectsWorld(*body, p, n, pen) && !inEmissive) {
                             body->position = p;
 
                             float impactSpeed = glm::length(body->velocity) * VOXEL_SIZE;
@@ -795,5 +840,85 @@ namespace gl3 {
             float impactSpeed = glm::length(relativeVel);
             bodyBodyCollisionCallback(&bodyA, &bodyB, contactPoint, normal, impactSpeed);
         }
+    }
+    float VoxelPhysicsManager::sampleFluidDensityTrilinear(const glm::vec3& worldPos) {
+        if (!chunkManager) return -1000.0f;
+
+        const float chunkWorldSize = CHUNK_SIZE * VOXEL_SIZE;
+
+        int baseCX = static_cast<int>(std::floor(worldPos.x / chunkWorldSize));
+        int baseCY = static_cast<int>(std::floor(worldPos.y / chunkWorldSize));
+        int baseCZ = static_cast<int>(std::floor(worldPos.z / chunkWorldSize));
+
+        ChunkCoord baseCoord{baseCX, baseCY, baseCZ};
+        glm::vec3 chunkMin(
+                baseCoord.x * chunkWorldSize,
+                baseCoord.y * chunkWorldSize,
+                baseCoord.z * chunkWorldSize
+        );
+
+        glm::vec3 local = (worldPos - chunkMin) / VOXEL_SIZE;
+
+        float fx = local.x - std::floor(local.x);
+        float fy = local.y - std::floor(local.y);
+        float fz = local.z - std::floor(local.z);
+
+        int ix = static_cast<int>(std::floor(local.x));
+        int iy = static_cast<int>(std::floor(local.y));
+        int iz = static_cast<int>(std::floor(local.z));
+
+        auto sampleCorner = [&](int dx, int dy, int dz) -> float {
+            glm::vec3 cornerWorld =
+                    chunkMin + glm::vec3((float)(ix + dx), (float)(iy + dy), (float)(iz + dz)) * VOXEL_SIZE;
+
+            int cx = static_cast<int>(std::floor(cornerWorld.x / chunkWorldSize));
+            int cy = static_cast<int>(std::floor(cornerWorld.y / chunkWorldSize));
+            int cz = static_cast<int>(std::floor(cornerWorld.z / chunkWorldSize));
+
+            ChunkCoord coord{cx, cy, cz};
+            Chunk* chunk = chunkManager->getChunk(coord);
+            if (!chunk) return -1000.0f;
+
+            glm::vec3 chunkOrigin(
+                    coord.x * chunkWorldSize,
+                    coord.y * chunkWorldSize,
+                    coord.z * chunkWorldSize
+            );
+
+            glm::vec3 localCorner = (cornerWorld - chunkOrigin) / VOXEL_SIZE;
+
+            int lx = glm::clamp((int)std::round(localCorner.x), 0, CHUNK_SIZE);
+            int ly = glm::clamp((int)std::round(localCorner.y), 0, CHUNK_SIZE);
+            int lz = glm::clamp((int)std::round(localCorner.z), 0, CHUNK_SIZE);
+
+            return chunk->voxels[lx][ly][lz].fluidDensity;
+        };
+
+        float samples[2][2][2];
+        for (int dx = 0; dx <= 1; ++dx) {
+            for (int dy = 0; dy <= 1; ++dy) {
+                for (int dz = 0; dz <= 1; ++dz) {
+                    samples[dx][dy][dz] = sampleCorner(dx, dy, dz);
+                }
+            }
+        }
+
+        auto lerp = [](float a, float b, float t) {
+            return a + (b - a) * t;
+        };
+
+        float c00 = lerp(samples[0][0][0], samples[1][0][0], fx);
+        float c10 = lerp(samples[0][1][0], samples[1][1][0], fx);
+        float c01 = lerp(samples[0][0][1], samples[1][0][1], fx);
+        float c11 = lerp(samples[0][1][1], samples[1][1][1], fx);
+
+        float c0 = lerp(c00, c10, fy);
+        float c1 = lerp(c01, c11, fy);
+
+        return lerp(c0, c1, fz);
+    }
+
+    bool VoxelPhysicsManager::isPointInFluid(const glm::vec3& worldPos) {
+        return sampleFluidDensityTrilinear(worldPos) >= 0.0f;
     }
 }

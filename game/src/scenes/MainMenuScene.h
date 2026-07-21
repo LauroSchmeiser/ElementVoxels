@@ -43,7 +43,10 @@ namespace gl3 {
         bool loadTitleTexture(const std::string& path);
         void destroyTitleTexture();
 
-        bool DrawTexturedMenuButton(const char *id, const char *label, void *tex, const ImVec2 &size);
+        bool DrawTexturedMenuButton(const char* id, const char* label,
+                                    ImTextureID tex, const ImVec2& size);
+
+        const char* lastHoveredButton = nullptr;
     };
 
 } // namespace gl3

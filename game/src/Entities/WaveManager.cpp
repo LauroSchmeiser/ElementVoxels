@@ -94,6 +94,8 @@ namespace gl3 {
             enemiesToSpawn = 1;
 
             spawnBoss();
+            SoLoud::handle musicHandle = g_SoundManager.playMusic(SoundID::BossTheme, true, 1.0f);
+
         } else {
             config.waveNumber = currentWave;
             config.totalEnemies = 1 + (currentWave - 1)*2;

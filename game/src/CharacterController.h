@@ -45,7 +45,7 @@ namespace gl3 {
         float landingMinApproachSpeed = 0.01f;
         float adhesionDuration = 0.75f;
         float adhesionMaxDistance = 24.0f;
-        float adhesionSnapDistance = 1.5f;
+        float adhesionSnapDistance = 0.5f;
         float adhesionAcceleration = 1.0f;
         float minGroundNormalDot = 0.05f;
 

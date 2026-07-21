@@ -44,25 +44,39 @@ namespace gl3 {
 
         void destroyEnemy(size_t index);
 
-        uint32_t getEnemiesAlive() const { return enemies.size();}
+        uint32_t getEnemiesAlive() const { return (uint32_t)enemies.size(); }
 
-        glm::vec3 getEnemyPos(int idx) { return find(idx)->inst.position;}
+        glm::vec3 getEnemyPos(size_t idx) const { return enemies.at(idx).inst.position; }
 
-        float getEnemyHP(int idx)  { return find(idx)->inst.hp;}
-        void setEnemyHP(int idx, float hp) { find(idx)->inst.hp=hp;}
+        float getEnemyHP(size_t idx) const { return enemies.at(idx).inst.hp; }
+        void setEnemyHP(size_t idx, float hp) { enemies.at(idx).inst.hp = hp; }
 
-        float getEnemyMat(int idx) { return find(idx)->inst.body->material;}
-        void setEnemyMat(int idx, int mat)  { find(idx)->inst.body->material=mat;}
-
-        float getEnemyRadius(int idx) { return find(idx)->inst.body->radius;}
-        void setEnemyRadius(int idx, float r)
-        {
-            EnemyRuntime* enemy = find(idx);
-            enemy->inst.body->radius=r;
-            rebuildMeshIfNeeded(*enemy);
+        float getEnemyMat(size_t idx) const {
+            const EnemyRuntime& enemy = enemies.at(idx);
+            return enemy.inst.body ? enemy.inst.body->material : 0.0f;
+        }
+        void setEnemyMat(size_t idx, int mat) {
+            EnemyRuntime& enemy = enemies.at(idx);
+            if (enemy.inst.body) enemy.inst.body->material = mat;
         }
 
-        EnemyRuntime* find(uint64_t id);
+        float getEnemyRadius(size_t idx) const {
+            const EnemyRuntime& enemy = enemies.at(idx);
+            return enemy.inst.body ? enemy.inst.body->radius : enemy.inst.currentRadius;
+        }
+        void setEnemyRadius(size_t idx, float r)
+        {
+            EnemyRuntime& enemy = enemies.at(idx);
+            if (enemy.inst.body) {
+                enemy.inst.body->radius = r;
+            }
+            enemy.inst.currentRadius = r;
+            enemy.inst.meshDirty = true;
+            rebuildMeshIfNeeded(enemy);
+        }
+
+        EnemyRuntime* findByBodyId(uint64_t bodyId);
+        const EnemyRuntime* findByBodyId(uint64_t bodyId) const;
 
 
     private:

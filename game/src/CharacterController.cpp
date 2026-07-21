@@ -526,6 +526,15 @@ namespace gl3 {
         // Check if player is in fluid
         bool wasInFluid = state.isInFluid;
         state.isInFluid = isPointInFluid(chunkManager, state.position);
+        if(!wasInFluid&&state.isInFluid)
+        {
+            SoLoud::handle h = g_SoundManager.playSound3D(
+                    SoundID::WaterSplash,
+                    state.position,
+                    1.0f,
+                    1.0f
+            );
+        }
 
         // Update fluid depth and normal
         if (state.isInFluid) {
@@ -893,10 +902,10 @@ namespace gl3 {
 
     glm::vec3 CharacterController::getUpDirection() const
     {
-        if (glm::length(state.currentUp) < 1e-5f) {
-            return -settings.gravityDir;
+        if (glm::length(settings.gravityDir) < 1e-6f) {
+            return glm::vec3(0.0f, 1.0f, 0.0f);
         }
-        return glm::normalize(state.currentUp);
+        return -glm::normalize(settings.gravityDir);
     }
 
 
