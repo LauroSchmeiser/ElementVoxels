@@ -7,7 +7,7 @@
 namespace gl3 {
 
     struct LocalVoxelVolume {
-        glm::ivec3 dims = {33,33,33};  // CORNERS count, not cells
+        glm::ivec3 dims = {33,33,33};
         float voxelSize = VOXEL_SIZE;
 
         struct Corner {
@@ -19,18 +19,34 @@ namespace gl3 {
 
         std::vector<Corner> corners;
 
+        LocalVoxelVolume() {
+            corners.assign((size_t)dims.x * dims.y * dims.z, {});
+        }
+
         void init(glm::ivec3 cornerDims, float vs) {
             dims = cornerDims;
             voxelSize = vs;
             corners.assign((size_t)dims.x * dims.y * dims.z, {});
         }
-
         inline size_t idx(int x,int y,int z) const {
             return (size_t)x + (size_t)y * dims.x + (size_t)z * dims.x * dims.y;
         }
 
-        Corner& at(int x,int y,int z) { return corners[idx(x,y,z)]; }
-        const Corner& at(int x,int y,int z) const { return corners[idx(x,y,z)]; }
+        Corner& at(int x,int y,int z) {
+            assert(x >= 0 && x < dims.x);
+            assert(y >= 0 && y < dims.y);
+            assert(z >= 0 && z < dims.z);
+            assert(corners.size() == (size_t)dims.x * dims.y * dims.z);
+            return corners[idx(x,y,z)];
+        }
+
+        [[nodiscard]] const Corner& at(int x,int y,int z) const {
+            assert(x >= 0 && x < dims.x);
+            assert(y >= 0 && y < dims.y);
+            assert(z >= 0 && z < dims.z);
+            assert(corners.size() == (size_t)dims.x * dims.y * dims.z);
+            return corners[idx(x,y,z)];
+        }
 
         // Simple “fill a sphere” in local space (for initial enemy body)
         void fillSphere(glm::vec3 centerLocal, float radiusWorld, glm::vec3 col, uint32_t material=0, uint8_t type=1) {
@@ -55,6 +71,12 @@ namespace gl3 {
 
         // Damage carve: subtract density inside sphere => “removes” matter
         void carveSphere(glm::vec3 centerLocal, float radiusWorld, float strength) {
+            if (!isInitialized()) {
+                init(dims,VOXEL_SIZE);
+                assert(false && "LocalVoxelVolume used before init");
+                return;
+            }
+
             const float r2 = radiusWorld * radiusWorld;
             for (int z=0; z<dims.z; ++z)
                 for (int y=0; y<dims.y; ++y)
@@ -90,6 +112,10 @@ namespace gl3 {
                     c.material = newMaterial;
                 }
             }
+        }
+
+        bool isInitialized() const {
+            return corners.size() == (size_t)dims.x * dims.y * dims.z && !corners.empty();
         }
     };
 } // namespace gl3

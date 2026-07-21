@@ -11,7 +11,7 @@ namespace gl3 {
         float walkSpeed = 75.0f;
         float sprintSpeed = 200.0f;
         float crouchSpeed = 20.5f;
-        float acceleration = 5.0f;
+        float acceleration = 3.0f;
         float friction = 6.0f;
         float airFriction = 0.2f;
         float airControl = 0.3f;
@@ -20,9 +20,9 @@ namespace gl3 {
         float jumpForce = 75.0f;
         glm::vec3 gravityDir = glm::vec3(0.0f, -1.0f, 0.0f);
         glm::vec3 lastGravPoint = glm::vec3(0.0f, 0.0f, 0.0f);;
-        float gravity= 15.0f;
-        float gravityMaxIntensity = 50.0f;
-        float gravityMinIntensity = 0.1f;
+        float gravity= 5.0f;
+        float gravityMaxIntensity = 25.0f;
+        float gravityMinIntensity = 2.0f;
 
         float terminalVelocity = 1000.0f;
         float coyoteTimeDuration = 3.5f;
@@ -81,6 +81,9 @@ namespace gl3 {
 
         // Smoothed orientation up used by movement/camera
         glm::vec3 currentUp = glm::vec3(0.0f, 1.0f, 0.0f);
+        glm::vec3 smoothedUp = glm::vec3(0.0f, 1.0f, 0.0f);
+        glm::vec3 cameraForward = glm::vec3(0, 0, -1);
+        glm::vec3 cameraRight = glm::vec3(1, 0, 0);
 
         uint32_t currentContactMaterial = 0;
         uint8_t currentContactType = 0;
@@ -183,7 +186,7 @@ namespace gl3 {
 
         // Camera
         glm::vec3 getCameraPosition() const;
-        float getEyeHeight() const { return currentHeight * 0.85f; }
+        float getEyeHeight() const { return currentHeight * 1.5f; }
 
         // Debug
         bool checkPhysicsBodyCollision(const glm::vec3& testPosition,
@@ -191,6 +194,7 @@ namespace gl3 {
                                        float& outPenetration,VoxelPhysicsBody** outBody) const;
 
         void setGravityDirection(const glm::vec3& g);
+        void setGravityIntensity(float intensity);
         glm::vec3 getGravityDirection() const { return settings.gravityDir; }
         glm::vec3 getUpDirection() const;
 
@@ -201,7 +205,10 @@ namespace gl3 {
         bool hasWorldContact() const { return state.hasWorldContact; }
         glm::vec3 getCurrentContactPoint() const { return state.currentContactPoint; }
         glm::vec3 getCurrentContactNormal() const { return state.currentContactNormal; }
+        void setCameraForward(const glm::vec3& forward) { state.cameraForward = forward; }
+        void setCameraRight(const glm::vec3& right) { state.cameraRight = right; }
     private:
+        glm::vec3 CharacterController::sampleSmoothedSurfaceUp(const glm::vec3& worldPos) const;
         PlayerBodyCollisionCallback playerBodyCollisionCallback;
         bool depenetrateSphere(glm::vec3& center, float sphereRadius, int maxIterations = 8) const;
         void enforceCameraClearance();
@@ -212,5 +219,7 @@ namespace gl3 {
 
         float getFluidDensityAtWorld(FixedGridChunkManager* chunkManager, const glm::vec3& worldPos) const;
         glm::vec3 getFluidNormalAtWorld(FixedGridChunkManager* chunkManager, const glm::vec3& worldPos) const;
+
+        glm::vec3 getMovementUpDirection() const;
     };
 }

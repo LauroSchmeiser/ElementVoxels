@@ -2220,30 +2220,33 @@ namespace gl3 {
         const float subDt = (fixedTimeStep / (float)subStepCount);
 
         float localDt = deltaTime;
-        localDt=glm::clamp(deltaTime,deltaTime,1.0f/100.0f);
+        localDt = glm::clamp(deltaTime, deltaTime, 1.0f / 100.0f);
         accumulator += localDt;
 
         while (accumulator >= fixedTimeStep) {
-            // (Input can be sampled once per fixed step; that's fine)
             glm::vec3 moveInput(0.0f);
-            if (actions["MoveForward"].isPressed) moveInput.z += 10.0f;
-            if (actions["MoveBack"].isPressed) moveInput.z -= 10.0f;
-            if (actions["MoveLeft"].isPressed) moveInput.x -= 10.0f;
-            if (actions["MoveRight"].isPressed) moveInput.x += 10.0f;
+            if (actions["MoveForward"].isPressed) moveInput.z += 1.0f;
+            if (actions["MoveBack"].isPressed) moveInput.z -= 1.0f;
+            if (actions["MoveLeft"].isPressed) moveInput.x -= 1.0f;
+            if (actions["MoveRight"].isPressed) moveInput.x += 1.0f;
+
+            if (actions["Jump"].isPressed) moveInput.y += 1.0f;      // Swim up
+            if (actions["Crouch"].isPressed) moveInput.y -= 1.0f;    // Swim down
+
+            float len = glm::length(moveInput);
+            if (len > 1.0f) moveInput /= len;
 
             bool jump = actions["Jump"].wasJustPressed;
             bool sprint = actions["Sprint"].isPressed;
             bool crouch = actions["Crouch"].isPressed;
             bool airSlam = actions["AirReset"].isPressed;
 
-            glm::vec3 cameraFront = getCameraFront();
-            glm::vec3 cameraUp = getCameraUp();
-            glm::vec3 cameraRight = glm::cross(cameraFront, cameraUp);
             if (glm::length(cameraRight) > 1e-5f) {
                 cameraRight = glm::normalize(cameraRight);
             } else {
                 cameraRight = glm::vec3(1, 0, 0);
             }
+
             glm::vec2 mouseDelta = getMouseDelta();
 
             for (int i = 0; i < subStepCount; ++i) {
@@ -2258,17 +2261,18 @@ namespace gl3 {
                                 break;
                             case 7: // flesh
                                 registerPlayerDamage(0.00625f);
-                                moveInput/=2;
+                                moveInput *= 0.5f;
                                 break;
                             default:
                                 break;
                         }
                     }
-                    characterController->update(subDt, moveInput, jump, sprint, crouch, mouseDelta, cameraFront,
+                    characterController->update(subDt, moveInput, jump, sprint, crouch, mouseDelta, cameraForward,
                                                 cameraRight, airSlam);
                 }
                 jump = false;
             }
+
             std::vector<uint64_t> removedBodyIds;
             {
                 TRACY_CPU_ZONE("Game::updateBodies()");
@@ -2633,13 +2637,12 @@ if(getPlayerHealth()<=0)
                     1.0f
             );
         }
-        float gravity = glm::pow(light.intensity,1.0f)-distsq;
+        float gravity = glm::pow(light.intensity,2.0f)/distsq;
         if(gravity>bestGravity&&!characterController->isSurfaceAdhered())
         {
             bestGravity=gravity;
             best=light;
-            gravity=glm::clamp(gravity,0.0f,25.0f);
-            characterController->settings.gravity = gravity;
+            characterController->setGravityIntensity(gravity);
         }
     }
         if(best.pos!=characterController->settings.lastGravPoint&&!characterController->isSurfaceAdhered())
@@ -2647,6 +2650,7 @@ if(getPlayerHealth()<=0)
             characterController->settings.lastGravPoint=best.pos;
             glm::vec3 gravDir = glm::normalize(best.pos - cameraPos);
             characterController->setGravityDirection(gravDir);
+
             //float pitch = glm::degrees(glm::asin(gravDir.y));
             //float yaw = glm::degrees(glm::atan(gravDir.z, gravDir.x));
             //cameraRotation = glm::vec2(pitch, yaw);
@@ -4065,41 +4069,60 @@ glDepthMask(depthMask);
             float yawAmount   = -mouseDelta.x * cameraSensitivity * settings.sensitivity;
             float pitchAmount = -mouseDelta.y * cameraSensitivity * settings.sensitivity;
 
-            // yaw around current camera up
+            // --- YAW ---
             if (std::abs(yawAmount) > 1e-6f) {
                 glm::quat qYaw = glm::angleAxis(glm::radians(yawAmount), cameraUp);
                 cameraForward = glm::normalize(qYaw * cameraForward);
+                cameraUp = glm::normalize(qYaw * cameraUp);
             }
 
             cameraRight = glm::normalize(glm::cross(cameraForward, cameraUp));
 
-            // pitch around current camera right
+            // --- PITCH ---
             if (std::abs(pitchAmount) > 1e-6f) {
                 glm::quat qPitch = glm::angleAxis(glm::radians(pitchAmount), cameraRight);
                 glm::vec3 candidateForward = glm::normalize(qPitch * cameraForward);
 
                 float d = glm::dot(candidateForward, cameraUp);
-                if (std::abs(d) < 0.98f) {
+                if (d > -0.95f && d < 0.95f) {
                     cameraForward = candidateForward;
+                    cameraUp = glm::normalize(glm::cross(cameraRight, cameraForward));
                 }
             }
 
-            // Manual roll only
+            // --- ROLL ---
             float rollAmount = 0.0f;
             const float rollSpeedDeg = 120.0f;
 
-            if (actions["RollLeft"].isPressed)  rollAmount += rollSpeedDeg * deltaTime;
-            if (actions["RollRight"].isPressed) rollAmount -= rollSpeedDeg * deltaTime;
+            bool canRoll = !characterController->getState().isSurfaceAdhered ||
+                           characterController->getState().isInFluid;
+
+            if (canRoll) {
+                if (actions["RollLeft"].isPressed)  rollAmount += rollSpeedDeg * deltaTime;
+                if (actions["RollRight"].isPressed) rollAmount -= rollSpeedDeg * deltaTime;
+            }
 
             if (std::abs(rollAmount) > 1e-6f) {
-                glm::quat qRoll = glm::angleAxis(glm::radians(rollAmount), glm::normalize(cameraForward));
+                glm::quat qRoll = glm::angleAxis(glm::radians(rollAmount), cameraForward);
                 cameraUp = glm::normalize(qRoll * cameraUp);
+                cameraRight = glm::normalize(glm::cross(cameraForward, cameraUp));
+            }
+
+            // --- ALIGNMENT ---
+            if (characterController->getState().isSurfaceAdhered && std::abs(rollAmount) < 0.01f) {
+                glm::vec3 characterUp = characterController->getUpDirection();
+                alignCameraRollToUp(characterUp, deltaTime);
             }
         }
 
         cameraRight = glm::normalize(glm::cross(cameraForward, cameraUp));
-        cameraUp    = glm::normalize(glm::cross(cameraRight, cameraForward));
+        cameraUp = glm::normalize(glm::cross(cameraRight, cameraForward));
+        cameraForward = glm::normalize(glm::cross(cameraUp, cameraRight));
 
+        characterController->setCameraForward(cameraForward);
+        characterController->setCameraRight(cameraRight);
+
+        // --- CAMERA POSITION ---
         glm::vec3 desiredCameraPos = characterController->getCameraPosition();
 
         const float cameraDistance = 0.0f;
@@ -4110,18 +4133,14 @@ glDepthMask(depthMask);
         float eyeRadius = glm::max(VOXEL_SIZE * 0.12f,
                                    characterController->getRadius() * 0.35f);
 
-        // Resolve desired eye position with swept collision
         characterController->resolveCameraCollision(desiredCameraPos, eyeRadius);
 
-        // Smooth camera movement
-        float smoothTime = characterController->getState().isSurfaceAdhered ? 0.025f : 0.06f;
+        float smoothTime = characterController->getState().isSurfaceAdhered ? 0.15f : 0.04f;
         float smoothFactor = 1.0f - exp(-deltaTime / smoothTime);
         cameraPos = cameraPos + (desiredCameraPos - cameraPos) * smoothFactor;
 
-        // Re-resolve after smoothing too, because smoothing itself can drift into geometry
         characterController->resolveCameraCollision(cameraPos, eyeRadius);
 
-        // Final emergency correction
         glm::vec3 emergencyNormal;
         float emergencyPen;
         if (characterController->checkCameraCollision(cameraPos, eyeRadius, emergencyNormal, emergencyPen)) {
@@ -4131,33 +4150,27 @@ glDepthMask(depthMask);
         updatePlayerAudio();
     }
 
-    void Game::alignCameraRollToUp(const glm::vec3& targetUp, float dt)
-    {
-        glm::vec3 f = glm::normalize(cameraForward);
-        glm::vec3 u = glm::normalize(cameraUp);
-        glm::vec3 t = glm::normalize(targetUp);
+    void Game::alignCameraRollToUp(const glm::vec3& worldUp, float deltaTime) {
+        glm::vec3 projectedUp = glm::normalize(worldUp - cameraForward * glm::dot(worldUp, cameraForward));
 
-        glm::vec3 uProj = u - f * glm::dot(u, f);
-        glm::vec3 tProj = t - f * glm::dot(t, f);
+        if (glm::length(projectedUp) < 0.001f) return;
 
-        float lu = glm::length(uProj);
-        float lt = glm::length(tProj);
-        if (lu < 1e-5f || lt < 1e-5f) return;
+        float angle = glm::acos(glm::clamp(glm::dot(cameraUp, projectedUp), -1.0f, 1.0f));
 
-        uProj /= lu;
-        tProj /= lt;
+        glm::vec3 cross = glm::cross(cameraUp, projectedUp);
+        if (glm::dot(cross, cameraForward) < 0.0f) {
+            angle = -angle;
+        }
 
-        float cosA = glm::clamp(glm::dot(uProj, tProj), -1.0f, 1.0f);
-        float angle = std::acos(cosA);
+        float speed = 8.0f;
+        float maxAngle = glm::radians(30.0f);
 
-        float sign = (glm::dot(glm::cross(uProj, tProj), f) < 0.0f) ? -1.0f : 1.0f;
-        angle *= sign;
+        float rotation = glm::clamp(angle * speed * deltaTime, -maxAngle, maxAngle);
 
-        float maxStep = 3.0f * dt; // tune
-        float step = glm::clamp(angle, -maxStep, maxStep);
-
-        glm::quat q = glm::angleAxis(step, f);
-        cameraUp = glm::normalize(q * cameraUp);
+        if (std::abs(rotation) > 0.001f) {
+            glm::quat q = glm::angleAxis(rotation, cameraForward);
+            cameraUp = glm::normalize(q * cameraUp);
+        }
     }
 
     void Game::setupSkybox() {

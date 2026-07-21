@@ -1,5 +1,7 @@
 #include <algorithm>
 #include "Game.h"
+#include "CharacterController.h"
+
 
 namespace gl3 {
     CharacterController::CharacterController(FixedGridChunkManager *chunkMgr, VoxelPhysicsManager *physicsMgr,
@@ -278,7 +280,7 @@ namespace gl3 {
 
         // Capsule center segment
         float halfSegment = glm::max(0.0f, (currentHeight * 0.5f) - radius);
-        glm::vec3 up = getUpDirection();
+        glm::vec3 up = getMovementUpDirection();
         glm::vec3 p0 = testPosition - up * halfSegment;
         glm::vec3 p1 = testPosition + up * halfSegment;
         float segmentLength = glm::length(p1 - p0);
@@ -341,7 +343,7 @@ namespace gl3 {
         if (!chunkManager) return false;
 
         glm::vec3 up = state.isSurfaceAdhered ? glm::normalize(state.adheredNormal)
-                                              : getUpDirection();
+                                              : getMovementUpDirection();
         glm::vec3 down = -up;
 
         glm::vec3 tangentA;
@@ -407,7 +409,7 @@ namespace gl3 {
             bool collided = false;
 
             if (checkCollision(state.position, normal, penetration)) {
-                glm::vec3 up = getUpDirection();
+                glm::vec3 up = getMovementUpDirection();
                 float halfSegment = glm::max(0.0f, (currentHeight * 0.5f) - radius);
 
                 glm::vec3 bottomSphereCenter = state.position - up * halfSegment;
@@ -475,16 +477,32 @@ namespace gl3 {
     }
 
     glm::vec3 CharacterController::calculateWishVelocity(const glm::vec3 &moveInput,
-                                                         const glm::vec3 &forward,
-                                                         const glm::vec3 &right) const {
-        glm::vec3 up = getUpDirection();
-        glm::vec3 wishDir = (forward * moveInput.z) + (right * moveInput.x);
+                                                         const glm::vec3 &cameraForward,
+                                                         const glm::vec3 &cameraRight) const {
+        glm::vec3 moveUp = getMovementUpDirection();
 
-        wishDir -= up * glm::dot(wishDir, up);
+        glm::vec3 forward = cameraForward - moveUp * glm::dot(cameraForward, moveUp);
+        glm::vec3 right   = cameraRight - moveUp * glm::dot(cameraRight, moveUp);
 
-        if (glm::length(wishDir) > 0.001f) {
-            wishDir = glm::normalize(wishDir);
+        if (glm::length(forward) < 1e-6f) {
+            if (std::abs(moveUp.y) < 0.99f)
+                forward = glm::normalize(glm::cross(moveUp, glm::vec3(0, 1, 0)));
+            else
+                forward = glm::normalize(glm::cross(moveUp, glm::vec3(1, 0, 0)));
+            right = glm::normalize(glm::cross(moveUp, forward));
+        } else {
+            forward = glm::normalize(forward);
+            right = glm::normalize(right);
         }
+
+        glm::vec3 wishDir = forward * moveInput.z + right * moveInput.x;
+
+        if (moveInput.y != 0.0f) {
+            wishDir += moveUp * moveInput.y;
+        }
+
+        if (glm::length(wishDir) > 1e-6f)
+            wishDir = glm::normalize(wishDir);
 
         return wishDir;
     }
@@ -539,7 +557,7 @@ namespace gl3 {
         // Update fluid depth and normal
         if (state.isInFluid) {
             // Sample fluid density at several points to determine depth
-            glm::vec3 up = getUpDirection();
+            glm::vec3 up = getMovementUpDirection();
             float depthSamples = 0.0f;
             float totalDensity = 0.0f;
 
@@ -633,7 +651,7 @@ namespace gl3 {
             glm::vec3 gp, gn;
             float gd = 0.0f;
             if (findGroundContact(gp, gn, gd) && gd > 0.001f && gd <= settings.adhesionSnapDistance) {
-                newPosition -= getUpDirection() * gd;
+                newPosition -= getMovementUpDirection() * gd;
             }
         }
 
@@ -721,7 +739,7 @@ namespace gl3 {
                           (state.isSprinting ? settings.sprintSpeed : settings.walkSpeed);
         }
 
-        glm::vec3 up = getUpDirection();
+        glm::vec3 up = getMovementUpDirection();
 
         glm::vec3 forward = cameraForward - up * glm::dot(cameraForward, up);
         glm::vec3 right = cameraRight - up * glm::dot(cameraRight, up);
@@ -745,19 +763,7 @@ namespace gl3 {
         }
         accelerate(wishDir, targetSpeed, accel, deltaTime);
 
-        // Handle jumping/swimming up
         if (state.isInFluid) {
-            // In fluid, jump input makes you swim up
-            if (state.jumpBuffer > 0.0f) {
-                // Apply upward swim force
-                float swimUpForce = settings.jumpForce * 0.5f; // 50% of normal jump
-                float velUp = glm::dot(state.velocity, -settings.gravityDir);
-                if (velUp < swimUpForce) {
-                    state.velocity += -settings.gravityDir * (swimUpForce - velUp);
-                }
-                state.jumpBuffer = 0.0f;
-            }
-            // Also allow swimming down with crouch
             if (state.isCrouching) {
                 float swimDownForce = settings.jumpForce * 0.2f;
                 float velDown = glm::dot(state.velocity, settings.gravityDir);
@@ -765,8 +771,22 @@ namespace gl3 {
                     state.velocity += settings.gravityDir * (swimDownForce - velDown);
                 }
             }
+            else if (moveInput.y > 0.1f) {
+                float swimUpForce = settings.jumpForce * 0.5f * moveInput.y;
+                float velUp = glm::dot(state.velocity, -settings.gravityDir);
+                if (velUp < swimUpForce) {
+                    state.velocity += -settings.gravityDir * (swimUpForce - velUp);
+                }
+                state.jumpBuffer = 0.0f;
+            } else if (moveInput.y < -0.1f) {
+                float swimDownForce = settings.jumpForce * 0.3f * (-moveInput.y);
+                float velDown = glm::dot(state.velocity, settings.gravityDir);
+                if (velDown < swimDownForce) {
+                    state.velocity += settings.gravityDir * (swimDownForce - velDown);
+                }
+            }
         } else if (!state.isAirSlamming && state.jumpBuffer > 0.0f && state.coyoteTime > 0.0f) {
-            // Normal jump
+            glm::vec3 up = getMovementUpDirection();
             float velUp = glm::dot(state.velocity, up);
             if (velUp < settings.jumpForce) {
                 state.velocity += up * (settings.jumpForce - velUp);
@@ -839,7 +859,7 @@ namespace gl3 {
     ) const {
         if (!physicsManager) return false;
 
-        glm::vec3 up = getUpDirection();
+        glm::vec3 up = getMovementUpDirection();
         float halfSegment = glm::max(0.0f, (currentHeight * 0.5f) - radius);
         glm::vec3 p0 = testPosition - up * halfSegment;
         glm::vec3 p1 = testPosition + up * halfSegment;
@@ -900,19 +920,37 @@ namespace gl3 {
         settings.gravityDir = glm::normalize(g);
     }
 
+    void CharacterController::setGravityIntensity(float intensity)
+    {
+        settings.gravity = glm::clamp(intensity,settings.gravityMinIntensity,settings.gravityMaxIntensity);
+    }
+
+    glm::vec3 CharacterController::getMovementUpDirection() const
+    {
+        if (state.isSurfaceAdhered && glm::length(state.adheredNormal) > 1e-6f) {
+            return glm::normalize(state.adheredNormal);
+        }
+
+        if (glm::length(settings.gravityDir) > 1e-6f) {
+            return -glm::normalize(settings.gravityDir);
+        }
+
+        return glm::vec3(0.0f, 1.0f, 0.0f);
+    }
+
     glm::vec3 CharacterController::getUpDirection() const
     {
-        if (glm::length(settings.gravityDir) < 1e-6f) {
-            return glm::vec3(0.0f, 1.0f, 0.0f);
+        if (glm::length(state.currentUp) > 1e-6f) {
+            return glm::normalize(state.currentUp);
         }
-        return -glm::normalize(settings.gravityDir);
+        return getMovementUpDirection();
     }
 
 
     bool CharacterController::findGroundContact(glm::vec3& outPoint, glm::vec3& outNormal, float& outDistance) const {
         if (!chunkManager) return false;
 
-        glm::vec3 up = getUpDirection();
+        glm::vec3 up = getMovementUpDirection();
         glm::vec3 down = -up;
 
         float halfSegment = glm::max(0.0f, (currentHeight * 0.5f) - radius);
@@ -1002,6 +1040,9 @@ namespace gl3 {
 
         settings.gravityDir = -n;
 
+        glm::vec3 visualUp = sampleSmoothedSurfaceUp(contactPoint);
+        state.currentUp = visualUp;
+
         float vn = glm::dot(state.velocity, n);
         if (vn < 0.0f) {
             state.velocity -= n * vn;
@@ -1044,29 +1085,24 @@ namespace gl3 {
         glm::vec3 targetUp;
 
         if (state.isSurfaceAdhered) {
-            targetUp = glm::normalize(state.adheredNormal);
+            targetUp = sampleSmoothedSurfaceUp(state.lastGroundPoint);
         } else {
             targetUp = glm::normalize(-settings.gravityDir);
         }
 
         glm::vec3 curUp = glm::normalize(state.currentUp);
 
-        // Calculate angular difference
         float dot = glm::clamp(glm::dot(curUp, targetUp), -1.0f, 1.0f);
         float angleDiff = std::acos(dot);
 
-        // STOP ROTATION when close enough (prevents micro-jitter)
-        if (angleDiff < glm::radians(0.5f)) {
+        if (angleDiff < glm::radians(0.2f)) {
             state.currentUp = targetUp;
             return;
         }
 
-        // Use FIXED slow speed for all rotations (no adaptive speed)
-        float rotationSpeed = 1.5f; // Lower = smoother
-
+        float rotationSpeed = 1.5f;
         float t = glm::clamp(rotationSpeed * deltaTime, 0.0f, 1.0f);
 
-        // Use spherical lerp (slerp) for smooth rotation
         glm::vec3 blended;
         if (angleDiff > 0.001f) {
             float sinAngle = std::sin(angleDiff);
@@ -1243,5 +1279,52 @@ namespace gl3 {
         float len = glm::length(grad);
         if (len < 1e-6f) return glm::vec3(0.0f, 1.0f, 0.0f);
         return -glm::normalize(grad); // Points toward fluid interior
+    }
+
+    glm::vec3 CharacterController::sampleSmoothedSurfaceUp(const glm::vec3& worldPos) const
+    {
+        const float r = VOXEL_SIZE * 0.75f;
+
+        glm::vec3 n0 = sampleNormalAtWorld(chunkManager,worldPos);
+        if (glm::length(n0) < 1e-6f) {
+            return glm::normalize(state.currentUp);
+        }
+
+        glm::vec3 up = glm::normalize(n0);
+
+        glm::vec3 tangentA;
+        if (std::abs(up.y) < 0.99f)
+            tangentA = glm::normalize(glm::cross(up, glm::vec3(0,1,0)));
+        else
+            tangentA = glm::normalize(glm::cross(up, glm::vec3(1,0,0)));
+
+        glm::vec3 tangentB = glm::normalize(glm::cross(up, tangentA));
+
+        glm::vec3 sum = n0 * 2.0f;
+
+        const glm::vec3 offsets[] = {
+                tangentA * r,
+                -tangentA * r,
+                tangentB * r,
+                -tangentB * r,
+                (tangentA + tangentB) * (0.7f * r),
+                (tangentA - tangentB) * (0.7f * r),
+                (-tangentA + tangentB) * (0.7f * r),
+                (-tangentA - tangentB) * (0.7f * r)
+        };
+
+        for (const auto& o : offsets) {
+            glm::vec3 nn = sampleNormalAtWorld(chunkManager,worldPos + o);
+            if (glm::length(nn) > 1e-6f) {
+                // keep same hemisphere
+                if (glm::dot(nn, up) < 0.0f) nn = -nn;
+                sum += nn;
+            }
+        }
+
+        float len = glm::length(sum);
+        if (len < 1e-6f) return up;
+
+        return glm::normalize(sum);
     }
 }
