@@ -31,6 +31,8 @@ namespace gl3 {
         float launchSpeed = 0.0f;
         float lifetime = 0.0f;
 
+        uint32_t allowedTypeMask = kAllVoxelTypesMask;
+
         struct ChunkSnapshot
         {
             ChunkCoord coord;

@@ -73,7 +73,7 @@ namespace gl3 {
         void carveSphere(glm::vec3 centerLocal, float radiusWorld, float strength) {
             if (!isInitialized()) {
                 init(dims,VOXEL_SIZE);
-                assert(false && "LocalVoxelVolume used before init");
+                //assert(false && "LocalVoxelVolume used before init");
                 return;
             }
 

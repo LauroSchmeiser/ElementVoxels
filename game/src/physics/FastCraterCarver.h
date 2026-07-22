@@ -44,7 +44,8 @@ namespace gl3 {
                 float maxDepth,
                 float densityThreshold,
                 std::vector<ChunkCoord>* outTouchedChunks = nullptr,
-                bool autoCreateChunks = false
+                bool autoCreateChunks = false,
+                uint32_t allowedTypeMask = 0xFFFFFFFFu
         ) {
             if (!mgr) return;
             if (radius <= 0.0f || maxDepth <= 0.0f) return;
@@ -106,6 +107,7 @@ namespace gl3 {
 
                                     Voxel& v = chunk->voxels[vx][vy][vz];
                                     if (v.density < densityThreshold) continue;
+                                    if (!(allowedTypeMask & (1u << v.type))) continue;
 
                                     float dist = std::sqrt(distSq);
                                     float t = dist / radius;

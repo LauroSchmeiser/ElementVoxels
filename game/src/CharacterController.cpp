@@ -390,7 +390,7 @@ namespace gl3 {
     }
 
     glm::vec3 CharacterController::getCameraPosition() const {
-        glm::vec3 up = getUpDirection();
+        glm::vec3 up = getMovementUpDirection();
 
         float eyeOffset = getEyeHeight();
 
@@ -496,15 +496,21 @@ namespace gl3 {
         glm::vec3 forward = cameraForward - moveUp * glm::dot(cameraForward, moveUp);
         glm::vec3 right   = cameraRight - moveUp * glm::dot(cameraRight, moveUp);
 
-        if (glm::length(forward) < 1e-6f) {
+        float forwardLen = glm::length(forward);
+        float rightLen = glm::length(right);
+
+        if (rightLen > 1e-5f) {
+            right = right / rightLen;
+            forward = glm::cross(moveUp, right);
+        } else if (forwardLen > 1e-5f) {
+            forward = forward / forwardLen;
+            right = glm::cross(forward, moveUp);
+        } else {
             if (std::abs(moveUp.y) < 0.99f)
                 forward = glm::normalize(glm::cross(moveUp, glm::vec3(0, 1, 0)));
             else
                 forward = glm::normalize(glm::cross(moveUp, glm::vec3(1, 0, 0)));
-            right = glm::normalize(glm::cross(moveUp, forward));
-        } else {
-            forward = glm::normalize(forward);
-            right = glm::normalize(right);
+            right = glm::normalize(glm::cross(forward, moveUp));
         }
 
         glm::vec3 wishDir = forward * moveInput.z + right * moveInput.x;
@@ -1084,7 +1090,10 @@ namespace gl3 {
     void CharacterController::beginSurfaceAdhesion(const glm::vec3& contactPoint,
                                                    const glm::vec3& contactNormal,
                                                    bool resetTimer) {
-        glm::vec3 n = glm::normalize(contactNormal);
+        glm::vec3 rawNormal = glm::normalize(contactNormal);
+
+        glm::vec3 n = sampleSmoothedSurfaceUp(contactPoint);
+        if (glm::dot(n, rawNormal) < 0.0f) n = -n;
 
         state.isGrounded = true;
         state.isSurfaceAdhered = true;
@@ -1099,9 +1108,7 @@ namespace gl3 {
         state.airSlamAvailable = true;
 
         settings.gravityDir = -n;
-
-        glm::vec3 visualUp = sampleSmoothedSurfaceUp(contactPoint);
-        state.currentUp = visualUp;
+        state.currentUp = n;
 
         float vn = glm::dot(state.velocity, n);
         if (vn < 0.0f) {
@@ -1119,8 +1126,12 @@ namespace gl3 {
         bool hasNearbyGround = findGroundContact(gp, gn, gd);
 
         if (hasNearbyGround) {
+            glm::vec3 rawNormal = glm::normalize(gn);
+            glm::vec3 smoothedNormal = sampleSmoothedSurfaceUp(gp);
+            if (glm::dot(smoothedNormal, rawNormal) < 0.0f) smoothedNormal = -smoothedNormal;
+
             state.lastGroundPoint = gp;
-            state.adheredNormal = glm::normalize(gn);
+            state.adheredNormal = smoothedNormal;
             state.isGrounded = true;
 
             // Refresh adhesion timer while we have valid nearby support.

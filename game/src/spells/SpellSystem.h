@@ -23,11 +23,6 @@ namespace gl3 {
 
         void pumpAsyncResults();
 
-        void castSphere(const glm::vec3& center, float radius, uint64_t material, float strength, const glm::vec3& direction, float searchRadius);
-        void castWall(const glm::vec3& center, const glm::vec3& normal,
-                      float width, float height, float thickness,
-                      uint64_t material, float strength);
-
         const std::deque<SpellEffect>& spells() const { return activeSpells; }
         std::deque<SpellEffect>& spellsMutable() { return activeSpells; }
 
@@ -38,6 +33,15 @@ namespace gl3 {
         SpellEffect* findSpellById(uint64_t id);
         const SpellEffect* findSpellById(uint64_t id) const;
         void createPhysicsBodyForSpell(SpellEffect &spell);
+
+        void castSphere(const glm::vec3& center, float radius, uint64_t material, float strength,
+                        const glm::vec3& direction, float searchRadius,
+                        uint32_t allowedTypeMask = kAllVoxelTypesMask);
+
+        void castWall(const glm::vec3& center, const glm::vec3& normal,
+                      float width, float height, float thickness,
+                      uint64_t material, float strength,
+                      uint32_t allowedTypeMask = kAllVoxelTypesMask);
 
     private:
         SpellWorldContext ctx;
@@ -52,12 +56,9 @@ namespace gl3 {
         std::mutex spellApplyMutex;
 
         SpellCastRequest buildSpellCastRequestSnapshot(
-                const glm::vec3& center,
-                float searchRadius,
-                uint64_t targetMaterial,
-                float strength,
-                const FormationParams& baseFormationParams
-        );
+                const glm::vec3& center, float searchRadius, uint64_t targetMaterial,
+                float strength, const FormationParams& baseFormationParams,
+                uint32_t allowedTypeMask = kAllVoxelTypesMask);
 
         struct GpuTrianglesReadback {
             std::vector<glm::vec3> vertsLocal;   // local-space (world - spell.center)

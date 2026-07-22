@@ -46,6 +46,7 @@ namespace gl3 {
             bool autoCreate = true;
             bool additive = false;
             float densityThreshold = -0.5f;
+            uint32_t allowedTypeMask = 0xFFFFFFFFu;
         };
 
         static CarveResult carveSDF(
@@ -180,6 +181,9 @@ namespace gl3 {
                         Voxel& voxel = chunk->voxels[vx][vy][vz];
 
                         if (!params.additive && voxel.density < params.densityThreshold) {
+                            continue;
+                        }
+                        if (!(params.allowedTypeMask & (1u << voxel.type))) {
                             continue;
                         }
 

@@ -17,6 +17,7 @@ namespace gl3 {
             glm::vec3 center;
             float radius;
             float depth;
+            uint32_t allowedTypeMask = 0xFFFFFFFFu;
         };
 
         struct CellKey {
@@ -114,6 +115,7 @@ namespace gl3 {
 
                                                 for (int stampIndex : it->second) {
                                                     const Stamp& s = stamps[stampIndex];
+                                                    if (!(s.allowedTypeMask & (1u << v.type))) continue;
                                                     glm::vec3 d = p - s.center;
                                                     float distSq = glm::dot(d,d);
                                                     if (distSq > s.radius*s.radius) continue;

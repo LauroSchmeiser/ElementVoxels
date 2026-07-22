@@ -175,6 +175,7 @@ namespace gl3 {
                             const Voxel& v = cs.voxelsLinear[linearIndex(x,y,z)];
                             if (!v.isSolid()) continue;
                             if (excluded.find(v.material) != excluded.end()) continue;
+                            if (!(req.allowedTypeMask & (1u << v.type))) continue;
 
                             glm::vec3 worldPos = chunkMin + glm::vec3((float)x, (float)y, (float)z) * VOXEL_SIZE;
                             glm::vec3 diff = worldPos - req.center;
@@ -225,6 +226,7 @@ namespace gl3 {
                             const Voxel& v = cs.voxelsLinear[linearIndex(x,y,z)];
                             if (!v.isSolid()) continue;
                             if (v.material != resolvedMaterial) continue;
+                            if (!(req.allowedTypeMask & (1u << v.type))) continue;
 
                             glm::vec3 worldPos = chunkMin + glm::vec3((float)x, (float)y, (float)z) * VOXEL_SIZE;
                             glm::vec3 diff = worldPos - req.center;
@@ -331,7 +333,7 @@ namespace gl3 {
                     float computedRadius = std::cbrt((3.0f / (4.0f * PI)) * (desiredVolumeWorld / packingEfficiency));
                     float minRadius = minWorldDim;
 
-                // preserve requested size as an upper target, but don't shrink it unnecessarily
+                    // preserve requested size as an upper target, but don't shrink it unnecessarily
                     adjusted.radius = std::max(adjusted.radius, std::max(minRadius, computedRadius));
                     break;
                 }
@@ -420,6 +422,7 @@ namespace gl3 {
                 s.center = c.worldPos;
                 s.radius = 2.0f * VOXEL_SIZE;
                 s.depth  = 5.5f;
+                s.allowedTypeMask = req.allowedTypeMask;
                 stamps.push_back(s);
 
                 touched.push_back(c.chunkCoord);
@@ -459,7 +462,7 @@ namespace gl3 {
 
         return out;
     }
-     inline float halton(int index, int base)
+    inline float halton(int index, int base)
     {
         float f = 1.0f;
         float r = 0.0f;

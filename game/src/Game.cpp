@@ -2643,7 +2643,7 @@ if(getPlayerHealth()<=0)
     if(dist>1000.0f)
     {
         g_SoundManager.playSound(SoundID::Suffocate);
-        registerPlayerDamage(0.05f);
+        registerPlayerDamage(0.075f);
     }
 
     TRACY_CPU_ZONE("SunBurns()");
@@ -2766,7 +2766,7 @@ if (actions["CastSphere"].wasJustReleased) {
     float spellStrength = 3.0f;              // Affects velocity
 
     if (spellSystem)
-        spellSystem->castSphere(spellCenter, spellRadius, activeSpellMat, spellStrength, getCameraFront(), VOXEL_SIZE*CHUNK_SIZE*3);
+        spellSystem->castSphere(spellCenter, spellRadius, activeSpellMat, spellStrength, getCameraFront(), VOXEL_SIZE*CHUNK_SIZE*3, makeVoxelTypeMask({1}));
 }
 
 if (actions["CastFleshSphere"].wasJustReleased) {
@@ -2780,7 +2780,7 @@ if (actions["CastFleshSphere"].wasJustReleased) {
     float spellStrength = 3.0f;              // Affects velocity
 
     if (spellSystem)
-        spellSystem->castSphere(spellCenter, spellRadius, 7, spellStrength, getCameraFront(), VOXEL_SIZE*CHUNK_SIZE*3);
+        spellSystem->castSphere(spellCenter, spellRadius, 7, spellStrength, getCameraFront(), VOXEL_SIZE*CHUNK_SIZE*3, makeVoxelTypeMask({1}));
     }
 
     if (actions["CastFireSphere"].wasJustReleased) {
@@ -2794,7 +2794,7 @@ if (actions["CastFleshSphere"].wasJustReleased) {
         float spellStrength = 1.0f;              // Affects velocity
 
         if (spellSystem)
-            spellSystem->castSphere(spellCenter, spellRadius, 9, spellStrength, getCameraFront(), VOXEL_SIZE*CHUNK_SIZE*50);
+            spellSystem->castSphere(spellCenter, spellRadius, 9, spellStrength, getCameraFront(), VOXEL_SIZE*CHUNK_SIZE*50,  makeVoxelTypeMask({1}));
     }
 
 if (actions["CastWall"].wasJustReleased) {
@@ -2814,7 +2814,7 @@ if (actions["CastWall"].wasJustReleased) {
     // Cast the wall spell
     spellSystem->castWall(spellCenter, cameraFront,
                   wallWidth, wallHeight, wallThickness,
-                  0, 2.0f*VOXEL_SIZE);
+                  0, 2.0f*VOXEL_SIZE,makeVoxelTypeMask({1}));
 }
 if (actions["AirReset"].wasJustReleased) {
     std::cout << "Platform Spell Triggered" << "\n";
@@ -2828,7 +2828,7 @@ if (actions["AirReset"].wasJustReleased) {
     // Cast the wall spell
     spellSystem->castWall(spellCenter, glm::vec3(0,-1,0),
                   wallWidth, wallHeight, wallThickness,
-                  0, 7.5f*VOXEL_SIZE);
+                  0, 7.5f*VOXEL_SIZE,makeVoxelTypeMask({1}));
 }
 
 
@@ -4515,7 +4515,7 @@ glDepthMask(depthMask);
                 material,
                 speedWorld,
                 glm::normalize(target - start),
-                searchRadius
+                searchRadius,makeVoxelTypeMask({1})
         );
         //castSpellWithFormation(center, searchRadius, material, strength, params);
         //SpellCastRequest req = buildSpellCastRequestSnapshot(start, searchRadius, 0, 5, params);

@@ -264,7 +264,12 @@ struct SpellEffect {
     BurnState burn;
 };
 
+    constexpr uint32_t kAllVoxelTypesMask = 0xFFFFFFFFu;
 
-
+    inline uint32_t makeVoxelTypeMask(std::initializer_list<uint8_t> types) {
+        uint32_t mask = 0u;
+        for (uint8_t t : types) if (t < 32) mask |= (1u << t);
+        return mask;
+    }
 struct Chunk;
 }

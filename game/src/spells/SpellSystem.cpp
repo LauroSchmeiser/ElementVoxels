@@ -145,13 +145,13 @@ namespace gl3 {
         updateSpells(dt);
     }
 
-    void SpellSystem::castSphere(const glm::vec3& center, float radius, uint64_t material, float strength, const glm::vec3& direction, float searchRadius)
+    void SpellSystem::castSphere(const glm::vec3& center, float radius, uint64_t material, float strength, const glm::vec3& direction, float searchRadius, uint32_t allowedTypeMask)
     {
         if (!spellCastAsync || !ctx.chunks) return;
 
         FormationParams params = FormationParams::Sphere(center, radius);
 
-        SpellCastRequest req = buildSpellCastRequestSnapshot(center, searchRadius, material, strength, params);
+        SpellCastRequest req = buildSpellCastRequestSnapshot(center, searchRadius, material, strength, params, allowedTypeMask);
         req.physicsEnabled = true;
         if(material!=9&&material!=7)
         {
@@ -172,7 +172,7 @@ namespace gl3 {
 
     void SpellSystem::castWall(const glm::vec3& center, const glm::vec3& normal,
                                float width, float height, float thickness,
-                               uint64_t material, float strength)
+                               uint64_t material, float strength, uint32_t allowedTypeMask)
     {
         TRACY_CPU_ZONE("SpellSystem:CastWall()");
 
@@ -184,7 +184,7 @@ namespace gl3 {
         float axis=glm::max(width, height);
         float searchRadiusWorld = glm::pow(axis,3);
 
-        SpellCastRequest req = buildSpellCastRequestSnapshot(center, searchRadiusWorld, material, strength, params);
+        SpellCastRequest req = buildSpellCastRequestSnapshot(center, searchRadiusWorld, material, strength, params, allowedTypeMask);
 
         req.physicsEnabled = false;
         if (ctx.getCameraFront) req.launchDir = ctx.getCameraFront();
@@ -199,7 +199,8 @@ namespace gl3 {
             float searchRadius,
             uint64_t targetMaterial,
             float strength,
-            const FormationParams& baseFormationParams
+            const FormationParams& baseFormationParams,
+            uint32_t allowedTypeMask
     )
     {
         TRACY_CPU_ZONE("buildSnapshot");
@@ -210,6 +211,7 @@ namespace gl3 {
         req.targetMaterial = targetMaterial;
         req.strength = strength;
         req.baseFormationParams = baseFormationParams;
+        req.allowedTypeMask = allowedTypeMask;
 
         auto chunks = ctx.chunks->getChunksInRadius(center, glm::sqrt(searchRadius));
         req.chunks.reserve(chunks.size());
