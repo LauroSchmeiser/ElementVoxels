@@ -121,7 +121,7 @@ namespace gl3 {
                 ImGui::SetCursorPosX((panelW - btnSize.x) * 0.5f);
                 if (DrawTexturedMenuButton("btn_start", "Start Game",
                                            (ImTextureID)(intptr_t)startBtnTex, btnSize)) {
-                    g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
+                    g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f, true, true,4);
                     game.requestSceneChange(SceneId::Loading);
                 }
 
@@ -131,7 +131,7 @@ namespace gl3 {
                 ImGui::SetCursorPosX((panelW - btnSize.x) * 0.5f);
                 if (DrawTexturedMenuButton("btn_settings", "Settings",
                                            (ImTextureID)(intptr_t)settingsBtnTex, btnSize)) {
-                    g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
+                    g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f, true, true,4);
                     showSettings = true;
                 }
 
@@ -141,7 +141,7 @@ namespace gl3 {
                 ImGui::SetCursorPosX((panelW - btnSize.x) * 0.5f);
                 if (DrawTexturedMenuButton("btn_desktop", "Back to desktop",
                                            (ImTextureID)(intptr_t)exitBtnTex, btnSize)) {
-                    g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
+                    g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f, true, true,4);
                     glfwSetWindowShouldClose(game.getWindow(), true);
                 }
 
@@ -165,7 +165,7 @@ namespace gl3 {
                 changed |= ImGui::SliderFloat(" Mouse Sensitivity", &game.settings.sensitivity, 0.01f, 1.0f, "%.3f");
                 const char* sensitivityBtnId = "settings_sensitivity";
                 if (ImGui::IsItemHovered() && lastHoveredButton != sensitivityBtnId) {
-                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
                     lastHoveredButton = sensitivityBtnId;
                 }
                 ImGui::Dummy(ImVec2(0.0f, 10.0f));
@@ -173,7 +173,7 @@ namespace gl3 {
                 changed |= ImGui::SliderFloat(" Master Volume", &game.settings.masterVolume, 0.0f, 1.0f, "%.2f");
                 const char* masterBtnId = "settings_master";
                 if (ImGui::IsItemHovered() && lastHoveredButton != masterBtnId) {
-                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
                     lastHoveredButton = masterBtnId;
                 }
                 ImGui::Dummy(ImVec2(0.0f, 10.0f));
@@ -181,7 +181,7 @@ namespace gl3 {
                 changed |= ImGui::SliderFloat(" SFX Volume", &game.settings.sfxVolume, 0.0f, 1.0f, "%.2f");
                 const char* sfxBtnId = "settings_sfx";
                 if (ImGui::IsItemHovered() && lastHoveredButton != sfxBtnId) {
-                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
                     lastHoveredButton = sfxBtnId;
                 }
                 ImGui::Dummy(ImVec2(0.0f, 10.0f));
@@ -189,7 +189,7 @@ namespace gl3 {
                 changed |= ImGui::SliderFloat(" Music Volume", &game.settings.musicVolume, 0.0f, 1.0f, "%.2f");
                 const char* musicBtnId = "settings_music";
                 if (ImGui::IsItemHovered() && lastHoveredButton != musicBtnId) {
-                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
                     lastHoveredButton = musicBtnId;
                 }
                 ImGui::Dummy(ImVec2(0.0f, 10.0f));
@@ -197,7 +197,7 @@ namespace gl3 {
                 changed |= ImGui::SliderFloat(" Gamma", &game.settings.gamma, 1.6f, 3.0f, "%.2f");
                 const char* gammaBtnId = "settings_gamma";
                 if (ImGui::IsItemHovered() && lastHoveredButton != gammaBtnId) {
-                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
                     lastHoveredButton = gammaBtnId;
                 }
                 ImGui::Dummy(ImVec2(0.0f, 10.0f));
@@ -205,21 +205,28 @@ namespace gl3 {
                 changed |= ImGui::SliderFloat(" Brightness", &game.settings.brightness, 0.5f, 1.5f, "%.2f");
                 const char* brightnessBtnId = "settings_brightness";
                 if (ImGui::IsItemHovered() && lastHoveredButton != brightnessBtnId) {
-                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
                     lastHoveredButton = brightnessBtnId;
+                }
+                ImGui::Dummy(ImVec2(0.0f, 14.0f));
+                changed |= ImGui::SliderFloat("Field of View", &game.settings.fov, 1.0f, 2.0f, "%.2f");
+                const char* fovBtnId = "settings_fov";
+                if (ImGui::IsItemHovered() && lastHoveredButton != fovBtnId) {
+                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
+                    lastHoveredButton = fovBtnId;
                 }
                 ImGui::Dummy(ImVec2(0.0f, 14.0f));
 
                 const char *modeLabels[] = {"Fullscreen", "Windowed", "Borderless"};
                 int mode = static_cast<int>(game.settings.displayMode);
                 if (ImGui::Combo(" Display Mode", &mode, modeLabels, IM_ARRAYSIZE(modeLabels))) {
-                    g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
+                    g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f, true, true,4);
                     game.settings.displayMode = static_cast<Game::DisplayMode>(mode);
                     changed = true;
                 }
                 const char* displayModeBtnId = "settings_displayMode";
                 if (ImGui::IsItemHovered() && lastHoveredButton != displayModeBtnId) {
-                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
                     lastHoveredButton = displayModeBtnId;
                 }
 
@@ -231,12 +238,12 @@ namespace gl3 {
 
                 if (ImGui::Combo(" Resolution", &game.settings.resolutionIndex, resLabels.data(),
                                  (int) resLabels.size())) {
-                    g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
+                    g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f, true, true,4);
                     changed = true;
                 }
                 const char* pickResolutionBtnId = "settings_pickResolution";
                 if (ImGui::IsItemHovered() && lastHoveredButton != pickResolutionBtnId) {
-                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
                     lastHoveredButton = pickResolutionBtnId;
                 }
 
@@ -248,12 +255,12 @@ namespace gl3 {
                 const ImVec2 bigBtn2(419.0f, 52.0f);
 
                 if (ImGui::Button("Set Native Resolution", bigBtn1)) {
-                    g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
+                    g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f, true, true,4);
                     game.pickResolutionFromNativeMonitor(false);
                 }
                 const char* setNativeBtnId = "settings_setNative";
                 if (ImGui::IsItemHovered() && lastHoveredButton != setNativeBtnId) {
-                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
                     lastHoveredButton = setNativeBtnId;
                 }
 
@@ -265,7 +272,7 @@ namespace gl3 {
                 }
                 const char* backBtnId = "settings_back";
                 if (ImGui::IsItemHovered() && lastHoveredButton != backBtnId) {
-                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
                     lastHoveredButton = backBtnId;
                 }
 
@@ -273,17 +280,17 @@ namespace gl3 {
                 ImGui::Dummy(ImVec2(11.0f, 0.0f));
                 ImGui::SameLine();
                 if (ImGui::Button("Apply Display", bigBtn2)) {
-                    g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
+                    g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f, true, true,4);
                     game.applyDisplaySettings();
                 }
                 const char* applyBtnId = "settings_apply";
                 if (ImGui::IsItemHovered() && lastHoveredButton != applyBtnId) {
-                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                    g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
                     lastHoveredButton = applyBtnId;
                 }
                 if(changed)
                 {
-                    g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
+                    g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f, true, true,4);
                     game.applyAudioSettings();
                 }
 
@@ -442,7 +449,7 @@ namespace gl3 {
             // Check hover state for regular button
             bool hovered = ImGui::IsItemHovered();
             if (hovered && lastHoveredButton != id) {
-                g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
                 lastHoveredButton = id;
             }
             if (!hovered && lastHoveredButton == id) {
@@ -465,7 +472,7 @@ namespace gl3 {
 
         // Play hover sound if this is a new button being hovered
         if (hovered && lastHoveredButton != id) {
-            g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+            g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
             lastHoveredButton = id;
         }
         // Reset if not hovering

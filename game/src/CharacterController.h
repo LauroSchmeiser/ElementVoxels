@@ -21,7 +21,7 @@ namespace gl3 {
         glm::vec3 gravityDir = glm::vec3(0.0f, -1.0f, 0.0f);
         glm::vec3 lastGravPoint = glm::vec3(0.0f, 0.0f, 0.0f);;
         float gravity= 5.0f;
-        float gravityMaxIntensity = 25.0f;
+        float gravityMaxIntensity = 15.0f;
         float gravityMinIntensity = 2.0f;
 
         float terminalVelocity = 1000.0f;
@@ -43,11 +43,14 @@ namespace gl3 {
 
         // Surface landing / adhesion
         float landingMinApproachSpeed = 0.01f;
-        float adhesionDuration = 0.75f;
+        float adhesionDuration = 1.5f;
         float adhesionMaxDistance = 24.0f;
-        float adhesionSnapDistance = 0.5f;
-        float adhesionAcceleration = 1.0f;
+        float adhesionSnapDistance = 2.5f;
+        float adhesionAcceleration = 0.3f;
         float minGroundNormalDot = 0.05f;
+
+        float adheredMaxSpeed = 300.0f;
+        float adheredFriction = 1.0f;
 
         // Camera / orientation smoothing
         float upLerpSpeed = 1.5f;                 // Medium speed (adaptive logic handles extremes)
@@ -57,6 +60,15 @@ namespace gl3 {
         float fluidSwimSpeed = 35.0f;         // Max swim speed
         float fluidSwimAcceleration = 3.0f;   // Acceleration while swimming
         float fluidDensity = 0.2f;            // Fluid density (affects buoyancy)
+
+        float orientationSmoothTime = 0.3f;        // How long to smooth orientation changes
+        float orientationMaxAnglePerFrame = 15.0f; // Max degrees of orientation change per frame
+        float orientationBlendExponent = 2.0f;     // Controls blend curve (higher = slower near target)
+
+        float collisionSoftness = 0.3f;           // How much to soften collision response (0=full push, 1=no push)
+        float collisionMaxPush = 10.0f;           // Max push distance per frame
+        float collisionSnapThreshold = 2.0f;      // Only snap to ground if within this distance
+        float groundStickForce = 15.0f;
     };
 
     struct CharacterState {
@@ -221,5 +233,10 @@ namespace gl3 {
         glm::vec3 getFluidNormalAtWorld(FixedGridChunkManager* chunkManager, const glm::vec3& worldPos) const;
 
         glm::vec3 getMovementUpDirection() const;
+
+        void
+        checkGroundSample(const glm::vec3 &samplePos, float depth, const glm::vec3 &up, float &bestDist,
+                          glm::vec3 &bestPoint,
+                          glm::vec3 &bestNormal, bool &found) const;
     };
 }

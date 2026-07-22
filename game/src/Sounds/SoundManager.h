@@ -30,7 +30,8 @@ enum class SoundID {
     Step,
     Run,
     Jump,
-    Land
+    Land,
+    Suffocate
 };
 
 class SoundManager {
@@ -58,7 +59,7 @@ public:
     bool loadSound(SoundID id, const std::string& filepath, SoundType type = SoundType::SFX);
     bool loadMusic(SoundID id, const std::string& filepath);
 
-    SoLoud::handle playSound(SoundID id, float volume = 1.0f, float pitch = 1.0f);
+    SoLoud::handle playSound(SoundID id, float volume = 1.0f, float pitch = 1.0f, bool adaptPitch = true, bool allowStacking = false, int maxStackAmount = 0);
     SoLoud::handle playSound3D(SoundID id, const glm::vec3& position,
                                float volume = 1.0f, float pitch = 1.0f);
     SoLoud::handle playMusic(SoundID id, bool loop = true, float volume = 1.0f);

@@ -299,10 +299,6 @@ namespace gl3 {
             float t = (steps > 0) ? (float) i / (float) steps : 0.0f;
             glm::vec3 samplePos = glm::mix(p0, p1, t);
 
-            // No fluid special-casing needed here anymore: fluid lives in its
-            // own independent field (Voxel::fluidDensity) and never touches
-            // the solid density/type sampled below, so this is already
-            // fluid-agnostic by construction.
             float sdf = sampleDensityAtWorld(chunkManager, samplePos);
             float s = sdf - radius;
 
@@ -315,7 +311,8 @@ namespace gl3 {
             if (bestPen > VOXEL_SIZE * 2.0f) break;
         }
 
-        const float skinWidth = 0.02f * VOXEL_SIZE;
+        // NEW: More forgiving skin width
+        const float skinWidth = 0.01f * VOXEL_SIZE; // Reduced from 0.02f
         if (!foundValidSample || !(bestPen > skinWidth)) {
             return false;
         }
@@ -330,8 +327,8 @@ namespace gl3 {
         glm::vec3 n2 = sampleNormalAtWorld(chunkManager, bestSamplePos - normal * smoothEps);
         normal = glm::normalize(normal + 0.5f * n1 + 0.5f * n2);
 
-        const float maxPush = VOXEL_SIZE * 1.5f;
-        float penetration = glm::min(bestPen, maxPush);
+        // NEW: Max push limited by settings
+        float penetration = glm::min(bestPen, settings.collisionMaxPush);
 
         outNormal = normal;
         outPenetration = penetration;
@@ -357,28 +354,32 @@ namespace gl3 {
         float halfSegment = glm::max(0.0f, (currentHeight * 0.5f) - radius);
         glm::vec3 bottomSphereCenter = state.position - up * halfSegment;
 
-        const float groundCheckDistance = radius * 0.35f;
-        const float sideOffset = radius * 0.6f;
+        const float groundCheckDistance = radius * 1.2f;  // INCREASED from 0.35f
+        const float sideOffset = radius * 0.8f;  // INCREASED from 0.6f
 
+        // NEW: More test points for better detection
         glm::vec3 testPoints[] = {
                 bottomSphereCenter + down * groundCheckDistance,
                 bottomSphereCenter + down * groundCheckDistance + tangentA * sideOffset,
                 bottomSphereCenter + down * groundCheckDistance - tangentA * sideOffset,
                 bottomSphereCenter + down * groundCheckDistance + tangentB * sideOffset,
-                bottomSphereCenter + down * groundCheckDistance - tangentB * sideOffset
+                bottomSphereCenter + down * groundCheckDistance - tangentB * sideOffset,
+                // NEW: Diagonal points
+                bottomSphereCenter + down * groundCheckDistance + (tangentA + tangentB) * sideOffset * 0.7f,
+                bottomSphereCenter + down * groundCheckDistance + (tangentA - tangentB) * sideOffset * 0.7f,
+                bottomSphereCenter + down * groundCheckDistance + (-tangentA + tangentB) * sideOffset * 0.7f,
+                bottomSphereCenter + down * groundCheckDistance + (-tangentA - tangentB) * sideOffset * 0.7f
         };
 
         int groundHits = 0;
-        const int requiredHits = 2;
+        const int requiredHits = 3;  // INCREASED from 2
 
         for (const glm::vec3& p : testPoints) {
-            // Solid density is fluid-free by construction now, so no fluid
-            // special-casing is needed for ground detection.
             float sdf = sampleDensityAtWorld(chunkManager, p);
 
-            if (sdf > -VOXEL_SIZE * 0.1f) {
+            if (sdf > -VOXEL_SIZE * 0.2f) {  // More tolerant
                 glm::vec3 normal = sampleNormalAtWorld(chunkManager, p);
-                if (glm::dot(normal, up) > 0.25f) {
+                if (glm::dot(normal, up) > 0.15f) {  // More tolerant
                     ++groundHits;
                     if (groundHits >= requiredHits) return true;
                 }
@@ -401,7 +402,7 @@ namespace gl3 {
         state.currentContactMaterial = 0;
         state.currentContactType = 0;
 
-        const int maxIterations = 8;
+        const int maxIterations = 4;  // Reduced from 8
 
         for (int i = 0; i < maxIterations; i++) {
             glm::vec3 normal;
@@ -418,11 +419,21 @@ namespace gl3 {
                 // Measure approach speed BEFORE removing velocity into the surface.
                 float approachSpeed = glm::max(0.0f, -glm::dot(state.velocity, normal));
 
-                state.position += normal * (penetration + VOXEL_SIZE * 0.01f);
+                // NEW: Soften the push - only push enough to avoid deep penetration
+                float pushAmount = penetration * settings.collisionSoftness;
+                pushAmount = glm::min(pushAmount, settings.collisionMaxPush);
 
+                // Only push if significantly penetrating
+                if (pushAmount > VOXEL_SIZE * 0.01f) {
+                    state.position += normal * pushAmount;
+                }
+
+                // NEW: Don't fully cancel velocity - let friction handle it
                 float velDotNormal = glm::dot(state.velocity, normal);
                 if (velDotNormal < 0) {
-                    state.velocity -= normal * velDotNormal;
+                    // Only cancel a portion of the velocity into the surface
+                    float cancelAmount = glm::min(velDotNormal * 0.5f, -0.1f);
+                    state.velocity -= normal * cancelAmount;
                 }
 
                 glm::vec3 capsuleSeg = topSphereCenter - bottomSphereCenter;
@@ -456,11 +467,12 @@ namespace gl3 {
 
             VoxelPhysicsBody *collidingBody = nullptr;
             if (checkPhysicsBodyCollision(state.position, normal, penetration, &collidingBody)) {
-                state.position += normal * (penetration + 0.0001f);
+                float pushAmount = penetration * settings.collisionSoftness;
+                state.position += normal * (pushAmount + 0.0001f);
 
                 float velDotNormal = glm::dot(state.velocity, normal);
                 if (velDotNormal < 0) {
-                    state.velocity -= normal * velDotNormal;
+                    state.velocity -= normal * velDotNormal * 0.5f;
                 }
 
                 if (playerBodyCollisionCallback && collidingBody) {
@@ -513,17 +525,24 @@ namespace gl3 {
 
         float drop = 0.0f;
         if (state.isInFluid) {
-            // Fluid friction - stronger drag
             drop = speed * (settings.fluidResistance * 0.5f) * deltaTime;
-            // Additional resistance at higher speeds
             drop += speed * speed * 0.01f * deltaTime;
         } else if (state.isGrounded) {
-            drop = speed * settings.friction * deltaTime;
+            if (state.isSurfaceAdhered) {
+                drop = speed * settings.adheredFriction * deltaTime;
+            } else {
+                drop = speed * settings.friction * deltaTime;
+            }
         } else {
             drop = speed * settings.airFriction * deltaTime;
         }
 
         float newSpeed = glm::max(speed - drop, 0.0f);
+
+        if (state.isSurfaceAdhered) {
+            newSpeed = glm::min(newSpeed, settings.adheredMaxSpeed);
+        }
+
         state.velocity *= newSpeed / speed;
     }
 
@@ -646,13 +665,15 @@ namespace gl3 {
             }
         }
 
-        // Snap to ground - BUT NOT if in fluid!
-        if (!state.isInFluid && state.isGrounded && glm::length(state.velocity) > 1.0f) {
+        // NEW: Only snap to ground if close enough and moving slowly
+        if (!state.isInFluid && state.isGrounded && glm::length(state.velocity) < settings.collisionSnapThreshold) {
             glm::vec3 gp, gn;
             float gd = 0.0f;
-            if (findGroundContact(gp, gn, gd) && gd > 0.001f && gd <= settings.adhesionSnapDistance) {
-                newPosition -= getMovementUpDirection() * gd;
-            }
+           /* if (findGroundContact(gp, gn, gd) && gd > 0.001f && gd <= settings.collisionSnapThreshold * 0.5f) {
+                glm::vec3 up = getMovementUpDirection();
+                float snapAmount = gd * 0.3f;
+                newPosition -= up * snapAmount;
+            }*/
         }
 
         state.position = newPosition;
@@ -805,7 +826,7 @@ namespace gl3 {
         // Resolve collisions
         resolveCollisions();
 
-        enforceCameraClearance();
+        //enforceCameraClearance();
 
         updateOrientation(deltaTime);
 
@@ -956,38 +977,41 @@ namespace gl3 {
         float halfSegment = glm::max(0.0f, (currentHeight * 0.5f) - radius);
         glm::vec3 bottomSphereCenter = state.position - up * halfSegment;
 
-        const float maxDist = settings.adhesionSnapDistance;
-        const int steps = 16;
+        // NEW: Increased max distance and more steps
+        const float maxDist = settings.adhesionSnapDistance * VOXEL_SIZE;  // Double the range
+        const int steps = 32;  // More steps for better detection
 
         float bestDist = std::numeric_limits<float>::infinity();
         bool found = false;
         glm::vec3 bestPoint, bestNormal;
 
+        // NEW: Also check sideways for curved surfaces
+        glm::vec3 tangentA;
+        if (std::abs(up.y) < 0.99f)
+            tangentA = glm::normalize(glm::cross(up, glm::vec3(0,1,0)));
+        else
+            tangentA = glm::normalize(glm::cross(up, glm::vec3(1,0,0)));
+        glm::vec3 tangentB = glm::normalize(glm::cross(up, tangentA));
+
+        // NEW: Check multiple radial directions at each depth
+        const int radialSteps = 8;
+
         for (int i = 0; i <= steps; ++i) {
             float t = (float)i / (float)steps;
             float d = t * maxDist;
 
+            // Check center
             glm::vec3 samplePos = bottomSphereCenter + down * d;
+            checkGroundSample(samplePos, d, up, bestDist, bestPoint, bestNormal, found);
 
-            // Solid density is fluid-free by construction now, so no fluid
-            // special-casing is needed for ground contact detection.
-            float sdf = sampleDensityAtWorld(chunkManager, samplePos);
-
-            // Surface band: accept samples near zero crossing (sphere just touching surface)
-            float distToSurface = sdf - radius;
-
-            // Accept if within tight band around surface
-            if (distToSurface >= -VOXEL_SIZE * 0.15f && distToSurface <= VOXEL_SIZE * 0.25f) {
-                glm::vec3 n = sampleNormalAtWorld(chunkManager, samplePos);
-
-                if (glm::dot(n, up) >= settings.minGroundNormalDot) {
-                    float surfaceError = std::abs(distToSurface);
-                    if (surfaceError < std::abs(bestDist)) {
-                        bestDist = d;
-                        bestPoint = samplePos;
-                        bestNormal = n;
-                        found = true;
-                    }
+            // NEW: Check radial offsets for better curved surface detection
+            if (i % 4 == 0) {  // Check every 4th step to save performance
+                for (int r = 0; r < radialSteps; ++r) {
+                    float angle = (float)r / (float)radialSteps * 6.2831853f;
+                    float radiusOffset = radius * 0.5f;
+                    glm::vec3 offset = (tangentA * std::cos(angle) + tangentB * std::sin(angle)) * radiusOffset;
+                    glm::vec3 radialPos = bottomSphereCenter + down * d + offset;
+                    checkGroundSample(radialPos, d, up, bestDist, bestPoint, bestNormal, found);
                 }
             }
         }
@@ -999,6 +1023,31 @@ namespace gl3 {
         }
 
         return found;
+    }
+
+    void CharacterController::checkGroundSample(const glm::vec3& samplePos, float depth,
+                                                const glm::vec3& up, float& bestDist,
+                                                glm::vec3& bestPoint, glm::vec3& bestNormal,
+                                                bool& found) const {
+        float sdf = sampleDensityAtWorld(chunkManager, samplePos);
+
+        // Surface band: accept samples near zero crossing
+        float distToSurface = sdf - radius;
+
+        // More tolerant acceptance range
+        if (distToSurface >= -VOXEL_SIZE * 0.25f && distToSurface <= VOXEL_SIZE * 0.35f) {
+            glm::vec3 n = sampleNormalAtWorld(chunkManager, samplePos);
+
+            if (glm::dot(n, up) >= settings.minGroundNormalDot) {
+                float surfaceError = std::abs(distToSurface);
+                if (surfaceError < std::abs(bestDist)) {
+                    bestDist = depth;
+                    bestPoint = samplePos;
+                    bestNormal = n;
+                    found = true;
+                }
+            }
+        }
     }
 
     bool CharacterController::shouldLandOnContact(const glm::vec3& contactNormal, float approachSpeed) const {
@@ -1063,9 +1112,16 @@ namespace gl3 {
             state.adheredNormal = glm::normalize(gn);
             state.isGrounded = true;
 
-            // Refresh adhesion timer while we still have valid nearby support.
+            // Refresh adhesion timer while we have valid nearby support.
             state.adhesionTimer = settings.adhesionDuration;
             settings.gravityDir = -state.adheredNormal;
+
+            // NEW: Gentle ground following - don't snap aggressively
+            if (gd > 0.001f && gd <= settings.adhesionSnapDistance * 0.3f) {
+                glm::vec3 down = -state.adheredNormal;
+                float followStrength = 0.1f; // Gentle following
+                state.position += down * gd * followStrength;
+            }
         } else {
             float distFromAnchor = glm::length(state.position - state.lastGroundPoint);
             if (distFromAnchor > settings.adhesionMaxDistance || state.adhesionTimer <= 0.0f) {
@@ -1078,7 +1134,15 @@ namespace gl3 {
         glm::vec3 surfaceNormal = glm::normalize(state.adheredNormal);
         glm::vec3 down = -surfaceNormal;
 
-        state.velocity += down * settings.adhesionAcceleration * deltaTime * 0.25f;
+        // NEW: Gentle adhesion pull
+        float adhesionStrength = settings.adhesionAcceleration * 0.15f;
+        state.velocity += down * adhesionStrength * deltaTime;
+
+        // NEW: Only cancel velocity that would pull away from surface
+        float velNormal = glm::dot(state.velocity, surfaceNormal);
+        if (velNormal > 0.2f) {  // Only if significantly moving away
+            state.velocity -= surfaceNormal * velNormal * 0.7f;  // Cancel most of it
+        }
     }
 
     void CharacterController::updateOrientation(float deltaTime) {
@@ -1090,30 +1154,73 @@ namespace gl3 {
             targetUp = glm::normalize(-settings.gravityDir);
         }
 
+        // Don't let target up be zero
+        if (glm::length(targetUp) < 0.001f) {
+            targetUp = glm::vec3(0.0f, 1.0f, 0.0f);
+        }
+        targetUp = glm::normalize(targetUp);
+
         glm::vec3 curUp = glm::normalize(state.currentUp);
 
-        float dot = glm::clamp(glm::dot(curUp, targetUp), -1.0f, 1.0f);
-        float angleDiff = std::acos(dot);
-
-        if (angleDiff < glm::radians(0.2f)) {
+        // If current up is near zero, initialize it
+        if (glm::length(curUp) < 0.001f) {
             state.currentUp = targetUp;
             return;
         }
 
-        float rotationSpeed = 1.5f;
-        float t = glm::clamp(rotationSpeed * deltaTime, 0.0f, 1.0f);
+        // Calculate angle between current and target
+        float dot = glm::clamp(glm::dot(curUp, targetUp), -1.0f, 1.0f);
+        float angleDiff = std::acos(dot);
 
-        glm::vec3 blended;
-        if (angleDiff > 0.001f) {
-            float sinAngle = std::sin(angleDiff);
-            float a = std::sin((1.0f - t) * angleDiff) / sinAngle;
-            float b = std::sin(t * angleDiff) / sinAngle;
-            blended = glm::normalize(curUp * a + targetUp * b);
-        } else {
-            blended = targetUp;
+        // If angle is tiny, snap to target
+        if (angleDiff < glm::radians(0.1f)) {
+            state.currentUp = targetUp;
+            return;
         }
 
-        state.currentUp = blended;
+        // Calculate rotation direction (axis)
+        glm::vec3 rotationAxis = glm::cross(curUp, targetUp);
+        if (glm::length(rotationAxis) < 0.001f) {
+            // Vectors are opposite - use a perpendicular axis
+            glm::vec3 up = glm::abs(curUp.y) < 0.99f ? glm::vec3(0,1,0) : glm::vec3(1,0,0);
+            rotationAxis = glm::normalize(glm::cross(curUp, up));
+            angleDiff = glm::radians(180.0f);
+        } else {
+            rotationAxis = glm::normalize(rotationAxis);
+        }
+
+        // Cap the rotation per frame to prevent snapping
+        float maxAngleRad = glm::radians(settings.orientationMaxAnglePerFrame);
+        float speed = settings.upLerpSpeed;
+
+        // Adaptive speed based on distance to target
+        float speedMultiplier = 1.0f - glm::exp(-angleDiff * 1.5f);
+        float effectiveSpeed = speed * (0.3f + 0.7f * speedMultiplier);
+
+        // Calculate how much to rotate this frame
+        float targetAngle = angleDiff * effectiveSpeed * deltaTime;
+
+        // Cap the rotation
+        float rotationAngle = glm::min(targetAngle, maxAngleRad);
+
+        // If we're very close, just snap to target
+        if (rotationAngle > angleDiff * 0.95f) {
+            state.currentUp = targetUp;
+            return;
+        }
+
+        // Apply rotation
+        glm::quat rotation = glm::angleAxis(rotationAngle, rotationAxis);
+        glm::vec3 newUp = glm::normalize(rotation * curUp);
+
+        // Ensure we don't flip
+        if (glm::dot(newUp, targetUp) < 0) {
+            // If we would flip, just snap to target
+            state.currentUp = targetUp;
+            return;
+        }
+
+        state.currentUp = newUp;
     }
 
     bool CharacterController::depenetrateSphere(glm::vec3& center, float sphereRadius, int maxIterations) const {

@@ -478,9 +478,11 @@ namespace gl3 {
                                  resolveAssetPath("audio/alice_soundz-fire-sound-effects-224089.mp3").string());
         g_SoundManager.loadSound(SoundID::WaterSplash,
                                  resolveAssetPath("audio/universfield-water-splash-199583.mp3").string());
+        g_SoundManager.loadSound(SoundID::Suffocate,
+                                 resolveAssetPath("audio/kuzu420-running-out-of-oxygen-suffocation-sfx-485955.mp3").string());
 
         g_SoundManager.loadSound(SoundID::ButtonClick,
-                                 resolveAssetPath("audio/creatorshome-digital-click-357350.mp3").string());
+                                 resolveAssetPath("audio/creatorshome-digital-click-357350_2.mp3").string());
         g_SoundManager.loadSound(SoundID::ButtonHover,
                                  resolveAssetPath("audio/lesiakower-minimalist-button-hover-sound-effect-399749.mp3").string());
         g_SoundManager.loadSound(SoundID::MenuClose,
@@ -922,12 +924,12 @@ namespace gl3 {
                     ImGui::SetCursorPosX((520.0f - btnSize.x) * 0.5f);
                     if (ImGui::Button("Resume", btnSize))
                     {
-                        g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
+                        g_SoundManager.playSound(SoundID::MenuClose, 1.0f, 1.0f);
                         setPaused(false);
                     }
                     const char* resumeBtnId = "menu_resume";
                     if (ImGui::IsItemHovered() && lastHoveredButton != resumeBtnId) {
-                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
                         lastHoveredButton = resumeBtnId;
                     }
 
@@ -935,26 +937,26 @@ namespace gl3 {
                     ImGui::SetCursorPosX((520.0f - btnSize.x) * 0.5f);
                     if (ImGui::Button("Settings", btnSize))
                     {
-                        g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
+                        g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f, true, true,4);
                         pauseSubmenu = PauseSubmenu::Settings;
                     }
                     const char* settingsBtnId = "menu_settings";
                     if (ImGui::IsItemHovered() && lastHoveredButton != settingsBtnId) {
-                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
                         lastHoveredButton = settingsBtnId;
                     }
 
                     ImGui::Spacing();
                     ImGui::SetCursorPosX((520.0f - btnSize.x) * 0.5f);
                     if (ImGui::Button("Back to Main Menu", btnSize)) {
-                        g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
+                        g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f, true, true,4);
                         setPaused(false);
                         requestSceneChange(SceneId::MainMenu);
                         SoLoud::handle musicHandle = g_SoundManager.playMusic(SoundID::MainMenuTheme, true, 1.0f);
                     }
                     const char* mainMenuBtnId = "menu_mainMenu";
                     if (ImGui::IsItemHovered() && lastHoveredButton != mainMenuBtnId) {
-                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
                         lastHoveredButton = mainMenuBtnId;
                     }
 
@@ -966,7 +968,7 @@ namespace gl3 {
                     }
                     const char* escapeBtnId = "menu_escape";
                     if (ImGui::IsItemHovered() && lastHoveredButton != escapeBtnId) {
-                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
                         lastHoveredButton = escapeBtnId;
                     }
                 }
@@ -982,55 +984,62 @@ namespace gl3 {
                     changed |= ImGui::SliderFloat("Mouse Sensitivity", &settings.sensitivity, 0.01f, 1.0f, "%.3f");
                     const char* sensitivityBtnId = "settings_sensitivity";
                     if (ImGui::IsItemHovered() && lastHoveredButton != sensitivityBtnId) {
-                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
                         lastHoveredButton = sensitivityBtnId;
                     }
 
                     changed |= ImGui::SliderFloat("Master Volume", &settings.masterVolume, 0.0f, 1.0f, "%.2f");
                     const char* masterBtnId = "settings_master";
                     if (ImGui::IsItemHovered() && lastHoveredButton != masterBtnId) {
-                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
                         lastHoveredButton = masterBtnId;
                     }
 
                     changed |= ImGui::SliderFloat("SFX Volume", &settings.sfxVolume, 0.0f, 1.0f, "%.2f");
                     const char* sfxBtnId = "settings_sfx";
                     if (ImGui::IsItemHovered() && lastHoveredButton != sfxBtnId) {
-                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
                         lastHoveredButton = sfxBtnId;
                     }
 
                     changed |= ImGui::SliderFloat("Music Volume", &settings.musicVolume, 0.0f, 1.0f, "%.2f");
                     const char* musicBtnId = "settings_music";
                     if (ImGui::IsItemHovered() && lastHoveredButton != musicBtnId) {
-                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
                         lastHoveredButton = musicBtnId;
                     }
 
                     changed |= ImGui::SliderFloat("Gamma", &settings.gamma, 1.6f, 3.0f, "%.2f");
                     const char* gammaBtnId = "settings_gamma";
                     if (ImGui::IsItemHovered() && lastHoveredButton != gammaBtnId) {
-                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
                         lastHoveredButton = gammaBtnId;
                     }
 
                     changed |= ImGui::SliderFloat("Brightness", &settings.brightness, 0.5f, 1.5f, "%.2f");
                     const char* brightnessBtnId = "settings_brightness";
                     if (ImGui::IsItemHovered() && lastHoveredButton != brightnessBtnId) {
-                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
                         lastHoveredButton = brightnessBtnId;
+                    }
+
+                    changed |= ImGui::SliderFloat("Field of View", &settings.fov, 1.0f, 2.0f, "%.2f");
+                    const char* fovBtnId = "settings_fov";
+                    if (ImGui::IsItemHovered() && lastHoveredButton != fovBtnId) {
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
+                        lastHoveredButton = fovBtnId;
                     }
 
                     const char* modeLabels[] = {"Fullscreen", "Windowed", "Borderless"};
                     int mode = static_cast<int>(settings.displayMode);
                     if (ImGui::Combo("Display Mode", &mode, modeLabels, IM_ARRAYSIZE(modeLabels))) {
-                        g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
+                        g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f, true, true,4);
                         settings.displayMode = static_cast<DisplayMode>(mode);
                         changed = true;
                     }
                     const char* displayModeBtnId = "settings_displayMode";
                     if (ImGui::IsItemHovered() && lastHoveredButton != displayModeBtnId) {
-                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
                         lastHoveredButton = displayModeBtnId;
                     }
 
@@ -1039,39 +1048,39 @@ namespace gl3 {
                     for (auto& r : commonResolutions) resLabels.push_back(r.label);
 
                     if (ImGui::Combo("Resolution", &settings.resolutionIndex, resLabels.data(), (int)resLabels.size())) {
-                        g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
+                        g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f, true, true,4);
                         changed = true;
                     }
                     const char* pickResolutionBtnId = "settings_pickResolution";
                     if (ImGui::IsItemHovered() && lastHoveredButton != pickResolutionBtnId) {
-                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
                         lastHoveredButton = pickResolutionBtnId;
                     }
                     if (ImGui::Button("Set native display resolution.", ImVec2(180, 38))) {
-                        g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
+                        g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f, true, true,4);
                         pickResolutionFromNativeMonitor(false);
                     }
                     const char* setNativeBtnId = "settings_setNative";
                     if (ImGui::IsItemHovered() && lastHoveredButton != setNativeBtnId) {
-                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
                         lastHoveredButton = setNativeBtnId;
                     }
 
                     ImGui::Spacing();
                     if (changed) {
-                        g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
+                        g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f, true, true,4);
                         applyAudioSettings();
                      //   applyVisualSettings();
                     }
 
                     ImGui::Spacing();
                     if (ImGui::Button("Apply Display", ImVec2(180, 38))) {
-                        g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f);
+                        g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f, true, true,4);
                         applyDisplaySettings();
                     }
                     const char* applyBtnId = "settings_apply";
                     if (ImGui::IsItemHovered() && lastHoveredButton != applyBtnId) {
-                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
                         lastHoveredButton = applyBtnId;
                     }
                     ImGui::SameLine();
@@ -1081,7 +1090,7 @@ namespace gl3 {
                     }
                     const char* backBtnId = "settings_back";
                     if (ImGui::IsItemHovered() && lastHoveredButton != backBtnId) {
-                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f);
+                        g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
                         lastHoveredButton = backBtnId;
                     }
                 }
@@ -2620,9 +2629,28 @@ if(getPlayerHealth()<=0)
     SoLoud::handle musicHandle = g_SoundManager.playMusic(SoundID::MainMenuTheme, true, 1.0f);
 }
 {
+    glm::vec3 dir = characterController->getPosition();
+    float dist = glm::sqrt(dir.x*dir.x+dir.y*dir.y+dir.z*dir.z);
+    if(dist>1000.0f)
+    {
+        g_SoundManager.playSound(SoundID::Suffocate);
+        registerPlayerDamage(0.05f);
+    }
+
     TRACY_CPU_ZONE("SunBurns()");
     chunkManager->forEachEmissiveChunk([this](Chunk *chunk) {
-    VoxelLight best;
+        VoxelLight best{
+                glm::vec3(0, 0, 0),
+                1.0f,
+                glm::vec3(0, 0, 0),
+                0
+        };
+    for (auto &light: chunk->emissiveLights) {
+        if(light.intensity>best.intensity)
+        {
+            best=light;
+        }
+    }
     float bestGravity=0;
     for (auto &light: chunk->emissiveLights) {
         glm::vec3 dist=(cameraPos-light.pos);
@@ -2630,12 +2658,7 @@ if(getPlayerHealth()<=0)
         if(distsq<std::sqrt(light.intensity) * 0.15f)
         {
             registerPlayerDamage(0.005f*distsq*(glm::sqrt(light.intensity*0.00001f)));
-            SoLoud::handle h = g_SoundManager.playSound3D(
-                    SoundID::Fire,
-                    light.pos,
-                    1.0f,
-                    1.0f
-            );
+            g_SoundManager.playSound(SoundID::Fire);
         }
         float gravity = glm::pow(light.intensity,2.0f)/distsq;
         if(gravity>bestGravity&&!characterController->isSurfaceAdhered())
@@ -2650,10 +2673,6 @@ if(getPlayerHealth()<=0)
             characterController->settings.lastGravPoint=best.pos;
             glm::vec3 gravDir = glm::normalize(best.pos - cameraPos);
             characterController->setGravityDirection(gravDir);
-
-            //float pitch = glm::degrees(glm::asin(gravDir.y));
-            //float yaw = glm::degrees(glm::atan(gravDir.z, gravDir.x));
-            //cameraRotation = glm::vec2(pitch, yaw);
         }
 });
     for(auto &spell: spellSystem->spells())
@@ -2862,7 +2881,16 @@ skyboxRuntimeShader->use();
 skyboxRuntimeShader->setFloat("time", (float)glfwGetTime());
 
 float aspect = (float)windowWidth / (float)windowHeight;
-glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
+glm::mat4 projection;
+if(characterController)
+{
+    glm::vec3 velocity = characterController->getVelocity();
+    float speed = glm::length(velocity);
+    projection = glm::perspective(glm::radians(45.0f*(1+speed/100)*settings.fov), aspect, nearPlane, farPlane);
+} else
+{
+    projection = glm::perspective(glm::radians(45.0f*settings.fov), aspect, nearPlane, farPlane);
+}
 glm::vec3 camUp = getCameraUp();
 glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
 skyboxRuntimeShader->setMatrix("projection", projection);
@@ -2891,7 +2919,9 @@ glDepthMask(depthMask);
         glPolygonMode(GL_FRONT_AND_BACK, DebugMode2 ? GL_LINE : GL_FILL);
 
         float aspect = (windowHeight == 0) ? (float)windowWidth : (float)windowWidth / (float)windowHeight;
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
+        glm::vec3 velocity = characterController->getVelocity();
+        float speed = glm::length(velocity);
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f*(1+speed/100)*settings.fov), aspect, nearPlane, farPlane);
         glm::vec3 camUp = getCameraUp();
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
         glm::mat4 pv = projection * view;
@@ -3078,7 +3108,9 @@ glDepthMask(depthMask);
         instancedShader.use();
 
         float aspect = (windowHeight == 0) ? (float) windowWidth / 1.0f : (float) windowWidth / (float) windowHeight;
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
+        glm::vec3 velocity = characterController->getVelocity();
+        float speed = glm::length(velocity);
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f*(1+speed/100)*settings.fov), aspect, nearPlane, farPlane);
         glm::vec3 camUp = getCameraUp();
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
         glm::mat4 pv = projection * view;
@@ -3216,7 +3248,9 @@ glDepthMask(depthMask);
 
         voxelShader->use();
         float aspect = (windowHeight == 0) ? (float) windowWidth / 1.0f : (float) windowWidth / (float) windowHeight;
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
+        glm::vec3 velocity = characterController->getVelocity();
+        float speed = glm::length(velocity);
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f*(1+speed/100)*settings.fov), aspect, nearPlane, farPlane);
         glm::vec3 camUp = getCameraUp();
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
         glm::mat4 pv = projection * view;
@@ -3325,7 +3359,9 @@ glDepthMask(depthMask);
         voxelShader->use();
 
         float aspect = (windowHeight == 0) ? (float)windowWidth : (float)windowWidth / (float)windowHeight;
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
+        glm::vec3 velocity = characterController->getVelocity();
+        float speed = glm::length(velocity);
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f*(1+speed/100)*settings.fov), aspect, nearPlane, farPlane);
         glm::vec3 camUp = getCameraUp();
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
         glm::mat4 pv = projection * view;
@@ -3436,7 +3472,9 @@ glDepthMask(depthMask);
                        ? (float)windowWidth
                        : (float)windowWidth / (float)windowHeight;
 
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
+        glm::vec3 velocity = characterController->getVelocity();
+        float speed = glm::length(velocity);
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f*(1+speed/100)*settings.fov), aspect, nearPlane, farPlane);
         glm::vec3 camUp = getCameraUp();
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
         glm::mat4 pv = projection * view;
@@ -3548,7 +3586,9 @@ glDepthMask(depthMask);
         glm::vec3 cameraUp = glm::normalize(glm::cross(cameraRight, cameraFront));
 
         float aspect = (windowHeight == 0) ? (float)windowWidth : (float)windowWidth / (float)windowHeight;
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
+        glm::vec3 velocity = characterController->getVelocity();
+        float speed = glm::length(velocity);
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f*(1+speed/100)*settings.fov), aspect, nearPlane, farPlane);
         glm::vec3 camUp = getCameraUp();
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
 
@@ -3612,7 +3652,9 @@ glDepthMask(depthMask);
         fluidShader->use();
 
         float aspect = (windowHeight == 0) ? (float)windowWidth : (float)windowWidth / (float)windowHeight;
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
+        glm::vec3 velocity = characterController->getVelocity();
+        float speed = glm::length(velocity);
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f*(1+speed/100)*settings.fov), aspect, nearPlane, farPlane);
         glm::vec3 camUp = getCameraUp();
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
         glm::mat4 pv = projection * view;
@@ -3695,7 +3737,9 @@ glDepthMask(depthMask);
 
         // Calculate matrices
         float aspect = (windowHeight == 0) ? (float)windowWidth : (float)windowWidth / (float)windowHeight;
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
+        glm::vec3 velocity = characterController->getVelocity();
+        float speed = glm::length(velocity);
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f*(1+speed/100)*settings.fov), aspect, nearPlane, farPlane);
         glm::vec3 camUp = getCameraUp();
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
         glm::mat4 pv = projection * view;
@@ -4664,7 +4708,7 @@ glDepthMask(depthMask);
 
         // Camera matrices
         float aspect = (float)windowWidth / (float)windowHeight;
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f*(1+speed/100)*settings.fov), aspect, nearPlane, farPlane);
         glm::vec3 camUp = getCameraUp();
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
 

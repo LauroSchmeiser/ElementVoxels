@@ -729,6 +729,9 @@ namespace gl3 {
         void renderGas();
         const char* lastHoveredButton = nullptr;
 
+        const float nearPlane = 0.1f;
+        const float farPlane = 1000.0f;
+
     public:
         void convertWorldToMaterial(const glm::vec3& center, float radius, uint32_t material);
         int Game::consumeWorldOfMaterial(const glm::vec3& center, float radius, uint32_t material);
@@ -756,6 +759,7 @@ namespace gl3 {
             float musicVolume = 0.8f;
             float gamma = 2.2f;       // typical gamma baseline
             float brightness = 1.0f;  // 1.0 neutral
+            float fov = 1.0f;
             DisplayMode displayMode = DisplayMode::Borderless;
             int resolutionIndex = 3;
         };

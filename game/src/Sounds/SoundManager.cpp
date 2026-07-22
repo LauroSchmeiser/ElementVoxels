@@ -1,6 +1,7 @@
 #include "SoundManager.h"
 #include <iostream>
 #include <algorithm>
+#include <random>
 
 SoundManager::SoundManager() {
 }
@@ -119,17 +120,52 @@ bool SoundManager::loadMusic(SoundID id, const std::string& filepath) {
     return loadSound(id, filepath, SoundType::Music);
 }
 
-SoLoud::handle SoundManager::playSound(SoundID id, float volume, float pitch) {
+SoLoud::handle SoundManager::playSound(SoundID id, float volume, float pitch, bool adaptPitch, bool allowStacking, int maxStackAmount) {
     auto it = sounds.find(id);
     if (it == sounds.end() || !it->second.isLoaded) {
         std::cerr << "Sound not loaded: " << static_cast<int>(id) << std::endl;
         return 0;
     }
 
-    return playSoundInternal(id, it->second.source.get(), it->second.type, volume, pitch, nullptr);
+    if (!allowStacking)
+    {
+        for (const auto& [handle, soundID] : activeHandles)
+        {
+            if (soundID == id && soloud.isValidVoiceHandle(handle))
+                return handle;
+        }
+    }
+    else if (maxStackAmount > 0)
+    {
+        int currentStacks = 0;
+
+        for (const auto& [handle, soundID] : activeHandles)
+        {
+            if (soundID == id && soloud.isValidVoiceHandle(handle))
+                ++currentStacks;
+        }
+
+        if (currentStacks >= maxStackAmount)
+            return 0;
+    }
+
+    static std::mt19937 rng(std::random_device{}());
+    static std::uniform_real_distribution<float> dist(0.95f, 1.05f);
+
+    if (adaptPitch)
+        pitch *= dist(rng);
+
+    return playSoundInternal(
+            id,
+            it->second.source.get(),
+            it->second.type,
+            volume,
+            pitch,
+            nullptr
+    );
 }
 
-SoLoud::handle SoundManager::playSound3D(SoundID id, const glm::vec3& position,
+SoLoud::handle SoundManager::   playSound3D(SoundID id, const glm::vec3& position,
                                          float volume, float pitch) {
     auto it = sounds.find(id);
     if (it == sounds.end() || !it->second.isLoaded) {
