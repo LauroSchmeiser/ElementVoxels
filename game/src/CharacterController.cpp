@@ -508,6 +508,10 @@ namespace gl3 {
         }
 
         glm::vec3 wishDir = forward * moveInput.z + right * moveInput.x;
+        if(!state.isSprinting&&state.isGrounded&&moveInput.x!=0)
+        {
+            g_SoundManager.playSound(SoundID::Step, 1.0f, 1.0f);
+        }
 
         if (moveInput.y != 0.0f) {
             wishDir += moveUp * moveInput.y;
@@ -681,6 +685,7 @@ namespace gl3 {
 
     void CharacterController::performAirSlam() {
         if (!state.isGrounded && state.airSlamAvailable && !state.isAirSlamming) {
+            g_SoundManager.playSound(SoundID::Jump, 1.0f, 1.0f);
             state.isAirSlamming = true;
             state.airSlamAvailable = false;
 
@@ -750,6 +755,10 @@ namespace gl3 {
 
         // Handle sprinting - can't sprint in fluid
         state.isSprinting = sprintInput && !state.isCrouching && state.isGrounded && !state.isInFluid;
+        if(state.isSprinting)
+        {
+            g_SoundManager.playSound(SoundID::Run);
+        }
 
         // Calculate movement speed
         float targetSpeed;
@@ -812,6 +821,7 @@ namespace gl3 {
             if (velUp < settings.jumpForce) {
                 state.velocity += up * (settings.jumpForce - velUp);
             }
+            g_SoundManager.playSound(SoundID::Jump, 1.0f, 1.0f);
 
             state.isGrounded = false;
             state.isSurfaceAdhered = false;
@@ -1066,6 +1076,7 @@ namespace gl3 {
                 return false;
             }
         }
+        g_SoundManager.playSound(SoundID::Land, 1.0f, 1.0f);
 
         return true;
     }

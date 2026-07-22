@@ -481,6 +481,15 @@ namespace gl3 {
         g_SoundManager.loadSound(SoundID::Suffocate,
                                  resolveAssetPath("audio/kuzu420-running-out-of-oxygen-suffocation-sfx-485955.mp3").string());
 
+        g_SoundManager.loadSound(SoundID::Jump,
+                                 resolveAssetPath("audio/dragon-studio-whoosh-cinematic-376875.mp3").string());
+        g_SoundManager.loadSound(SoundID::Run,
+                                 resolveAssetPath("audio/blendertimer-person-running-loop-245173_2.mp3").string());
+        g_SoundManager.loadSound(SoundID::Step,
+                                 resolveAssetPath("audio/blendertimer-person-walking-on-gravel-loop-528372_2.mp3").string());
+        g_SoundManager.loadSound(SoundID::Land,
+                                 resolveAssetPath("audio/universfield-character-fall-impact-352287.mp3").string());
+
         g_SoundManager.loadSound(SoundID::ButtonClick,
                                  resolveAssetPath("audio/creatorshome-digital-click-357350_2.mp3").string());
         g_SoundManager.loadSound(SoundID::ButtonHover,
