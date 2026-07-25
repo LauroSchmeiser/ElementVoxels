@@ -43,7 +43,6 @@ uniform vec3 uEyeForwardLocal;
 uniform int  uOverlayEnabled;
 uniform vec3 uOverlayCenter;
 uniform float uOverlayRadius;
-uniform uint uOverlayMaterial;
 uniform vec3 uOverlayColor;
 uniform float uOverlayAlpha;
 
@@ -75,6 +74,10 @@ uniform float uNormalStrength;
 uniform float uHeightScale;
 uniform float uAOStrength;
 uniform int   uNormalYFlip;
+
+uniform uint uExcludedMaterialCount;
+uniform uint uExcludedMaterials[8];
+//uniform uint uTargetType;
 
 const float uBaseHeight= 0.5;
 const float uBaseRoughness= 1.0;
@@ -427,12 +430,24 @@ void main() {
     hdr= pow(hdr, vec3(1.0/0.5));
     vec3 color = hdr / (hdr + vec3(1.0));
     //vec3 color=hdr;
-    // Overlay
+
     if (uOverlayEnabled != 0) {
         float d = length(fragPos - uOverlayCenter);
         float fade = 2.0;
         float mask = 1.0 - smoothstep(uOverlayRadius - fade, uOverlayRadius, d);
-        float m = (mat == (uOverlayMaterial & 63u)) ? 1.0 : 0.0;
+
+        bool isExcluded = false;
+        for (uint i = 0u; i < uExcludedMaterialCount && i < 8u; i++) {
+            if (mat == uExcludedMaterials[i]) {
+                isExcluded = true;
+                break;
+            }
+        }
+
+        float m = isExcluded ? 0.0 : 1.0;
+       /* uint type = (vFlags >> 7u) & 7u;
+        float typeMatch = (type == uTargetType) ? 1.0 : 0.0;
+        m *= typeMatch;*/
         float a = clamp(uOverlayAlpha * mask * m, 0.0, 1.0);
         color = mix(color, uOverlayColor, a);
     }

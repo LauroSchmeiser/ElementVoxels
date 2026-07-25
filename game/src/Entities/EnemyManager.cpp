@@ -160,6 +160,7 @@ namespace gl3 {
 
                 if (strcmp(e.inst.type.name, "Boss1") == 0) {
                     radius = 10.0f * VOXEL_SIZE;
+                    material = 7.0f;
                 } else if(strcmp(e.inst.type.name, "Boss2") == 0)
                 {
                     radius = 10.0f * VOXEL_SIZE;
@@ -210,6 +211,7 @@ namespace gl3 {
             }
 
             if (e.inst.hp <= 0.0f || totalVerts < kTooSmallVtx) {
+                g_SoundManager.playSound(SoundID::Crunch);
                 game->convertWorldToMaterial(e.inst.position,e.inst.baseRadius*1.5f,7);
                 destroyEnemy(i);
                 continue;
@@ -258,6 +260,7 @@ namespace gl3 {
         e->volume.carveSphere(carveCenter, radiusWorld, strength);
 
         e->inst.hp -= strength * 1.0f;
+        g_SoundManager.playSound(SoundID::MeatStick);
         std::cout<<"Enemy Damage taken\n";
 
 

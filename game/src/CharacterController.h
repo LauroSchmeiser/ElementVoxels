@@ -11,7 +11,7 @@ namespace gl3 {
         float walkSpeed = 75.0f;
         float sprintSpeed = 200.0f;
         float crouchSpeed = 20.5f;
-        float acceleration = 3.0f;
+        float acceleration = 4.5f;
         float friction = 6.0f;
         float airFriction = 0.2f;
         float airControl = 0.3f;
@@ -20,9 +20,9 @@ namespace gl3 {
         float jumpForce = 75.0f;
         glm::vec3 gravityDir = glm::vec3(0.0f, -1.0f, 0.0f);
         glm::vec3 lastGravPoint = glm::vec3(0.0f, 0.0f, 0.0f);;
-        float gravity= 5.0f;
+        float gravity= 2.0f;
         float gravityMaxIntensity = 15.0f;
-        float gravityMinIntensity = 2.0f;
+        float gravityMinIntensity = 1.0f;
 
         float terminalVelocity = 1000.0f;
         float coyoteTimeDuration = 3.5f;
@@ -175,16 +175,16 @@ namespace gl3 {
             playerBodyCollisionCallback = cb;
         }
 
-        // Update with all inputs including air reset
         void update(float deltaTime,
                     const glm::vec3& moveInput,
+                    float swimVertical,
                     bool jumpInput,
                     bool sprintInput,
                     bool crouchInput,
                     const glm::vec2& mouseDelta,
                     const glm::vec3& cameraForward,
                     const glm::vec3& cameraRight,
-                    bool airResetInput);  // ADDED: air reset input
+                    bool airResetInput);
 
         // Getters
         glm::vec3 getPosition() const { return state.position; }

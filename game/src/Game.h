@@ -270,7 +270,7 @@ namespace gl3 {
                                    const glm::vec3& hitNormal,
                                    float playerSpeed);
 
-        int estimateAvailableVoxels(const glm::vec3& center, float radius, uint64_t targetMaterial, int maxNeeded);
+        int estimateAvailableVoxels(const glm::vec3& center, float radius, std::vector<uint32_t> excludedMaterials ,uint32_t targetType, int maxNeeded);
 
         static float burn01(float t, float duration);
         void startSpellBurn(gl3::SpellEffect& spell, float radiusWorld, float durationSec);

@@ -470,7 +470,7 @@ namespace gl3 {
         g_SoundManager.loadMusic(SoundID::BackgroundMusic,
                                  resolveAssetPath("audio/charlvera-dancing-among-comets-241708.mp3").string());
         g_SoundManager.loadMusic(SoundID::BossTheme,
-                                 resolveAssetPath("audio/charlvera-dancing-among-comets-241708.mp3").string());
+                                 resolveAssetPath("audio/charlvera-galactic-sonata-241706.mp3").string());
 
         g_SoundManager.loadSound(SoundID::Collision,
                                  resolveAssetPath("audio/lordsonny-small-rock-break-194553.mp3").string());
@@ -487,8 +487,16 @@ namespace gl3 {
                                  resolveAssetPath("audio/blendertimer-person-running-loop-245173_2.mp3").string());
         g_SoundManager.loadSound(SoundID::Step,
                                  resolveAssetPath("audio/blendertimer-person-walking-on-gravel-loop-528372_2.mp3").string());
+        g_SoundManager.loadSound(SoundID::Velocity,
+                                 resolveAssetPath("audio/dragon-studio-whoosh-cinematic-376875_VelocityVersion.mp3").string());
         g_SoundManager.loadSound(SoundID::Land,
                                  resolveAssetPath("audio/universfield-character-fall-impact-352287.mp3").string());
+        g_SoundManager.loadSound(SoundID::MeatStick,
+                                 resolveAssetPath("audio/universfield-slime-impact-352473.mp3").string());
+        g_SoundManager.loadSound(SoundID::Crunch,
+                                 resolveAssetPath("audio/saboteurcomics-superfast-crunch-405118.mp3").string());
+        g_SoundManager.loadSound(SoundID::PlayerDamage,
+                                 resolveAssetPath("audio/dragon-studio-punch-431475.mp3").string());
 
         g_SoundManager.loadSound(SoundID::ButtonClick,
                                  resolveAssetPath("audio/creatorshome-digital-click-357350_2.mp3").string());
@@ -1272,7 +1280,7 @@ namespace gl3 {
 
 ////----Spell-System-Code-----------------------------------------------------------------------------------------------------------------------
 
-    int Game::estimateAvailableVoxels(const glm::vec3& center, float radius, uint64_t targetMaterial, int maxNeeded)
+    int Game::estimateAvailableVoxels(const glm::vec3& center, float radius,std::vector<uint32_t> excludedMaterials, uint32_t targetType, int maxNeeded)
     {
         const float radiusSq = radius * radius;
 
@@ -1299,8 +1307,16 @@ namespace gl3 {
                     for (int z = startZ; z <= endZ; z += step)
                     {
                         const Voxel& v = chunk->voxels[x][y][z];
-                        if (!v.isSolid()) continue;
-                        if (v.material != targetMaterial) continue;
+                        if (v.type != targetType) continue;
+                        bool excluded = false;
+                        for(auto& material : excludedMaterials)
+                        {
+                            if(v.material==material) {
+                                excluded = true;
+                                break;
+                            }
+                        }
+                        if (excluded) continue;
 
                         glm::vec3 worldPos = chunkMin + glm::vec3((float)x, (float)y, (float)z) * VOXEL_SIZE;
                         glm::vec3 diff = worldPos - center;
@@ -1544,16 +1560,21 @@ namespace gl3 {
             std::cout << "amount is: " << amount << "\n";
         }
 
-        if (decision.stick&&body!=enemy->inst.body) {
+        if (decision.stick&&((body&&enemy&&body!=enemy->inst.body)||!enemy)) {
             body->stuck = true;
             body->angularVelocity = glm::vec3(0.0f);
             body->position = hitPos + hitNormal * body->radius;
+            g_SoundManager.playSound(SoundID::MeatStick);
             //body->stuckOffset=glm::normalize(hitPos);
-
+            if (decision.convertWorld) {
+                float r = (rule.convertRadius > 0.0f) ? rule.convertRadius*glm::sqrt(body->radius) : (body->radius * 2.5f);
+               convertSolidWorldToMaterial(hitPos, r, body->material);
+            }
             return;
         }
         if (decision.convertWorld) {
-            float r = (rule.convertRadius > 0.0f) ? rule.convertRadius*glm::sqrt(body->radius) : (body->radius * 1.5f);
+            float r = (rule.convertRadius > 0.0f) ? rule.convertRadius*glm::sqrt(body->radius) : (body->radius * 2.0f);
+            std::cout<<"radius? "<<r<<"\n";
             convertSolidWorldToMaterial(hitPos, r, body->material);
         }
 
@@ -2248,8 +2269,9 @@ namespace gl3 {
             if (actions["MoveLeft"].isPressed) moveInput.x -= 1.0f;
             if (actions["MoveRight"].isPressed) moveInput.x += 1.0f;
 
-            if (actions["Jump"].isPressed) moveInput.y += 1.0f;      // Swim up
-            if (actions["Crouch"].isPressed) moveInput.y -= 1.0f;    // Swim down
+            float swimVertical = 0.0f;
+            if (actions["Jump"].isPressed) swimVertical += 1.0f;      // Swim up (Space)
+            if (actions["Crouch"].isPressed) swimVertical -= 1.0f;    // Swim down (Ctrl)
 
             float len = glm::length(moveInput);
             if (len > 1.0f) moveInput /= len;
@@ -2265,27 +2287,54 @@ namespace gl3 {
                 cameraRight = glm::vec3(1, 0, 0);
             }
 
-            glm::vec2 mouseDelta = getMouseDelta();
+            if (characterController->hasWorldContact()) {
+                uint32_t mat = characterController->getCurrentContactMaterial();
 
+                glm::vec3 velocity = characterController->getVelocity();
+                float speed = glm::sqrt(velocity.x*velocity.x+velocity.y*velocity.y+velocity.z*velocity.z);
+
+                switch (mat) {
+                    case 9: // lava
+                        break;
+                    case 7: // flesh
+                        if(speed>3.0f&&!characterController->getState().isSprinting)
+                        {
+                            g_SoundManager.playSound(SoundID::MeatStick,0.75f,1.0f,true,true,2);
+                        }
+
+                        break;
+                    default:
+                        if(!characterController->getState().isSprinting&&speed>3.0f)
+                        {
+                            g_SoundManager.playSound(SoundID::Step,1.0f,1.0f,true,true,2);
+                        }
+                        break;
+                }
+            }
+
+            glm::vec2 mouseDelta = getMouseDelta();
             for (int i = 0; i < subStepCount; ++i) {
                 {
                     TRACY_CPU_ZONE("Game::updatePlayer()");
                     if (characterController->hasWorldContact()) {
                         uint32_t mat = characterController->getCurrentContactMaterial();
 
+                        glm::vec3 velocity = characterController->getVelocity();
+                        float speed = glm::sqrt(velocity.x*velocity.x+velocity.y*velocity.y+velocity.z*velocity.z);
+
                         switch (mat) {
                             case 9: // lava
-                                registerPlayerDamage(0.0125f);
+                                registerPlayerDamage(0.75f*deltaTime);
                                 break;
                             case 7: // flesh
-                                registerPlayerDamage(0.00625f);
+                                registerPlayerDamage(0.375f*deltaTime);
                                 moveInput *= 0.5f;
                                 break;
                             default:
                                 break;
                         }
                     }
-                    characterController->update(subDt, moveInput, jump, sprint, crouch, mouseDelta, cameraForward,
+                    characterController->update(subDt, moveInput, swimVertical, jump, sprint, crouch, mouseDelta, cameraForward,
                                                 cameraRight, airSlam);
                 }
                 jump = false;
@@ -2640,10 +2689,10 @@ if(getPlayerHealth()<=0)
 {
     glm::vec3 dir = characterController->getPosition();
     float dist = glm::sqrt(dir.x*dir.x+dir.y*dir.y+dir.z*dir.z);
-    if(dist>1000.0f)
+    if(dist>550.0f)
     {
         g_SoundManager.playSound(SoundID::Suffocate);
-        registerPlayerDamage(0.075f);
+        registerPlayerDamage(2.25f*deltaTime);
     }
 
     TRACY_CPU_ZONE("SunBurns()");
@@ -2666,7 +2715,7 @@ if(getPlayerHealth()<=0)
         float distsq = glm::sqrt(dist.x*dist.x+ dist.y*dist.y+ dist.z*dist.z);
         if(distsq<std::sqrt(light.intensity) * 0.15f)
         {
-            registerPlayerDamage(0.005f*distsq*(glm::sqrt(light.intensity*0.00001f)));
+            registerPlayerDamage(deltaTime*0.25f*distsq*(glm::sqrt(light.intensity*0.00001f)));
             g_SoundManager.playSound(SoundID::Fire);
         }
         float gravity = glm::pow(light.intensity,2.0f)/distsq;
@@ -2690,7 +2739,7 @@ if(getPlayerHealth()<=0)
             glm::vec3 dist = (cameraPos - spell.physicsBody->position);
             float distsq = glm::sqrt(dist.x * dist.x + dist.y * dist.y + dist.z * dist.z);
             if (distsq < (spell.radius*1.5f)) {
-                registerPlayerDamage( 0.0025f * distsq*(glm::sqrt(spell.physicsBody->radius*0.01f)));
+                registerPlayerDamage( deltaTime*0.25f * distsq*(glm::sqrt(spell.physicsBody->radius*0.01f)));
             }
         }
     }
@@ -2894,8 +2943,8 @@ glm::mat4 projection;
 if(characterController)
 {
     glm::vec3 velocity = characterController->getVelocity();
-    float speed = glm::length(velocity);
-    projection = glm::perspective(glm::radians(45.0f*(1+speed/100)*settings.fov), aspect, nearPlane, farPlane);
+    float speed = glm::sqrt(velocity.x*velocity.x+velocity.y*velocity.y+velocity.z*velocity.z);
+    projection = glm::perspective(glm::radians((45.0f*(1+(speed/(characterController->settings.terminalVelocity/4))))*settings.fov), aspect, nearPlane, farPlane);
 } else
 {
     projection = glm::perspective(glm::radians(45.0f*settings.fov), aspect, nearPlane, farPlane);
@@ -2929,8 +2978,8 @@ glDepthMask(depthMask);
 
         float aspect = (windowHeight == 0) ? (float)windowWidth : (float)windowWidth / (float)windowHeight;
         glm::vec3 velocity = characterController->getVelocity();
-        float speed = glm::length(velocity);
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f*(1+speed/100)*settings.fov), aspect, nearPlane, farPlane);
+        float speed = glm::sqrt(velocity.x*velocity.x+velocity.y*velocity.y+velocity.z*velocity.z);
+        glm::mat4 projection = glm::perspective(glm::radians((45.0f*(1+(speed/(characterController->settings.terminalVelocity/4))))*settings.fov), aspect, nearPlane, farPlane);
         glm::vec3 camUp = getCameraUp();
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
         glm::mat4 pv = projection * view;
@@ -3024,7 +3073,6 @@ glDepthMask(depthMask);
                 voxelShader->setInt("uOverlayEnabled", 1);
                 voxelShader->setVec3("uOverlayCenter", center);
                 voxelShader->setFloat("uOverlayRadius", pullRadius);
-                voxelShader->setUInt("uOverlayMaterial", (uint32_t)0);
                 voxelShader->setVec3("uOverlayColor", glm::vec3(0.25f, 1.0f, 0.35f));
                 voxelShader->setFloat("uOverlayAlpha", 0.25f);
             } else {
@@ -3046,6 +3094,24 @@ glDepthMask(depthMask);
 
             voxelShader->setBool("uHasPlayerContact", characterController->hasWorldContact());
             voxelShader->setVec3("uPlayerContactPoint", characterController->getCurrentContactPoint());
+
+            uint32_t excludedArray[8] = {};
+
+            if (actions["CastSphere"].isHeld) {
+                excludedArray[0] = 7;
+                excludedArray[1] = 9;
+            }
+            else if (actions["CastWall"].isHeld) {
+                excludedArray[0] = 7;
+                excludedArray[1] = 9;
+            }
+            else if (actions["AirReset"].isHeld) {
+                excludedArray[0] = 7;
+                excludedArray[1] = 9;
+            }
+            voxelShader->setUInt("uExcludedMaterialCount", 2u);
+            voxelShader->setUIntArray("uExcludedMaterials", excludedArray, 2);
+            //voxelShader->setUInt("uTargetType", 1u);
 
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D_ARRAY, materialAlbedoArrayTexId);
@@ -3118,8 +3184,8 @@ glDepthMask(depthMask);
 
         float aspect = (windowHeight == 0) ? (float) windowWidth / 1.0f : (float) windowWidth / (float) windowHeight;
         glm::vec3 velocity = characterController->getVelocity();
-        float speed = glm::length(velocity);
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f*(1+speed/100)*settings.fov), aspect, nearPlane, farPlane);
+        float speed = glm::sqrt(velocity.x*velocity.x+velocity.y*velocity.y+velocity.z*velocity.z);
+        glm::mat4 projection = glm::perspective(glm::radians((45.0f*(1+(speed/(characterController->settings.terminalVelocity/4))))*settings.fov), aspect, nearPlane, farPlane);
         glm::vec3 camUp = getCameraUp();
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
         glm::mat4 pv = projection * view;
@@ -3258,8 +3324,8 @@ glDepthMask(depthMask);
         voxelShader->use();
         float aspect = (windowHeight == 0) ? (float) windowWidth / 1.0f : (float) windowWidth / (float) windowHeight;
         glm::vec3 velocity = characterController->getVelocity();
-        float speed = glm::length(velocity);
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f*(1+speed/100)*settings.fov), aspect, nearPlane, farPlane);
+        float speed = glm::sqrt(velocity.x*velocity.x+velocity.y*velocity.y+velocity.z*velocity.z);
+        glm::mat4 projection = glm::perspective(glm::radians((45.0f*(1+(speed/(characterController->settings.terminalVelocity/4))))*settings.fov), aspect, nearPlane, farPlane);
         glm::vec3 camUp = getCameraUp();
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
         glm::mat4 pv = projection * view;
@@ -3369,8 +3435,8 @@ glDepthMask(depthMask);
 
         float aspect = (windowHeight == 0) ? (float)windowWidth : (float)windowWidth / (float)windowHeight;
         glm::vec3 velocity = characterController->getVelocity();
-        float speed = glm::length(velocity);
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f*(1+speed/100)*settings.fov), aspect, nearPlane, farPlane);
+        float speed = glm::sqrt(velocity.x*velocity.x+velocity.y*velocity.y+velocity.z*velocity.z);
+        glm::mat4 projection = glm::perspective(glm::radians((45.0f*(1+(speed/(characterController->settings.terminalVelocity/4))))*settings.fov), aspect, nearPlane, farPlane);
         glm::vec3 camUp = getCameraUp();
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
         glm::mat4 pv = projection * view;
@@ -3482,9 +3548,9 @@ glDepthMask(depthMask);
                        : (float)windowWidth / (float)windowHeight;
 
         glm::vec3 velocity = characterController->getVelocity();
-        float speed = glm::length(velocity);
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f*(1+speed/100)*settings.fov), aspect, nearPlane, farPlane);
-        glm::vec3 camUp = getCameraUp();
+        float speed = glm::sqrt(velocity.x*velocity.x+velocity.y*velocity.y+velocity.z*velocity.z);
+        glm::mat4 projection = glm::perspective(glm::radians((45.0f*(1+(speed/(characterController->settings.terminalVelocity/4))))*settings.fov), aspect, nearPlane, farPlane);
+        glm::vec3 camUp = characterController->getUpDirection();
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
         glm::mat4 pv = projection * view;
 
@@ -3530,7 +3596,8 @@ glDepthMask(depthMask);
         int maxVoxels = (int)((4.0f * 70.0f) / voxelVolume);
         maxVoxels = glm::clamp(maxVoxels, 5, 200);
 
-        int available = estimateAvailableVoxels(center, pullRadius, 0, maxVoxels);
+        std::vector<uint32_t> excludedSpellMats{7, 9};
+        int available = estimateAvailableVoxels(center, pullRadius, excludedSpellMats, 1, maxVoxels);
         float fillRatio = maxVoxels > 0 ? (float)available / (float)maxVoxels : 1.0f;
 
         spellPreviewShader->setFloat("uFillRatio", fillRatio);
@@ -3538,7 +3605,7 @@ glDepthMask(depthMask);
         spellPreviewShader->setVec3("uHighColor", glm::vec3(0.2f, 1.0f, 0.2f));
 
         spellPreviewShader->setMatrix("pv", pv);
-       spellPreviewShader->setFloat("uFormationAlpha", 0.35f);
+        spellPreviewShader->setFloat("uFormationAlpha", 0.35f);
 
         if (previewMode == 0) {
             spellPreviewShader->setInt("uPreviewMode", 0);
@@ -3596,8 +3663,8 @@ glDepthMask(depthMask);
 
         float aspect = (windowHeight == 0) ? (float)windowWidth : (float)windowWidth / (float)windowHeight;
         glm::vec3 velocity = characterController->getVelocity();
-        float speed = glm::length(velocity);
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f*(1+speed/100)*settings.fov), aspect, nearPlane, farPlane);
+        float speed = glm::sqrt(velocity.x*velocity.x+velocity.y*velocity.y+velocity.z*velocity.z);
+        glm::mat4 projection = glm::perspective(glm::radians((45.0f*(1+(speed/(characterController->settings.terminalVelocity/4))))*settings.fov), aspect, nearPlane, farPlane);
         glm::vec3 camUp = getCameraUp();
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
 
@@ -3662,8 +3729,8 @@ glDepthMask(depthMask);
 
         float aspect = (windowHeight == 0) ? (float)windowWidth : (float)windowWidth / (float)windowHeight;
         glm::vec3 velocity = characterController->getVelocity();
-        float speed = glm::length(velocity);
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f*(1+speed/100)*settings.fov), aspect, nearPlane, farPlane);
+        float speed = glm::sqrt(velocity.x*velocity.x+velocity.y*velocity.y+velocity.z*velocity.z);
+        glm::mat4 projection = glm::perspective(glm::radians((45.0f*(1+(speed/(characterController->settings.terminalVelocity/4))))*settings.fov), aspect, nearPlane, farPlane);
         glm::vec3 camUp = getCameraUp();
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
         glm::mat4 pv = projection * view;
@@ -3747,8 +3814,8 @@ glDepthMask(depthMask);
         // Calculate matrices
         float aspect = (windowHeight == 0) ? (float)windowWidth : (float)windowWidth / (float)windowHeight;
         glm::vec3 velocity = characterController->getVelocity();
-        float speed = glm::length(velocity);
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f*(1+speed/100)*settings.fov), aspect, nearPlane, farPlane);
+        float speed = glm::sqrt(velocity.x*velocity.x+velocity.y*velocity.y+velocity.z*velocity.z);
+        glm::mat4 projection = glm::perspective(glm::radians((45.0f*(1+(speed/(characterController->settings.terminalVelocity/4))))*settings.fov), aspect, nearPlane, farPlane);
         glm::vec3 camUp = getCameraUp();
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
         glm::mat4 pv = projection * view;
@@ -4116,6 +4183,7 @@ glDepthMask(depthMask);
 
     void Game::updateCamera() {
         glm::vec3 targetPos = characterController->getCameraPosition();
+        const auto& ccState = characterController->getState();
 
         glm::vec2 mouseDelta = getMouseDelta();
         if (!paused) {
@@ -4129,6 +4197,7 @@ glDepthMask(depthMask);
                 cameraUp = glm::normalize(qYaw * cameraUp);
             }
 
+            // Build a stable right vector from the current forward/up.
             cameraRight = glm::normalize(glm::cross(cameraForward, cameraUp));
 
             // --- PITCH ---
@@ -4162,12 +4231,13 @@ glDepthMask(depthMask);
             }
 
             // --- ALIGNMENT ---
-            if (characterController->getState().isSurfaceAdhered && std::abs(rollAmount) < 0.01f) {
+            if (ccState.isSurfaceAdhered && std::abs(rollAmount) < 0.01f) {
                 glm::vec3 characterUp = characterController->getUpDirection();
                 alignCameraRollToUp(characterUp, deltaTime);
             }
         }
 
+        // Rebuild a consistent right-handed basis.
         cameraRight = glm::normalize(glm::cross(cameraForward, cameraUp));
         cameraUp = glm::normalize(glm::cross(cameraRight, cameraForward));
         cameraForward = glm::normalize(glm::cross(cameraUp, cameraRight));
@@ -4204,9 +4274,10 @@ glDepthMask(depthMask);
     }
 
     void Game::alignCameraRollToUp(const glm::vec3& worldUp, float deltaTime) {
-        glm::vec3 projectedUp = glm::normalize(worldUp - cameraForward * glm::dot(worldUp, cameraForward));
-
-        if (glm::length(projectedUp) < 0.001f) return;
+        glm::vec3 projectedUp = worldUp - cameraForward * glm::dot(worldUp, cameraForward);
+        float projectedLen = glm::length(projectedUp);
+        if (projectedLen < 0.001f) return;
+        projectedUp /= projectedLen;
 
         float angle = glm::acos(glm::clamp(glm::dot(cameraUp, projectedUp), -1.0f, 1.0f));
 
@@ -4217,12 +4288,12 @@ glDepthMask(depthMask);
 
         float speed = 8.0f;
         float maxAngle = glm::radians(30.0f);
-
         float rotation = glm::clamp(angle * speed * deltaTime, -maxAngle, maxAngle);
 
         if (std::abs(rotation) > 0.001f) {
             glm::quat q = glm::angleAxis(rotation, cameraForward);
             cameraUp = glm::normalize(q * cameraUp);
+            cameraRight = glm::normalize(glm::cross(cameraForward, cameraUp));
         }
     }
 
@@ -4686,13 +4757,11 @@ glDepthMask(depthMask);
     void Game::renderSpeedLines(GLuint sceneTexture)
     {
         if (!speedLinesShader || !enableSpeedLines) return;
-
-        // Get player velocity
         glm::vec3 velocity = characterController->getVelocity();
-        float speed = glm::length(velocity);
+        float speed = glm::sqrt(velocity.x*velocity.x+velocity.y*velocity.y+velocity.z*velocity.z);
 
         // Normalize speed (adjust maxSpeed to your game's scale)
-        const float maxSpeed = 50.0f;
+        const float maxSpeed = characterController->settings.terminalVelocity/2.5f;
         float normalizedSpeed = glm::clamp(speed / maxSpeed, 0.0f, 1.5f) * speedLinesIntensity;
 
         if (normalizedSpeed < 0.05f) return; // Skip if too slow
@@ -4717,7 +4786,7 @@ glDepthMask(depthMask);
 
         // Camera matrices
         float aspect = (float)windowWidth / (float)windowHeight;
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f*(1+speed/100)*settings.fov), aspect, nearPlane, farPlane);
+        glm::mat4 projection = glm::perspective(glm::radians((45.0f*(1+(speed/(characterController->settings.terminalVelocity/4))))*settings.fov), aspect, nearPlane, farPlane);
         glm::vec3 camUp = getCameraUp();
         glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
 

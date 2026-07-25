@@ -491,20 +491,27 @@ namespace gl3 {
     glm::vec3 CharacterController::calculateWishVelocity(const glm::vec3 &moveInput,
                                                          const glm::vec3 &cameraForward,
                                                          const glm::vec3 &cameraRight) const {
-        glm::vec3 moveUp = getMovementUpDirection();
+        glm::vec3 moveUp = state.isSurfaceAdhered
+                           ? glm::normalize(state.adheredNormal)
+                           : glm::normalize(-settings.gravityDir);
 
         glm::vec3 forward = cameraForward - moveUp * glm::dot(cameraForward, moveUp);
-        glm::vec3 right   = cameraRight - moveUp * glm::dot(cameraRight, moveUp);
+        glm::vec3 right   = cameraRight   - moveUp * glm::dot(cameraRight, moveUp);
 
         float forwardLen = glm::length(forward);
         float rightLen = glm::length(right);
 
-        if (rightLen > 1e-5f) {
+        if (forwardLen > 1e-5f && rightLen > 1e-5f) {
+            forward = forward / forwardLen;
             right = right / rightLen;
-            forward = glm::cross(moveUp, right);
         } else if (forwardLen > 1e-5f) {
             forward = forward / forwardLen;
             right = glm::cross(forward, moveUp);
+            if (glm::length(right) > 1e-6f) right = glm::normalize(right);
+        } else if (rightLen > 1e-5f) {
+            right = right / rightLen;
+            forward = glm::cross(moveUp, right);
+            if (glm::length(forward) > 1e-6f) forward = glm::normalize(forward);
         } else {
             if (std::abs(moveUp.y) < 0.99f)
                 forward = glm::normalize(glm::cross(moveUp, glm::vec3(0, 1, 0)));
@@ -514,10 +521,6 @@ namespace gl3 {
         }
 
         glm::vec3 wishDir = forward * moveInput.z + right * moveInput.x;
-        if(!state.isSprinting&&state.isGrounded&&moveInput.x!=0)
-        {
-            g_SoundManager.playSound(SoundID::Step, 1.0f, 1.0f);
-        }
 
         if (moveInput.y != 0.0f) {
             wishDir += moveUp * moveInput.y;
@@ -724,11 +727,11 @@ namespace gl3 {
     }
 
     void CharacterController::update(float deltaTime, const glm::vec3 &moveInput,
+                                     float swimVertical,  // NEW parameter
                                      bool jumpInput, bool sprintInput,
                                      bool crouchInput, const glm::vec2 &mouseDelta,
                                      const glm::vec3 &cameraForward, const glm::vec3 &cameraRight,
                                      bool airResetInput) {
-        // Update coyote time and jump buffer
         if (state.isGrounded && !state.isInFluid) {
             state.coyoteTime = settings.coyoteTimeDuration;
         } else {
@@ -741,17 +744,14 @@ namespace gl3 {
             state.jumpBuffer = glm::max(0.0f, state.jumpBuffer - deltaTime);
         }
 
-        // Handle air slam/air reset input
         if (airResetInput) {
             performAirSlam();
         }
 
-        // Update air slam state
         updateAirSlam(deltaTime);
 
         updateSurfaceAdhesion(deltaTime);
 
-        // Handle crouching
         bool wantsCrouch = crouchInput;
         if (wantsCrouch != state.isCrouching) {
             state.isCrouching = wantsCrouch;
@@ -766,7 +766,6 @@ namespace gl3 {
             g_SoundManager.playSound(SoundID::Run);
         }
 
-        // Calculate movement speed
         float targetSpeed;
         if (state.isInFluid) {
             targetSpeed = settings.fluidSwimSpeed;
@@ -783,13 +782,10 @@ namespace gl3 {
         if (glm::length(forward) > 1e-6f) forward = glm::normalize(forward);
         if (glm::length(right) > 1e-6f) right = glm::normalize(right);
 
-        // Calculate wish velocity
-        glm::vec3 wishDir = calculateWishVelocity(moveInput, forward, right);
+        glm::vec3 wishDir = calculateWishVelocity(moveInput, cameraForward, cameraRight);
 
-        // Apply friction
         applyFriction(deltaTime);
 
-        // Apply acceleration
         float accel;
         if (state.isInFluid) {
             accel = settings.fluidSwimAcceleration;
@@ -807,15 +803,15 @@ namespace gl3 {
                     state.velocity += settings.gravityDir * (swimDownForce - velDown);
                 }
             }
-            else if (moveInput.y > 0.1f) {
-                float swimUpForce = settings.jumpForce * 0.5f * moveInput.y;
+            else if (swimVertical > 0.1f) {  // Space = swim up
+                float swimUpForce = settings.jumpForce * 0.5f * swimVertical;
                 float velUp = glm::dot(state.velocity, -settings.gravityDir);
                 if (velUp < swimUpForce) {
                     state.velocity += -settings.gravityDir * (swimUpForce - velUp);
                 }
                 state.jumpBuffer = 0.0f;
-            } else if (moveInput.y < -0.1f) {
-                float swimDownForce = settings.jumpForce * 0.3f * (-moveInput.y);
+            } else if (swimVertical < -0.1f) {  // Ctrl = swim down
+                float swimDownForce = settings.jumpForce * 0.3f * (-swimVertical);
                 float velDown = glm::dot(state.velocity, settings.gravityDir);
                 if (velDown < swimDownForce) {
                     state.velocity += settings.gravityDir * (swimDownForce - velDown);
@@ -846,7 +842,6 @@ namespace gl3 {
 
         updateOrientation(deltaTime);
 
-        // Ground detection - only when NOT in fluid
         if (!state.isInFluid) {
             if (state.isSurfaceAdhered) {
                 glm::vec3 gp, gn;
@@ -1047,10 +1042,8 @@ namespace gl3 {
                                                 bool& found) const {
         float sdf = sampleDensityAtWorld(chunkManager, samplePos);
 
-        // Surface band: accept samples near zero crossing
         float distToSurface = sdf - radius;
 
-        // More tolerant acceptance range
         if (distToSurface >= -VOXEL_SIZE * 0.25f && distToSurface <= VOXEL_SIZE * 0.35f) {
             glm::vec3 n = sampleNormalAtWorld(chunkManager, samplePos);
 
@@ -1073,9 +1066,6 @@ namespace gl3 {
             return false;
         }
 
-        // If already adhered, still reject surfaces that are strongly opposite to the
-        // current attached orientation to avoid snapping to a "ceiling" accidentally.
-        // But while free-flying, allow side impacts to become valid landings.
         if (state.isSurfaceAdhered) {
             glm::vec3 currentUp = getUpDirection();
             if (glm::dot(n, currentUp) < -0.6f) {

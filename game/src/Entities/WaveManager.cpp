@@ -94,14 +94,15 @@ namespace gl3 {
             enemiesToSpawn = 1;
 
             spawnBoss();
-            SoLoud::handle musicHandle = g_SoundManager.playMusic(SoundID::BossTheme, true, 1.0f);
+            g_SoundManager.playMusic(SoundID::BossTheme, true, 1.0f);
 
         } else {
             config.waveNumber = currentWave;
-            config.totalEnemies = 1 + (currentWave - 1)*2;
+            config.totalEnemies = 1 + (currentWave - 1)*1;
             config.enemyBaseHealth+=(currentWave)*50;
             config.isBossWave = false;
             enemiesToSpawn = config.totalEnemies;
+            g_SoundManager.playMusic(SoundID::BackgroundMusic, true, 1.0f);
         }
 
         enemiesRemaining = enemiesToSpawn;
@@ -140,17 +141,17 @@ namespace gl3 {
         consumer.radius = 4.0f * VOXEL_SIZE;
         consumer.cooldownsSec = { 6.0f, 10.0f, 0.0f };
 
-       /* std::vector<EnemyArchetype> enemies;
+        std::vector<EnemyArchetype> enemies;
         enemies.push_back(basic);
-        if(currentWave>3)
+        enemies.push_back(dasher);
+        if(currentWave>BOSS_WAVE_INTERVAL)
         {
-            enemies.push_back(dasher);
             enemies.push_back(consumer);
         }
         std::uniform_real_distribution<float> distEnemies(0, enemies.size());
-        */
 
-        enemyManager->spawn(basic, spawnPos);
+        enemyManager->spawn(enemies.at(distEnemies(rng)), spawnPos);
+        enemies.clear();
         enemiesSpawned++;
     }
 

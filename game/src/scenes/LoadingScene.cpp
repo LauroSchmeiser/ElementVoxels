@@ -62,7 +62,7 @@ namespace gl3 {
         // ==== SPELLCRAFT MAIN WINDOW ====
         ImGuiIO& io = ImGui::GetIO();
         const ImVec2 display = io.DisplaySize;
-
+/*
         const float marginX = 24.0f;
         const float marginTop = 24.0f;
         const float bottomReserved = 120.0f; // keep space for loading bar row
@@ -123,7 +123,7 @@ namespace gl3 {
             ImGui::SameLine();
             if (ImGui::Button("Lava"))  p.material = Game::CraftMaterial::Lava;
 
-            if (ImGui::IsItemHovered()) { /* tooltip per item; split buttons if needed */ }
+            if (ImGui::IsItemHovered()) { /* tooltip per item; split buttons if needed  }
         }
         else if (selectedCategory == 1) {
             int form = (int)p.form;
@@ -160,7 +160,7 @@ namespace gl3 {
                     p.cooldown, p.materialCost, p.range);
 
         ImGui::End();
-
+        */
         // ==== LOADING BAR WINDOW BOTTOM ====
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y - 110), ImGuiCond_Always, ImVec2(0.5f, 0.0f));
         ImGui::SetNextWindowSize(ImVec2(720, 90), ImGuiCond_Always);

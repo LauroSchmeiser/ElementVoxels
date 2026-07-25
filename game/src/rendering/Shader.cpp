@@ -165,6 +165,13 @@ namespace gl3 {
         glUniform1ui(loc, value);
     }
 
+    void Shader::setUIntArray(const std::string& uniformName, const uint32_t* data, int count) {
+        GLint location = glGetUniformLocation(shaderProgram, uniformName.c_str());
+        if (location != -1) {
+            glUniform1uiv(location, count, data);
+        }
+    }
+
     void Shader::setFloatArray(const std::string &uniformName, const GLfloat *data, GLsizei count) const
     {
         GLint loc = glGetUniformLocation(shaderProgram, uniformName.c_str());

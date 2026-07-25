@@ -31,7 +31,10 @@ enum class SoundID {
     Run,
     Jump,
     Land,
-    Suffocate
+    Suffocate,
+    MeatStick,
+    PlayerDamage,
+    Velocity
 };
 
 class SoundManager {
