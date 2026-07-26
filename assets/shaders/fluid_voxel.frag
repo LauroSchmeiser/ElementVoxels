@@ -9,6 +9,9 @@ layout(location = 1) out float outThickness;
 uniform vec3 viewPos;
 uniform int uPass; // 0 = front, 1 = back
 
+uniform float uBrightness;
+uniform float uGamma;
+
 void main()
 {
     vec3 N = normalize(vNormal);
@@ -21,7 +24,8 @@ void main()
         // Back faces (inside water) - dark, highly opaque
         vec3 darkWater = base * 0.3;
         float alpha = 0.9;
-        outColor = vec4(darkWater, alpha);
+        vec3 finalColor = pow(darkWater, vec3(1.0 / (uGamma/2))) * uBrightness;
+        outColor = vec4(finalColor, alpha);
         outThickness = 1.0;
         return;
     }
@@ -30,6 +34,8 @@ void main()
     vec3 surfaceColor = mix(base * 1.2, vec3(1.0), fresnel * 0.3);
     float depthFactor = 1.0 - max(dot(N, V), 0.0) * 0.2;
     vec3 finalColor = surfaceColor * depthFactor;
+    finalColor = pow(finalColor, vec3(1.0 / (uGamma/2))) * uBrightness;
+
 
     float alpha = 0.75 + fresnel * 0.2;
     alpha = clamp(alpha, 0.7, 0.95);

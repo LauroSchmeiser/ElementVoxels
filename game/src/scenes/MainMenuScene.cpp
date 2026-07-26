@@ -194,7 +194,7 @@ namespace gl3 {
                 }
                 ImGui::Dummy(ImVec2(0.0f, 10.0f));
 
-                changed |= ImGui::SliderFloat(" Gamma", &game.settings.gamma, 1.6f, 3.0f, "%.2f");
+                changed |= ImGui::SliderFloat(" Gamma", &game.settings.gamma, 0.5f, 2.5f, "%.2f");
                 const char* gammaBtnId = "settings_gamma";
                 if (ImGui::IsItemHovered() && lastHoveredButton != gammaBtnId) {
                     g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
@@ -202,7 +202,7 @@ namespace gl3 {
                 }
                 ImGui::Dummy(ImVec2(0.0f, 10.0f));
 
-                changed |= ImGui::SliderFloat(" Brightness", &game.settings.brightness, 0.5f, 1.5f, "%.2f");
+                changed |= ImGui::SliderFloat(" Brightness", &game.settings.brightness, 0.1f, 2.0f, "%.2f");
                 const char* brightnessBtnId = "settings_brightness";
                 if (ImGui::IsItemHovered() && lastHoveredButton != brightnessBtnId) {
                     g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);

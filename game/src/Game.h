@@ -786,8 +786,8 @@ namespace gl3 {
             float masterVolume = 1.0f;
             float sfxVolume = 1.0f;
             float musicVolume = 0.8f;
-            float gamma = 2.2f;       // typical gamma baseline
-            float brightness = 1.0f;  // 1.0 neutral
+            float gamma = 1.0f;
+            float brightness = 1.0f;
             float fov = 1.0f;
             DisplayMode displayMode = DisplayMode::Borderless;
             int resolutionIndex = 3;

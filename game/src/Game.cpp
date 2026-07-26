@@ -1045,14 +1045,14 @@ namespace gl3 {
                         lastHoveredButton = musicBtnId;
                     }
 
-                    changed |= ImGui::SliderFloat("Gamma", &settings.gamma, 1.6f, 3.0f, "%.2f");
+                    changed |= ImGui::SliderFloat("Gamma", &settings.gamma, 0.5f, 2.5f, "%.2f");
                     const char* gammaBtnId = "settings_gamma";
                     if (ImGui::IsItemHovered() && lastHoveredButton != gammaBtnId) {
                         g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
                         lastHoveredButton = gammaBtnId;
                     }
 
-                    changed |= ImGui::SliderFloat("Brightness", &settings.brightness, 0.5f, 1.5f, "%.2f");
+                    changed |= ImGui::SliderFloat("Brightness", &settings.brightness, 0.1f, 2.0f, "%.2f");
                     const char* brightnessBtnId = "settings_brightness";
                     if (ImGui::IsItemHovered() && lastHoveredButton != brightnessBtnId) {
                         g_SoundManager.playSound(SoundID::ButtonHover, 1.0f, 1.0f, true, true, 4);
@@ -3063,6 +3063,8 @@ glDepthFunc(GL_LEQUAL);
 glDepthMask(GL_FALSE);
 
 skyboxRuntimeShader->use();
+skyboxRuntimeShader->setFloat("uBrightness",settings.brightness);
+skyboxRuntimeShader->setFloat("uGamma",settings.gamma);
 skyboxRuntimeShader->setFloat("time", (float)glfwGetTime());
 
 float aspect = (float)windowWidth / (float)windowHeight;
@@ -3188,6 +3190,9 @@ glDepthMask(depthMask);
             glDepthMask(GL_TRUE);
 
             voxelShader->use();
+            voxelShader->setFloat("uBrightness",settings.brightness);
+            voxelShader->setFloat("uGamma",settings.gamma);
+
 
             if (actions["CastSphere"].isHeld) {
                 float maxDist = 250.0f;
@@ -3449,6 +3454,8 @@ glDepthMask(depthMask);
 
 
         voxelShader->use();
+        voxelShader->setFloat("uBrightness",settings.brightness);
+        voxelShader->setFloat("uGamma",settings.gamma);
         float aspect = (windowHeight == 0) ? (float) windowWidth / 1.0f : (float) windowWidth / (float) windowHeight;
         glm::vec3 velocity = characterController->getVelocity();
         float speed = glm::sqrt(velocity.x*velocity.x+velocity.y*velocity.y+velocity.z*velocity.z);
@@ -3559,6 +3566,8 @@ glDepthMask(depthMask);
         if (!enemyManager) return;
 
         voxelShader->use();
+        voxelShader->setFloat("uBrightness",settings.brightness);
+        voxelShader->setFloat("uGamma",settings.gamma);
 
         float aspect = (windowHeight == 0) ? (float)windowWidth : (float)windowWidth / (float)windowHeight;
         glm::vec3 velocity = characterController->getVelocity();
@@ -3853,6 +3862,8 @@ glDepthMask(depthMask);
         TRACY_CPU_ZONE("Game::renderFluids");
         TRACY_GPU_ZONE("FluidChunks (total)");
         fluidShader->use();
+        fluidShader->setFloat("uBrightness",settings.brightness);
+        fluidShader->setFloat("uGamma",settings.gamma);
 
         float aspect = (windowHeight == 0) ? (float)windowWidth : (float)windowWidth / (float)windowHeight;
         glm::vec3 velocity = characterController->getVelocity();

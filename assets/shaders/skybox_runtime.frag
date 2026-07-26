@@ -6,6 +6,9 @@ in vec3 TexCoords;
 uniform float time;
 uniform samplerCube nebulaCube;
 
+uniform float uBrightness;
+uniform float uGamma;
+
 float hash13(vec3 p) {
     p = fract(p * 0.1031);
     p += dot(p, p.yzx + 33.33);
@@ -48,8 +51,9 @@ void main() {
 
     vec3 color = nebula + stars;
 
-    color = pow(color, vec3(1.0/0.25));
-    color= color/(color+1.0);
+    color = pow(color, vec3(1.0 / (uGamma/4)));
+    color = color / (color + vec3(1.0));
+    color *= uBrightness*2;
 
 
     FragColor = vec4(color, 1.0);

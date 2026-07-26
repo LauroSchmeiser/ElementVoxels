@@ -79,6 +79,9 @@ uniform uint uExcludedMaterialCount;
 uniform uint uExcludedMaterials[8];
 //uniform uint uTargetType;
 
+uniform float uBrightness; // Range: 0.0 - 2.0, default 1.0
+uniform float uGamma;    // Range: 0.5 - 2.5, default 1.0
+
 const float uBaseHeight= 0.5;
 const float uBaseRoughness= 1.0;
 const float uBaseAO = 1.0;
@@ -228,7 +231,6 @@ sampler2DArray texArr, uint mat, vec2 uv, vec3 baseN, out float filled)
     vec3 nTex = t.xyz * 2.0 - 1.0;
     if (uNormalYFlip != 0) nTex.y = -nTex.y;
 
-    // If missing, use projection-local "flat" normal (0,0,1) via baseN
     return normalize(mix(baseN, nTex, filled));
 }
 
@@ -427,8 +429,9 @@ void main() {
 
         hdr *= 5.35;
     }
-    hdr= pow(hdr, vec3(1.0/0.5));
-    vec3 color = hdr / (hdr + vec3(1.0));
+    vec3 color = pow(hdr, vec3(1.0 / (uGamma/2)));
+    color = color / (color + vec3(1.0));
+    color *= uBrightness;
     //vec3 color=hdr;
 
     if (uOverlayEnabled != 0) {
