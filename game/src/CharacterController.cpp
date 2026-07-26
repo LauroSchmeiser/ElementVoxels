@@ -881,6 +881,12 @@ namespace gl3 {
             state.isGrounded = false;
             state.isSurfaceAdhered = false;
         }
+        glm::vec3 velDir = getVelocity();
+        float vel = glm::sqrt(velDir.x*velDir.x+velDir.y*velDir.y+velDir.z*velDir.z);
+        if(vel>100.0f)
+        {
+            g_SoundManager.playSound(SoundID::Velocity);
+        }
     }
 
     bool CharacterController::checkPhysicsBodyCollision(

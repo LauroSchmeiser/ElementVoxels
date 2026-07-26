@@ -178,6 +178,7 @@ namespace gl3 {
         marchingCubesShader = std::make_unique<Shader>("shaders/marching_cubes.comp");
         spellPreviewShader = std::make_unique<Shader>("shaders/spell_prev.vert", "shaders/spell_prev.frag");
         postShader = std::make_unique<Shader>("shaders/post_fullscreen.vert", "shaders/post_fog_glow.frag");
+        damageShader = std::make_unique<Shader>("shaders/speedlines.vert", "shaders/damage.frag");
 
         //SceneManager Setup
         sceneManager.registerScene(SceneId::MainMenu, std::make_unique<MainMenuScene>());
@@ -608,21 +609,38 @@ namespace gl3 {
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glBindVertexArray(0);
 
-        // 4) Render speed lines - use composite texture as input
-        renderSpeedLines(compositeColorTex);  // Pass the composite texture
+        // 4) Post-processing chain (ping-pong)
 
-        // 5) Render final result to screen (default framebuffer)
+        GLuint currentTexture = compositeColorTex;
+        int ping = 0;
+
+
+        if(renderSpeedLines(currentTexture, postProcessFBO[ping]))
+        {
+            currentTexture = postProcessColor[ping];
+            ping ^= 1;
+        }
+
+
+        if(renderDamageFeedback(currentTexture, postProcessFBO[ping]))
+        {
+            currentTexture = postProcessColor[ping];
+            ping ^= 1;
+        }
+
+        // 5) Render final result to screen
+
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glViewport(0, 0, windowWidth, windowHeight);
+
         glDisable(GL_DEPTH_TEST);
         glDepthMask(GL_FALSE);
+
         glClearColor(0, 0, 0, 1);
         glClear(GL_COLOR_BUFFER_BIT);
 
-        // Simple shader to render the composite texture to screen
-        renderTextureToScreen(compositeColorTex);
+        renderTextureToScreen(currentTexture);
 
-        // 6) Render UI on top
         renderGameplayUI();
 
         glEnable(GL_DEPTH_TEST);
@@ -679,6 +697,7 @@ namespace gl3 {
                 initFluidFBO();
                 //initGasFBO();
                 initCompositeFBO();
+                initPostProcessBuffers();
                 preloadStage = PreloadStage::Boot_SSBOs;
                 return 0.25f;
 
@@ -1162,6 +1181,79 @@ namespace gl3 {
 
         // Load your post shader (paths should match resolveAssetPath usage)
         postShader = std::make_unique<Shader>("shaders/post_fullscreen.vert", "shaders/post_fog_glow.frag");
+    }
+
+    void Game::initPostProcessBuffers()
+    {
+        // cleanup
+        glDeleteFramebuffers(2, postProcessFBO);
+        glDeleteTextures(2, postProcessColor);
+
+        glGenFramebuffers(2, postProcessFBO);
+        glGenTextures(2, postProcessColor);
+
+        for (int i = 0; i < 2; i++)
+        {
+            glBindFramebuffer(GL_FRAMEBUFFER, postProcessFBO[i]);
+
+            glBindTexture(GL_TEXTURE_2D, postProcessColor[i]);
+
+            glTexImage2D(
+                    GL_TEXTURE_2D,
+                    0,
+                    GL_RGBA16F,
+                    windowWidth,
+                    windowHeight,
+                    0,
+                    GL_RGBA,
+                    GL_FLOAT,
+                    nullptr);
+
+            glTexParameteri(GL_TEXTURE_2D,
+                            GL_TEXTURE_MIN_FILTER,
+                            GL_LINEAR);
+
+            glTexParameteri(GL_TEXTURE_2D,
+                            GL_TEXTURE_MAG_FILTER,
+                            GL_LINEAR);
+
+            glFramebufferTexture2D(
+                    GL_FRAMEBUFFER,
+                    GL_COLOR_ATTACHMENT0,
+                    GL_TEXTURE_2D,
+                    postProcessColor[i],
+                    0);
+
+            GLenum drawBuffers[] =
+                    {
+                            GL_COLOR_ATTACHMENT0
+                    };
+
+            glDrawBuffers(1, drawBuffers);
+
+            if (glCheckFramebufferStatus(GL_FRAMEBUFFER)
+                != GL_FRAMEBUFFER_COMPLETE)
+            {
+                std::cerr
+                        << "Post process framebuffer "
+                        << i
+                        << " incomplete\n";
+            }
+        }
+
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+
+    void Game::beginPostProcess(GLuint destinationFBO)
+    {
+        glBindFramebuffer(GL_FRAMEBUFFER, destinationFBO);
+
+        glViewport(0, 0, windowWidth, windowHeight);
+
+        glDisable(GL_DEPTH_TEST);
+        glDepthMask(GL_FALSE);
+
+        glClear(GL_COLOR_BUFFER_BIT);
     }
 
 ////-----Run-Method-----------------------------------------------------------------------------------------------------------------------------
@@ -2324,10 +2416,20 @@ namespace gl3 {
 
                         switch (mat) {
                             case 9: // lava
-                                registerPlayerDamage(0.75f*deltaTime);
+                                registerPlayerDamage({
+                                                             1.75f * deltaTime,
+                                                             (-characterController->getUpDirection()),
+                                                             (float)glfwGetTime(),
+                                                             5.5f
+                                                     });
                                 break;
                             case 7: // flesh
-                                registerPlayerDamage(0.375f*deltaTime);
+                                registerPlayerDamage({
+                                                             0.85f*deltaTime,
+                                                             (-characterController->getUpDirection()),
+                                                             (float)glfwGetTime(),
+                                                             5.5f
+                                                     });
                                 moveInput *= 0.5f;
                                 break;
                             default:
@@ -2361,8 +2463,13 @@ namespace gl3 {
         {
             if(body==enemy.inst.body)
             {
-                registerPlayerDamage(10);
-
+                registerPlayerDamage({
+                                             10.0f,
+                                             cameraPos-body->position,
+                                             (float)glfwGetTime(),
+                                             5.5f
+                                     });
+                g_SoundManager.playSound(SoundID::PlayerDamage);
                 body->position-=body->velocity*glm::vec3(1);
                 return;
             }
@@ -2403,7 +2510,12 @@ namespace gl3 {
         //dmg *= approach01;
         dmg = glm::min(dmg,getPlayerMaxHealth()/10);
         dmg= glm::max(dmg,getPlayerMaxHealth()/20);
-        registerPlayerDamage( dmg);
+        registerPlayerDamage({
+                                     dmg,
+                                     cameraPos-body->position,
+                                     (float)glfwGetTime(),
+                                     5.5f
+                             });
         body->velocity=-body->velocity*0.75f;
 
 
@@ -2692,7 +2804,12 @@ if(getPlayerHealth()<=0)
     if(dist>550.0f)
     {
         g_SoundManager.playSound(SoundID::Suffocate);
-        registerPlayerDamage(2.25f*deltaTime);
+        registerPlayerDamage({
+                                     2.25f*deltaTime,
+                                     dir,
+                                     (float)glfwGetTime(),
+                                     5.5f
+                             });
     }
 
     TRACY_CPU_ZONE("SunBurns()");
@@ -2715,7 +2832,12 @@ if(getPlayerHealth()<=0)
         float distsq = glm::sqrt(dist.x*dist.x+ dist.y*dist.y+ dist.z*dist.z);
         if(distsq<std::sqrt(light.intensity) * 0.15f)
         {
-            registerPlayerDamage(deltaTime*0.25f*distsq*(glm::sqrt(light.intensity*0.00001f)));
+            registerPlayerDamage({
+                                         deltaTime*0.25f*distsq*(glm::sqrt(light.intensity*0.00001f)),
+                                         dist,
+                                         (float)glfwGetTime(),
+                                         5.5f
+                                 });
             g_SoundManager.playSound(SoundID::Fire);
         }
         float gravity = glm::pow(light.intensity,2.0f)/distsq;
@@ -2739,7 +2861,12 @@ if(getPlayerHealth()<=0)
             glm::vec3 dist = (cameraPos - spell.physicsBody->position);
             float distsq = glm::sqrt(dist.x * dist.x + dist.y * dist.y + dist.z * dist.z);
             if (distsq < (spell.radius*1.5f)) {
-                registerPlayerDamage( deltaTime*0.25f * distsq*(glm::sqrt(spell.physicsBody->radius*0.01f)));
+                registerPlayerDamage({
+                                             deltaTime*0.25f * distsq*(glm::sqrt(spell.physicsBody->radius*0.01f)),
+                                             dist,
+                                             (float)glfwGetTime(),
+                                             5.5f
+                                     });
             }
         }
     }
@@ -4197,7 +4324,6 @@ glDepthMask(depthMask);
                 cameraUp = glm::normalize(qYaw * cameraUp);
             }
 
-            // Build a stable right vector from the current forward/up.
             cameraRight = glm::normalize(glm::cross(cameraForward, cameraUp));
 
             // --- PITCH ---
@@ -4237,7 +4363,6 @@ glDepthMask(depthMask);
             }
         }
 
-        // Rebuild a consistent right-handed basis.
         cameraRight = glm::normalize(glm::cross(cameraForward, cameraUp));
         cameraUp = glm::normalize(glm::cross(cameraRight, cameraForward));
         cameraForward = glm::normalize(glm::cross(cameraUp, cameraRight));
@@ -4754,37 +4879,50 @@ glDepthMask(depthMask);
         }
     }
 
-    void Game::renderSpeedLines(GLuint sceneTexture)
+    bool Game::renderSpeedLines(
+            GLuint inputTexture,
+            GLuint destinationFBO)
     {
-        if (!speedLinesShader || !enableSpeedLines) return;
+        if (!speedLinesShader || !enableSpeedLines)
+        {
+            std::cout<<"no Shader found\n";
+            return false;
+        }
+
+
         glm::vec3 velocity = characterController->getVelocity();
-        float speed = glm::sqrt(velocity.x*velocity.x+velocity.y*velocity.y+velocity.z*velocity.z);
 
-        // Normalize speed (adjust maxSpeed to your game's scale)
-        const float maxSpeed = characterController->settings.terminalVelocity/2.5f;
-        float normalizedSpeed = glm::clamp(speed / maxSpeed, 0.0f, 1.5f) * speedLinesIntensity;
+        float speed =
+                glm::length(velocity);
 
-        if (normalizedSpeed < 0.05f) return; // Skip if too slow
 
-        // Bind composite FBO so speed lines render to the composite texture
-        glBindFramebuffer(GL_FRAMEBUFFER, compositeFBO);
-        glViewport(0, 0, windowWidth, windowHeight);
-        glDisable(GL_DEPTH_TEST);
-        glDepthMask(GL_FALSE);
+        const float maxSpeed =
+                characterController->settings.terminalVelocity / 2.5f;
+
+
+        float normalizedSpeed =
+                glm::clamp(speed / maxSpeed,0.0f,1.5f)
+                * speedLinesIntensity;
+
+
+        if(normalizedSpeed < 0.05f)
+        {
+            std::cout<<"no Speed found\n";
+            return false;
+        }
+
+        beginPostProcess(destinationFBO);
 
         speedLinesShader->use();
 
-        // Bind the scene texture (composite scene with fluids)
         speedLinesShader->setInt("uSceneTexture", 0);
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, sceneTexture);
+        glBindTexture(GL_TEXTURE_2D, inputTexture);
 
-        // Pass velocity and speed
         speedLinesShader->setVec3("uVelocity3D", velocity);
         speedLinesShader->setFloat("uSpeed", normalizedSpeed);
         speedLinesShader->setFloat("uTime", (float)glfwGetTime());
 
-        // Camera matrices
         float aspect = (float)windowWidth / (float)windowHeight;
         glm::mat4 projection = glm::perspective(glm::radians((45.0f*(1+(speed/(characterController->settings.terminalVelocity/4))))*settings.fov), aspect, nearPlane, farPlane);
         glm::vec3 camUp = getCameraUp();
@@ -4794,7 +4932,6 @@ glDepthMask(depthMask);
         speedLinesShader->setMatrix("uProjection", projection);
         speedLinesShader->setVec3("uCameraPos", cameraPos);
 
-        // RADIAL LINE SETTINGS
         speedLinesShader->setFloat("uLineCount", 12.0f);
         speedLinesShader->setFloat("uLineWidth", 0.05f);
         speedLinesShader->setFloat("uLineSharpness", 0.95f);
@@ -4803,7 +4940,6 @@ glDepthMask(depthMask);
         speedLinesShader->setFloat("uVignetteStrength", 0.4f);
         speedLinesShader->setFloat("uLineOpacity", 0.7f);
 
-        // Change color based on game state
         glm::vec3 lineColor = glm::vec3(1.0f, 1.0f, 1.0f);
 
         if (characterController->getState().isSprinting) {
@@ -4833,12 +4969,176 @@ glDepthMask(depthMask);
 
         // Draw fullscreen triangle
         glBindVertexArray(postVAO);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glDrawArrays(GL_TRIANGLES,0,3);
         glBindVertexArray(0);
 
-        glDisable(GL_BLEND);
+
         glDepthMask(GL_TRUE);
         glEnable(GL_DEPTH_TEST);
+
+        return true;
+    }
+
+    bool Game::renderDamageFeedback(GLuint sceneTexture, GLuint destinationFBO)
+    {
+        if(!damageShader)
+        {
+            std::cout << "no Damage Shader found\n";
+            return false;
+        }
+
+        float now = glfwGetTime();
+
+        float intensity = 0.0f;
+        glm::vec2 direction(0.0f);
+
+        glm::vec2 accumulatedDirection(0.0f);
+        float totalWeight = 0.0f;
+
+
+        glm::vec3 right =
+                characterController->getState().cameraRight;
+
+        glm::vec3 up =
+                characterController->getUpDirection();
+
+
+        for(auto& dmg : playerDamageFeedback)
+        {
+            float age = now - dmg.time;
+
+            if(age < dmg.duration)
+            {
+                float fade =
+                        1.0f - (age / dmg.duration);
+
+
+                float weight =
+                        dmg.amount* 55 * fade;
+
+
+                glm::vec3 dir =
+                        dmg.worldPosition - cameraPos;
+
+
+                glm::vec2 screenDir(
+                        glm::dot(dir, right),
+                        glm::dot(dir, up)
+                );
+
+
+                accumulatedDirection +=
+                        screenDir * weight;
+
+
+                intensity += weight;
+
+                totalWeight += weight;
+            }
+        }
+
+
+        playerDamageFeedback.erase(
+                std::remove_if(
+                        playerDamageFeedback.begin(),
+                        playerDamageFeedback.end(),
+                        [&](DamageInstance& d)
+                        {
+                            return now - d.time > d.duration;
+                        }),
+                playerDamageFeedback.end()
+        );
+
+
+        if(intensity < 0.01f)
+        {
+            return false;
+        }
+
+
+        if(totalWeight > 0.001f)
+        {
+            direction =
+                    accumulatedDirection / totalWeight;
+        }
+        else
+        {
+            direction = glm::vec2(0.0f, 1.0f);
+        }
+
+
+        if (glm::length(direction) > 0.001f)
+            direction = glm::normalize(direction);
+        else
+            direction = glm::vec2(0.0f, 1.0f);
+
+
+
+        glBindFramebuffer(GL_FRAMEBUFFER, destinationFBO);
+        glViewport(0, 0, windowWidth, windowHeight);
+
+        glDisable(GL_BLEND);
+        glDisable(GL_DEPTH_TEST);
+        glDepthMask(GL_FALSE);
+
+        glClear(GL_COLOR_BUFFER_BIT);
+
+
+        damageShader->use();
+
+
+        glActiveTexture(GL_TEXTURE0);
+
+        glBindTexture(
+                GL_TEXTURE_2D,
+                sceneTexture
+        );
+
+        damageShader->setInt(
+                "uSceneTexture",
+                0
+        );
+
+
+        damageShader->setFloat(
+                "uTime",
+                now
+        );
+
+
+        float visualIntensity =
+                glm::clamp(
+                        intensity / 50.0f,
+                        0.0f,
+                        1.0f
+                );
+
+        damageShader->setFloat(
+                "uDamageIntensity",
+                visualIntensity
+        );
+
+
+        damageShader->setVec2(
+                "uDamageDirection",
+                direction
+        );
+
+
+        glBindVertexArray(postVAO);
+
+        glDrawArrays(
+                GL_TRIANGLES,
+                0,
+                3
+        );
+
+        glBindVertexArray(0);
+
+
+        glDepthMask(GL_TRUE);
+
+        return true;
     }
 
     void Game::createPhysicsMeshData(gl3::PhysicsMeshData& out,
@@ -5396,6 +5696,7 @@ glDepthMask(depthMask);
         initPostFBO();
         initFluidFBO();
         initCompositeFBO();
+        initPostProcessBuffers();
     }
 
     int Game::findBestResolutionIndexForMonitor(GLFWmonitor* monitor) const

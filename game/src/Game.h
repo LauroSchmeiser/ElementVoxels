@@ -445,7 +445,11 @@ namespace gl3 {
 
         std::unique_ptr<Shader> postShader;
 
+        GLuint postProcessFBO[2] = {0, 0};
+        GLuint postProcessColor[2] = {0, 0};
+
         void initPostFBO();
+        void initPostProcessBuffers();
         void CreateFullscreenTriangle(GLuint& vao, GLuint& vbo);
 
         //Materials:
@@ -555,22 +559,46 @@ namespace gl3 {
         float getPlayerMaxHealth() const { return playerMaxHealth; }
         void setPlayerHealth(float h) { playerHealth = glm::clamp(h, 0.0f, playerMaxHealth); }
         void setPlayerMaxHealth(float h) { playerMaxHealth = glm::max(1.0f, h); playerHealth = glm::min(playerHealth, playerMaxHealth); }
-        std::vector<float> playerDamageInstances;
+        struct DamageInstance
+        {
+            float amount;
+            glm::vec3 worldPosition;
+            float time;
+            float duration;
+        };
+
+        std::vector<DamageInstance> playerDamageInstances;
+        std::vector<DamageInstance> playerDamageFeedback;
         float maxDamagePerTimeframe = 20.0f;
         float damageTimeframe = 0.0125f;
         float damageTimer = 0;
-        void registerPlayerDamage(float d) { playerDamageInstances.push_back(d);}
-        void applyPlayerDamage() {
-            float sum=0;
-            for(auto& damageInstance: playerDamageInstances )
+        void registerPlayerDamage(const DamageInstance& d)
+        {
+            playerDamageInstances.push_back(d);
+
+            DamageInstance feedback = d;
+
+            feedback.time = glfwGetTime();
+            feedback.duration = 0.5f;
+
+            playerDamageFeedback.push_back(feedback);
+        }
+        void applyPlayerDamage()
+        {
+            float sum = 0;
+
+            for(auto& damageInstance : playerDamageInstances)
             {
-                sum+=damageInstance;
+                sum += damageInstance.amount;
             }
+
             playerDamageInstances.clear();
-            if(sum>maxDamagePerTimeframe)
+
+            if(sum > maxDamagePerTimeframe)
             {
                 setPlayerHealth(maxDamagePerTimeframe);
-            } else
+            }
+            else
             {
                 setPlayerHealth(getPlayerHealth()-sum);
             }
@@ -676,9 +704,10 @@ namespace gl3 {
         bool enableSpeedLines = true;
         float speedLinesIntensity = 1.0f;
 
-        void initSpeedLinesShader();
-        void renderSpeedLines(GLuint sceneTexture);
+        std::unique_ptr<Shader> damageShader;
 
+        void initSpeedLinesShader();
+        bool renderSpeedLines(GLuint inputTexture, GLuint destinationFBO);
         WaveManager waveManager;
 
         void alignCameraRollToUp(const glm::vec3 &targetUp, float dt);
@@ -824,6 +853,10 @@ namespace gl3 {
         void updatePlayerAudio();
 
         bool initAudio();
+
+        bool renderDamageFeedback(GLuint sceneTexture, GLuint destinationFBO);
+
+        void beginPostProcess(GLuint destinationFBO);
     };
 
 }

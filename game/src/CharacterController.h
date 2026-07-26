@@ -11,7 +11,7 @@ namespace gl3 {
         float walkSpeed = 75.0f;
         float sprintSpeed = 200.0f;
         float crouchSpeed = 20.5f;
-        float acceleration = 4.5f;
+        float acceleration = 5.5f;
         float friction = 6.0f;
         float airFriction = 0.2f;
         float airControl = 0.3f;
