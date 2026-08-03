@@ -54,9 +54,7 @@ namespace gl3 {
             }
         }
 
-        // Update spawn timer if we need to spawn more enemies
-        if (enemiesSpawned < enemiesToSpawn) {
-            // Only spawn if we haven't reached the concurrent limit
+        if (getRemainingBudget()>0) {
             if (aliveCount < config.maxConcurrentEnemies) {
                 spawnTimer += dt;
 
@@ -71,7 +69,7 @@ namespace gl3 {
         enemiesRemaining = (enemiesToSpawn - enemiesSpawned) + aliveCount;
 
         // Check if wave is complete
-        if (enemiesSpawned >= enemiesToSpawn && aliveCount == 0) {
+        if (getRemainingBudget()<0 && aliveCount == 0) {
             checkWaveCompletion();
         }
     }
@@ -80,6 +78,7 @@ namespace gl3 {
         currentWave++;
         config.maxConcurrentEnemies+=glm::ceil(currentWave/2);
 
+        config.currentBudget=0;
         waveActive = true;
         spawnTimer = 0.0f;
         enemiesSpawned = 0;
@@ -89,19 +88,19 @@ namespace gl3 {
 
         if (bossWaveActive) {
             config.waveNumber = currentWave;
-            config.totalEnemies = 1;
+            config.enemyBudget = 0;
             config.isBossWave = true;
-            enemiesToSpawn = 1;
+            enemiesToSpawn = 0;
 
             spawnBoss();
             g_SoundManager.playMusic(SoundID::BossTheme, true, 1.0f);
 
         } else {
             config.waveNumber = currentWave;
-            config.totalEnemies = 1 + (currentWave - 1)*1;
+            config.enemyBudget = 3 + (currentWave - 1)*3;
             config.enemyBaseHealth+=(currentWave)*50;
             config.isBossWave = false;
-            enemiesToSpawn = config.totalEnemies;
+            enemiesToSpawn = 3;
             g_SoundManager.playMusic(SoundID::BackgroundMusic, true, 1.0f);
         }
 
@@ -122,6 +121,7 @@ namespace gl3 {
         basic.mass = 50.0f;
         basic.radius = 2.5f * VOXEL_SIZE;
         basic.cooldownsSec = { 4.0f, 0.0f, 0.0f };
+        basic.weight=1;
 
         static EnemyArchetype dasher;
         dasher.name = "Dasher";
@@ -131,6 +131,7 @@ namespace gl3 {
         dasher.mass = 10.0f;
         dasher.radius = 2.0f * VOXEL_SIZE;
         dasher.cooldownsSec = { 0.0f, 3.0f, 0.0f };
+        dasher.weight=2;
 
         static EnemyArchetype consumer;
         consumer.name = "Consumer";
@@ -140,6 +141,28 @@ namespace gl3 {
         consumer.mass = 10.0f;
         consumer.radius = 4.0f * VOXEL_SIZE;
         consumer.cooldownsSec = { 6.0f, 10.0f, 0.0f };
+        consumer.weight = 3;
+
+        static EnemyArchetype burrower;
+        burrower.name = "Burrower";
+        burrower.maxHP = config.enemyBaseHealth*3;
+        burrower.moveSpeed = 20.0f;
+        burrower.shapeType = VoxelPhysicsBody::ShapeType::SPHERE;
+        burrower.mass = 10.0f;
+        burrower.radius = 3.0f * VOXEL_SIZE;
+        burrower.cooldownsSec = { 0.0f, 6.0f, 0.0f };
+        burrower.weight = 2;
+
+        static EnemyArchetype water;
+        water.name = "Water";
+        water.maxHP = config.enemyBaseHealth*3;
+        water.moveSpeed = 20.0f;
+        water.shapeType = VoxelPhysicsBody::ShapeType::SPHERE;
+        water.mass = 10.0f;
+        water.radius = 3.0f * VOXEL_SIZE;
+        water.cooldownsSec = { 4.0f, 0.0f, 0.0f };
+        water.weight = 2;
+
 
         std::vector<EnemyArchetype> enemies;
         enemies.push_back(basic);
@@ -149,8 +172,10 @@ namespace gl3 {
             enemies.push_back(consumer);
         }
         std::uniform_real_distribution<float> distEnemies(0, enemies.size());
+        int enemyPos = distEnemies(rng);
+        config.currentBudget+=enemies.at(enemyPos).weight;
+        enemyManager->spawn(enemies.at(enemyPos), spawnPos);
 
-        enemyManager->spawn(enemies.at(distEnemies(rng)), spawnPos);
         enemies.clear();
         enemiesSpawned++;
     }
@@ -186,8 +211,6 @@ namespace gl3 {
         bossWaveActive = false;
         bossId = 0;
 
-        // Auto-start next wave for now (you can add a delay or manual start later)
-        // For now, just set waveActive to false and let the game logic start the next wave
     }
 
     glm::vec3 WaveManager::getRandomSpawnPosition(const glm::vec3& playerPos, float minDist, float maxDist) {
@@ -236,6 +259,57 @@ namespace gl3 {
         return static_cast<float>(wavesSinceBoss - 1) / static_cast<float>(BOSS_WAVE_INTERVAL - 1);
     }
 
+    const char* modeToString(WaveMode type) {
+        switch (type) {
+            case WaveMode::Hunt:
+                return "Hunt";
+
+            case WaveMode::Survival:
+                return "Survival";
+
+            case WaveMode::Mining:
+                return "Mining";
+
+            case WaveMode::Defense:
+                return "Defense";
+
+            case WaveMode::Destruction:
+                return "Destruction";
+
+            case WaveMode::Infection:
+                return "Infection";
+
+            case WaveMode::Preperation:
+            default:
+                return "Preparation";
+        }
+    }
+
+        const char* modeToDescription(WaveMode type) {
+            switch (type) {
+                case WaveMode::Hunt:
+                    return "Defeat all enemies to move on to the next wave!";
+
+                case WaveMode::Survival:
+                    return "Stay alive to move on to the next wave!";
+
+                case WaveMode::Mining:
+                    return "Fill the bar by mining enough of the specified material to move on to the next wave!";
+
+                case WaveMode::Defense:
+                    return "Defend the core to move on to the next wave, if it is destroyed, a catastrophe will emerge!";
+
+                case WaveMode::Destruction:
+                    return "Keep the enemies from finishing their construction, if they finish it, a catastrophe will emerge!";
+
+                case WaveMode::Infection:
+                    return "Keep the enemies from taking over the world by converting it to meat, if they convert the whole world, a catastrophe will emerge!";
+
+                case WaveMode::Preperation:
+                default:
+                    return "Prepare for the next wave and level the playing field!";
+            }
+        }
 
 
 } // namespace gl3

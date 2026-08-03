@@ -606,7 +606,20 @@ namespace gl3 {
         bool isPaused() const { return paused; }
         void setPaused(bool p);
         void togglePaused();
+
         void renderGameplayUI();
+        void renderWaveModeUI();
+        void renderCenteredTopText(const std::string& text);
+        void renderProgressBar(const char *label, float progress, const char *overlay);
+        void renderHuntUI();
+        void renderPreparationUI();
+        void renderInfectionUI();
+        void renderDestructionUI();
+        void renderDefenseUI();
+        void renderMiningUI();
+        void renderSurvivalUI();
+        void renderUpgradeSelectionUI();
+
 
         void spawnEnemyLaunchSphere(const glm::vec3& start,
                                     const glm::vec3& target,

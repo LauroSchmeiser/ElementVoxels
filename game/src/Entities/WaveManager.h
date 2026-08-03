@@ -1,6 +1,7 @@
 #pragma once
 #include <vector>
 #include <cstdint>
+#include <string>
 #include "Enemy.h"
 
 namespace gl3 {
@@ -8,7 +9,9 @@ namespace gl3 {
 
     struct WaveConfig {
         uint32_t waveNumber = 0;
-        uint32_t totalEnemies = 0;
+        uint32_t enemyBudget = 0;
+        uint32_t currentBudget = 0;
+
         uint32_t maxConcurrentEnemies = 5;
         bool isBossWave = false;
 
@@ -23,6 +26,22 @@ namespace gl3 {
 
     };
 
+        enum class WaveMode : uint8_t {
+            Preperation = 0,
+            Hunt = 1,
+            Survival = 2,
+            Mining = 3,
+            Defense = 4,
+            Destruction = 5,
+            Infection = 6,
+            UpgradeSelection = 7
+        };
+
+    const char* modeToString(WaveMode type);
+
+    const char* modeToDescription(WaveMode type);
+
+
     class WaveManager {
     public:
         void init(EnemyManager* enemyMgr);
@@ -32,6 +51,10 @@ namespace gl3 {
         // UI data accessors
         uint32_t getCurrentWave() const { return currentWave; }
         uint32_t getEnemiesRemaining() const { return enemiesRemaining; }
+        uint32_t getRemainingBudget() const { return config.enemyBudget-config.currentBudget; }
+        uint32_t getCurrentBudget() const { return config.currentBudget; }
+
+
         uint32_t getSpawnedEnemies() const { return enemiesSpawned;}
 
         bool isBossActive() const { return bossWaveActive && bossId != 0; }
@@ -42,6 +65,31 @@ namespace gl3 {
 
         bool isWaveActive() const { return waveActive; }
         bool isBossWave() const { return bossWaveActive; }
+
+        WaveMode getCurrentWaveMode() const {
+            return currentWaveMode;
+        }
+
+        WaveMode getNextWaveMode() const {
+            return nextWaveMode;
+        }
+
+        void setCurrentWaveMode(WaveMode mode) {
+            currentWaveMode = mode;
+        }
+
+        void setNextWaveMode(WaveMode mode) {
+            nextWaveMode = mode;
+        }
+
+        const char* getCurrentWaveModeString() const {
+            return modeToString(currentWaveMode);
+        }
+
+        const char* getNextWaveModeString() const {
+            return modeToString(nextWaveMode);
+        }
+
 
     private:
         void spawnEnemy();
@@ -54,6 +102,9 @@ namespace gl3 {
 
         // Wave state
         uint32_t currentWave = 0;
+        WaveMode currentWaveMode = WaveMode::Preperation;
+        WaveMode nextWaveMode = WaveMode::Hunt;
+
         uint32_t enemiesRemaining = 0;
         uint32_t enemiesSpawned = 0;
         uint32_t enemiesToSpawn = 0;

@@ -524,12 +524,23 @@ namespace gl3 {
            enemyManager->update(deltaTime, cameraPos /* player pos */);
         }
 
+        //std::cout<<waveManager.isWaveActive()<<" wave active!\n";
         if (enemyManager && waveManager.isWaveActive()) {
             waveManager.update(deltaTime, cameraPos);
         }
 
         if (!waveManager.isWaveActive()) {
-            waveManager.startNextWave();
+            bool hasLivingEnemies = false;
+            for (auto& e : enemyManager->all()) {
+                if (e.inst.hp > 0.0f && !e.inst.pendingRemoval) {
+                    hasLivingEnemies = true;
+                    break;
+                }
+            }
+
+            if (!hasLivingEnemies&&waveManager.getRemainingBudget()<=0) {
+                waveManager.startNextWave();
+            }
         }
 
         updatePhysics();
@@ -892,6 +903,9 @@ namespace gl3 {
                 ImGui::Text("%d / %d", (int)playerHealth, (int)playerMaxHealth);
                 ImGui::PopItemWidth();
             }
+
+            //renderWaveModeUI();
+
             // In ImGui rendering:
             float intensity = waveManager.getWaveIntensity();
             ImVec4 textColor = ImVec4(1.0f, 1.0f - intensity, 1.0f - intensity, 1.0f);
@@ -1136,6 +1150,426 @@ namespace gl3 {
         }
 
         imguiLayer.endFrame();
+    }
+
+    void Game::renderWaveModeUI()
+    {
+        switch (waveManager.getCurrentWaveMode())
+        {
+            case WaveMode::Preperation:
+                renderPreparationUI();
+                break;
+
+            case WaveMode::Hunt:
+                renderHuntUI();
+                break;
+
+            case WaveMode::Survival:
+                renderSurvivalUI();
+                break;
+
+            case WaveMode::Mining:
+                renderMiningUI();
+                break;
+
+            case WaveMode::Defense:
+                renderDefenseUI();
+                break;
+
+            case WaveMode::Destruction:
+                renderDestructionUI();
+                break;
+
+            case WaveMode::Infection:
+                renderInfectionUI();
+                break;
+
+            case WaveMode::UpgradeSelection:
+                renderUpgradeSelectionUI();
+                break;
+        }
+    }
+
+    void Game::renderCenteredTopText(const std::string& text)
+    {
+        ImGuiWindowFlags flags =
+                ImGuiWindowFlags_NoDecoration |
+                ImGuiWindowFlags_AlwaysAutoResize |
+                ImGuiWindowFlags_NoMove |
+                ImGuiWindowFlags_NoSavedSettings |
+                ImGuiWindowFlags_NoFocusOnAppearing |
+                ImGuiWindowFlags_NoNav |
+                ImGuiWindowFlags_NoBackground;
+
+        ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+
+        ImVec2 textSize = ImGui::CalcTextSize(text.c_str());
+
+        float x = (displaySize.x - textSize.x) * 0.5f;
+
+        ImGui::SetNextWindowPos(
+                ImVec2(x, 20.0f),
+                ImGuiCond_Always
+        );
+
+        if (ImGui::Begin("HUD_CenterText", nullptr, flags))
+        {
+            ImGui::SetWindowFontScale(5.0f);
+            ImGui::TextUnformatted(text.c_str());
+            ImGui::SetWindowFontScale(1.0f);
+        }
+
+        ImGui::End();
+    }
+
+    void Game::renderPreparationUI()
+    {
+        renderCenteredTopText(
+                "Next up: " +
+                std::string(waveManager.getNextWaveModeString())
+        );
+    }
+
+    void Game::renderHuntUI()
+    {
+        renderCenteredTopText("Hunt");
+
+        ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+
+        ImGuiWindowFlags flags =
+                ImGuiWindowFlags_NoDecoration |
+                ImGuiWindowFlags_AlwaysAutoResize |
+                ImGuiWindowFlags_NoMove |
+                ImGuiWindowFlags_NoSavedSettings |
+                ImGuiWindowFlags_NoFocusOnAppearing |
+                ImGuiWindowFlags_NoNav |
+                ImGuiWindowFlags_NoBackground;
+
+        ImGui::SetNextWindowPos(
+                ImVec2(displaySize.x * 0.5f, 100.0f),
+                ImGuiCond_Always,
+                ImVec2(0.5f, 0.0f)
+        );
+
+        if (ImGui::Begin("HUD_Hunt", nullptr, flags))
+        {
+            ImGui::Text(
+                    "Enemies remaining: %d",
+                    waveManager.getEnemiesRemaining()
+            );
+        }
+
+        ImGui::End();
+    }
+
+    void Game::renderProgressBar(
+            const char* label,
+            float progress,
+            const char* overlay)
+    {
+        ImGui::TextUnformatted(label);
+
+        ImGui::ProgressBar(
+                glm::clamp(progress, 0.0f, 1.0f),
+                ImVec2(400.0f, 30.0f),
+                overlay
+        );
+    }
+
+    void Game::renderSurvivalUI()
+    {
+        renderCenteredTopText("Survival");
+
+        //float progress = waveManager.getSurvivalTimePercent();
+        float progress = 25.5f;
+
+        ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+
+        ImGuiWindowFlags flags =
+                ImGuiWindowFlags_NoDecoration |
+                ImGuiWindowFlags_AlwaysAutoResize |
+                ImGuiWindowFlags_NoMove |
+                ImGuiWindowFlags_NoSavedSettings |
+                ImGuiWindowFlags_NoFocusOnAppearing |
+                ImGuiWindowFlags_NoNav |
+                ImGuiWindowFlags_NoBackground;
+
+        ImGui::SetNextWindowPos(
+                ImVec2(displaySize.x * 0.5f, 100.0f),
+                ImGuiCond_Always,
+                ImVec2(0.5f, 0.0f)
+        );
+
+        if (ImGui::Begin("HUD_Survival", nullptr, flags))
+        {
+            renderProgressBar(
+                    "Time remaining",
+                    progress,
+                    nullptr
+            );
+        }
+
+        ImGui::End();
+    }
+
+    void Game::renderMiningUI()
+    {
+        renderCenteredTopText("Mining");
+
+        ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+
+        ImGuiWindowFlags flags =
+                ImGuiWindowFlags_NoDecoration |
+                ImGuiWindowFlags_AlwaysAutoResize |
+                ImGuiWindowFlags_NoMove |
+                ImGuiWindowFlags_NoSavedSettings |
+                ImGuiWindowFlags_NoFocusOnAppearing |
+                ImGuiWindowFlags_NoNav |
+                ImGuiWindowFlags_NoBackground;
+
+        ImGui::SetNextWindowPos(
+                ImVec2(displaySize.x * 0.5f, 100.0f),
+                ImGuiCond_Always,
+                ImVec2(0.5f, 0.0f)
+        );
+
+        if (ImGui::Begin("HUD_Mining", nullptr, flags))
+        {
+            //float progress = waveManager.getMiningProgress();
+            float progress = 0.5f;
+
+
+            ImGui::ProgressBar(
+                    progress,
+                    ImVec2(400.0f, 30.0f)
+            );
+
+            ImGui::SameLine();
+
+            ImGui::Text(
+                    "%d%%",
+                    static_cast<int>(progress * 100.0f)
+            );
+        }
+
+        ImGui::End();
+    }
+
+    void Game::renderDefenseUI()
+    {
+        renderCenteredTopText("Defense");
+
+        ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+
+        ImGuiWindowFlags flags =
+                ImGuiWindowFlags_NoDecoration |
+                ImGuiWindowFlags_AlwaysAutoResize |
+                ImGuiWindowFlags_NoMove |
+                ImGuiWindowFlags_NoSavedSettings |
+                ImGuiWindowFlags_NoFocusOnAppearing |
+                ImGuiWindowFlags_NoNav |
+                ImGuiWindowFlags_NoBackground;
+
+        ImGui::SetNextWindowPos(
+                ImVec2(displaySize.x * 0.5f, 100.0f),
+                ImGuiCond_Always,
+                ImVec2(0.5f, 0.0f)
+        );
+
+        if (ImGui::Begin("HUD_Defense", nullptr, flags))
+        {
+            //float hp = waveManager.getDefenseHealthPercent();
+            //float time = waveManager.getDefenseTimePercent();
+            float hp = 70.0f;
+            float time = 25.5f;
+
+            ImGui::TextUnformatted("Base Health");
+
+            ImGui::ProgressBar(
+                    hp,
+                    ImVec2(400.0f, 30.0f),
+                    "HP"
+            );
+
+            ImGui::Spacing();
+
+            ImGui::TextUnformatted("Time Remaining");
+
+            ImGui::ProgressBar(
+                    time,
+                    ImVec2(400.0f, 30.0f)
+            );
+        }
+
+        ImGui::End();
+    }
+
+    void Game::renderDestructionUI()
+    {
+        renderCenteredTopText("Destruction");
+
+        ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+
+        ImGuiWindowFlags flags =
+                ImGuiWindowFlags_NoDecoration |
+                ImGuiWindowFlags_AlwaysAutoResize |
+                ImGuiWindowFlags_NoMove |
+                ImGuiWindowFlags_NoSavedSettings |
+                ImGuiWindowFlags_NoFocusOnAppearing |
+                ImGuiWindowFlags_NoNav |
+                ImGuiWindowFlags_NoBackground;
+
+        ImGui::SetNextWindowPos(
+                ImVec2(displaySize.x * 0.5f, 100.0f),
+                ImGuiCond_Always,
+                ImVec2(0.5f, 0.0f)
+        );
+
+        if (ImGui::Begin("HUD_Defense", nullptr, flags))
+        {
+            //float hp = waveManager.getDefenseHealthPercent();
+            //float time = waveManager.getDefenseTimePercent();
+            float hp = 70.0f;
+            float time = 25.5f;
+
+            ImGui::TextUnformatted("Base Health");
+
+            ImGui::ProgressBar(
+                    hp,
+                    ImVec2(400.0f, 30.0f),
+                    "HP"
+            );
+
+            ImGui::Spacing();
+
+            ImGui::TextUnformatted("Time Remaining");
+
+            ImGui::ProgressBar(
+                    time,
+                    ImVec2(400.0f, 30.0f)
+            );
+        }
+
+        ImGui::End();
+    }
+
+    void Game::renderInfectionUI()
+    {
+        renderCenteredTopText("Infection");
+
+        ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+
+        ImGuiWindowFlags flags =
+                ImGuiWindowFlags_NoDecoration |
+                ImGuiWindowFlags_AlwaysAutoResize |
+                ImGuiWindowFlags_NoMove |
+                ImGuiWindowFlags_NoSavedSettings |
+                ImGuiWindowFlags_NoFocusOnAppearing |
+                ImGuiWindowFlags_NoNav |
+                ImGuiWindowFlags_NoBackground;
+
+        ImGui::SetNextWindowPos(
+                ImVec2(displaySize.x * 0.5f, 100.0f),
+                ImGuiCond_Always,
+                ImVec2(0.5f, 0.0f)
+        );
+
+        if (ImGui::Begin("HUD_Infection", nullptr, flags))
+        {
+            //float progress = waveManager.getInfectionProgress();
+            float progress = 0.7f;
+
+
+            ImVec4 color(
+                    1.0f,
+                    1.0f - progress,
+                    1.0f - progress,
+                    1.0f
+            );
+
+            ImGui::PushStyleColor(
+                    ImGuiCol_PlotHistogram,
+                    color
+            );
+
+            ImGui::TextUnformatted("Infection Progress:");
+
+            ImGui::ProgressBar(
+                    progress,
+                    ImVec2(400.0f, 30.0f),
+                    nullptr
+            );
+
+            ImGui::PopStyleColor();
+
+            ImGui::TextUnformatted("Time Remaining:");
+
+            ImGui::ProgressBar(
+                    0.3f,
+                    ImVec2(400.0f, 30.0f)
+            );
+        }
+
+        ImGui::End();
+    }
+
+    void Game::renderUpgradeSelectionUI()
+    {
+        ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+
+        ImGuiWindowFlags flags =
+                ImGuiWindowFlags_NoDecoration |
+                ImGuiWindowFlags_AlwaysAutoResize |
+                ImGuiWindowFlags_NoMove |
+                ImGuiWindowFlags_NoSavedSettings |
+                ImGuiWindowFlags_NoFocusOnAppearing |
+                ImGuiWindowFlags_NoNav |
+                ImGuiWindowFlags_NoBackground;
+
+        ImGui::SetNextWindowPos(
+                ImVec2(
+                        displaySize.x * 0.5f,
+                        displaySize.y * 0.5f
+                ),
+                ImGuiCond_Always,
+                ImVec2(0.5f, 0.5f)
+        );
+
+        if (ImGui::Begin("HUD_UpgradeSelection", nullptr, flags))
+        {
+            ImGui::SetWindowFontScale(2.0f);
+
+            const ImVec2 buttonSize(250.0f, 150.0f);
+
+            if (ImGui::Button("Upgrade A", buttonSize))
+            {
+                // Select upgrade A
+                waveManager.setCurrentWaveMode(WaveMode::Preperation);
+                waveManager.setNextWaveMode(WaveMode::Destruction);
+            }
+
+            ImGui::SameLine();
+
+            if (ImGui::Button("Upgrade B", buttonSize))
+            {
+                // Select upgrade B
+                waveManager.setCurrentWaveMode(WaveMode::Destruction);
+                waveManager.setNextWaveMode(WaveMode::Destruction);
+            }
+
+            ImGui::SameLine();
+
+            if (ImGui::Button("Upgrade C", buttonSize))
+            {
+                // Select upgrade C
+                waveManager.setCurrentWaveMode(WaveMode::Infection);
+                waveManager.setNextWaveMode(WaveMode::Destruction);
+            }
+
+            ImGui::SetWindowFontScale(1.0f);
+        }
+
+        ImGui::End();
     }
 
     void Game::initPostFBO()
@@ -4918,8 +5352,7 @@ glDepthMask(depthMask);
 
         if(normalizedSpeed < 0.05f)
         {
-            std::cout<<"no Speed found\n";
-            return false;
+           return false;
         }
 
         beginPostProcess(destinationFBO);

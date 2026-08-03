@@ -34,6 +34,7 @@ namespace gl3 {
         std::array<float, 3> cooldownsSec { 1.5f, 4.0f, 8.0f };
 
         float radius = 2.5f * VOXEL_SIZE;
+        int32_t weight = 1;
     };
 
     struct EnemyInstance {

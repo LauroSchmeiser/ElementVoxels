@@ -55,3 +55,18 @@ foreach(FILE IN LISTS ASSET_FILES)
 endforeach()
 add_custom_target(copyAssets DEPENDS ${COPIED_FILES})
 add_dependencies(${EXE_FILE} copyAssets)
+
+install(
+        FILES
+        ${CMAKE_SOURCE_DIR}/vc_redist.x64.exe
+        DESTINATION .
+)
+
+include(InstallRequiredSystemLibraries)
+install(TARGETS ${EXE_FILE} RUNTIME DESTINATION .)
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/assets DESTINATION assets)
+
+set(CPACK_GENERATOR "ZIP")
+set(CPACK_PACKAGE_NAME "VoxelGame")
+set(CPACK_PACKAGE_VERSION "1.0.0")
+include(CPack)

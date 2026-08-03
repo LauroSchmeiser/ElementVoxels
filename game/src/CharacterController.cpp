@@ -488,48 +488,82 @@ namespace gl3 {
         }
     }
 
-    glm::vec3 CharacterController::calculateWishVelocity(const glm::vec3 &moveInput,
-                                                         const glm::vec3 &cameraForward,
-                                                         const glm::vec3 &cameraRight) const {
-        glm::vec3 moveUp = state.isSurfaceAdhered
-                           ? glm::normalize(state.adheredNormal)
-                           : glm::normalize(-settings.gravityDir);
+    glm::vec3 CharacterController::calculateWishVelocity(
+            const glm::vec3& moveInput,
+            const glm::vec3& cameraForward,
+            const glm::vec3& cameraRight) const {
+        constexpr float epsilon = 1e-6f;
+
+        if (!state.isSurfaceAdhered) {
+            glm::vec3 forward = cameraForward;
+            if (glm::length(forward) > epsilon) {
+                forward = glm::normalize(forward);
+            } else {
+                forward = glm::vec3(0.0f, 0.0f, -1.0f);
+            }
+
+            glm::vec3 right = cameraRight - forward * glm::dot(cameraRight, forward);
+            if (glm::length(right) > epsilon) {
+                right = glm::normalize(right);
+            } else {
+                glm::vec3 fallbackUp =
+                        std::abs(forward.y) < 0.99f
+                        ? glm::vec3(0.0f, 1.0f, 0.0f)
+                        : glm::vec3(1.0f, 0.0f, 0.0f);
+
+                right = glm::normalize(glm::cross(forward, fallbackUp));
+            }
+
+            glm::vec3 wishDir =
+                    forward * moveInput.z +
+                    right * moveInput.x;
+
+            // Optional free-flight vertical input.
+            if (std::abs(moveInput.y) > epsilon) {
+                glm::vec3 gravityUp = -settings.gravityDir;
+                if (glm::length(gravityUp) > epsilon) {
+                    gravityUp = glm::normalize(gravityUp);
+                } else {
+                    gravityUp = glm::vec3(0.0f, 1.0f, 0.0f);
+                }
+
+                wishDir += gravityUp * moveInput.y;
+            }
+
+            return glm::length(wishDir) > epsilon
+                   ? glm::normalize(wishDir)
+                   : glm::vec3(0.0f);
+        }
+
+        glm::vec3 moveUp = state.adheredNormal;
+        if (glm::length(moveUp) > epsilon) {
+            moveUp = glm::normalize(moveUp);
+        } else {
+            moveUp = glm::vec3(0.0f, 1.0f, 0.0f);
+        }
 
         glm::vec3 forward = cameraForward - moveUp * glm::dot(cameraForward, moveUp);
-        glm::vec3 right   = cameraRight   - moveUp * glm::dot(cameraRight, moveUp);
 
-        float forwardLen = glm::length(forward);
-        float rightLen = glm::length(right);
-
-        if (forwardLen > 1e-5f && rightLen > 1e-5f) {
-            forward = forward / forwardLen;
-            right = right / rightLen;
-        } else if (forwardLen > 1e-5f) {
-            forward = forward / forwardLen;
-            right = glm::cross(forward, moveUp);
-            if (glm::length(right) > 1e-6f) right = glm::normalize(right);
-        } else if (rightLen > 1e-5f) {
-            right = right / rightLen;
-            forward = glm::cross(moveUp, right);
-            if (glm::length(forward) > 1e-6f) forward = glm::normalize(forward);
+        if (glm::length(forward) > epsilon) {
+            forward = glm::normalize(forward);
         } else {
-            if (std::abs(moveUp.y) < 0.99f)
-                forward = glm::normalize(glm::cross(moveUp, glm::vec3(0, 1, 0)));
-            else
-                forward = glm::normalize(glm::cross(moveUp, glm::vec3(1, 0, 0)));
-            right = glm::normalize(glm::cross(forward, moveUp));
+            glm::vec3 reference =
+                    std::abs(moveUp.y) < 0.99f
+                    ? glm::vec3(0.0f, 1.0f, 0.0f)
+                    : glm::vec3(1.0f, 0.0f, 0.0f);
+
+            forward = glm::normalize(glm::cross(reference, moveUp));
         }
 
-        glm::vec3 wishDir = forward * moveInput.z + right * moveInput.x;
+        glm::vec3 right = glm::normalize(glm::cross(forward, moveUp));
 
-        if (moveInput.y != 0.0f) {
-            wishDir += moveUp * moveInput.y;
-        }
+        glm::vec3 wishDir =
+                forward * moveInput.z +
+                right * moveInput.x;
 
-        if (glm::length(wishDir) > 1e-6f)
-            wishDir = glm::normalize(wishDir);
-
-        return wishDir;
+        return glm::length(wishDir) > epsilon
+               ? glm::normalize(wishDir)
+               : glm::vec3(0.0f);
     }
 
     void CharacterController::applyFriction(float deltaTime) {
@@ -773,14 +807,6 @@ namespace gl3 {
             targetSpeed = state.isCrouching ? settings.crouchSpeed :
                           (state.isSprinting ? settings.sprintSpeed : settings.walkSpeed);
         }
-
-        glm::vec3 up = getMovementUpDirection();
-
-        glm::vec3 forward = cameraForward - up * glm::dot(cameraForward, up);
-        glm::vec3 right = cameraRight - up * glm::dot(cameraRight, up);
-
-        if (glm::length(forward) > 1e-6f) forward = glm::normalize(forward);
-        if (glm::length(right) > 1e-6f) right = glm::normalize(right);
 
         glm::vec3 wishDir = calculateWishVelocity(moveInput, cameraForward, cameraRight);
 

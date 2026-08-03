@@ -25,10 +25,21 @@ namespace gl3 {
 
         glm::vec3 centerLocal = glm::vec3(16,16,16) * VOXEL_SIZE;
 
-// Main body
-        e.volume.unionSphere(centerLocal, type.radius, glm::vec3(0.72f, 0.58f, 0.52f), 7, 1);
+        // Main body
+        int mainMat = 7;
+        int mainType = 1;
 
-// MUCH bigger front eye bulge
+        if(strcmp(e.inst.type.name, "Burrower") == 0)
+        {
+            mainMat = 9;
+        }
+        if(strcmp(e.inst.type.name, "Water") == 0)
+        {
+            mainType = 3;
+        }
+        e.volume.unionSphere(centerLocal, type.radius, glm::vec3(0.72f, 0.58f, 0.52f), mainMat, mainType);
+
+        // MUCH bigger front eye bulge
         e.volume.unionSphere(centerLocal + glm::vec3(type.radius * 0.65f, 0, 0),
                              type.radius * 0.65f,  // Larger bulge
                              glm::vec3(0.75f, 0.70f, 0.0f), 8, 1);
@@ -65,7 +76,7 @@ namespace gl3 {
                         segPos,
                         segRadius,
                         glm::vec3(0.36f, 0.22f, 0.26f),
-                        7, 1
+                        mainMat, mainType
                 );
             }
         }
