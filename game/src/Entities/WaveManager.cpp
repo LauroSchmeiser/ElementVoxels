@@ -17,6 +17,13 @@ namespace gl3 {
 
     void WaveManager::update(float dt, const glm::vec3& playerPos) {
         if (!waveActive) return;
+        if((timeBetween>0&&timeElapsed>timeBetween)||objectiveCompleted)
+        {
+            startNextWaveMode();
+        } else if(timeBetween>0)
+        {
+            timeElapsed += dt;
+        }
 
         this->playerPos=playerPos;
 
@@ -32,6 +39,13 @@ namespace gl3 {
                 if (bossWaveActive && e.inst.id == bossId) {
                     // Boss is still alive
                 }
+            }
+        }
+        if(currentWaveMode==WaveMode::Hunt)
+        {
+            if(aliveCount==0&&enemiesSpawned>=enemiesToSpawn)
+            {
+                objectiveCompleted=true;
             }
         }
 
@@ -54,7 +68,7 @@ namespace gl3 {
             }
         }
 
-        if (getRemainingBudget()>0) {
+        if (enemiesToSpawn>enemiesSpawned&&currentWaveMode!=WaveMode::Preperation) {
             if (aliveCount < config.maxConcurrentEnemies) {
                 spawnTimer += dt;
 
@@ -71,6 +85,94 @@ namespace gl3 {
         // Check if wave is complete
         if (getRemainingBudget()<0 && aliveCount == 0) {
             checkWaveCompletion();
+        }
+    }
+
+    void WaveManager::startNextWaveMode()
+    {
+        config.waveNumber++;
+        currentWaveMode = nextWaveMode;
+        timeElapsed = 0.0f;
+        objectiveCompleted = false;
+        nextWaveMode = WaveMode::UpgradeSelection;
+        config.maxConcurrentEnemies = 5 + (config.waveNumber*2);
+        config.enemyBudget= 3 +((config.waveNumber*2));
+
+        config.currentBudget=0;
+        spawnTimer = 0.0f;
+        enemiesSpawned = 0;
+        std::vector<uint64_t> enemyIds;
+
+        for (auto& enemy : enemyManager->all())
+        {
+            enemyIds.push_back(enemy.inst.id);
+        }
+
+        for (uint64_t id : enemyIds)
+        {
+            enemyManager->destroyEnemy(id);
+        }
+
+        currentEnemies.clear();
+        fillEnemyList(currentEnemies);
+        enemiesToSpawn = static_cast<uint32_t>(currentEnemies.size());
+
+
+        switch (currentWaveMode)
+        {
+            case WaveMode::Preperation:
+            {
+                setTimer(10.0f);
+
+                static const std::vector<WaveMode> availableModes = {
+                        WaveMode::Hunt,
+                        WaveMode::Survival,
+                        WaveMode::Mining,
+                        WaveMode::Defense,
+                        WaveMode::Destruction,
+                        WaveMode::Infection
+                };
+
+                std::uniform_int_distribution<size_t> dist(
+                        0,
+                        availableModes.size() - 1
+                );
+
+                nextWaveMode = availableModes[dist(rng)];
+
+                break;
+            }
+
+            case WaveMode::Hunt:
+                setTimer(-1.0f);
+                break;
+
+            case WaveMode::Survival:
+                setTimer(60.0f);
+                config.maxConcurrentEnemies *=2;
+                config.enemyBudget=500;
+                break;
+
+            case WaveMode::Mining:
+                setTimer(1.0f); //TODO:: Change back to -1 after testing other Modes
+                break;
+
+            case WaveMode::Defense:
+                setTimer(60.0f);
+                break;
+
+            case WaveMode::Destruction:
+                setTimer(60.0f);
+                break;
+
+            case WaveMode::Infection:
+                setTimer(60.0f);
+                break;
+
+            case WaveMode::UpgradeSelection:
+                nextWaveMode = WaveMode::Preperation;
+                setTimer(-1.0f);
+                break;
         }
     }
 
@@ -100,28 +202,36 @@ namespace gl3 {
             config.enemyBudget = 3 + (currentWave - 1)*3;
             config.enemyBaseHealth+=(currentWave)*50;
             config.isBossWave = false;
-            enemiesToSpawn = 3;
+            currentEnemies.clear();
+
+            fillEnemyList(currentEnemies);
+
+            enemiesToSpawn = static_cast<uint32_t>(currentEnemies.size());
+
+            std::cout << "Will be spawned: "
+                      << enemiesToSpawn
+                      << "enemies \n";
+
             g_SoundManager.playMusic(SoundID::BackgroundMusic, true, 1.0f);
         }
 
         enemiesRemaining = enemiesToSpawn;
     }
 
-    void WaveManager::spawnEnemy() {
-        if (!enemyManager) return;
-
-        // Get player position (passed in update, but we'll use a dummy for now)
-        glm::vec3 spawnPos = getRandomSpawnPosition(playerPos, MIN_SPAWN_DISTANCE, MAX_SPAWN_DISTANCE);
+    void WaveManager::fillEnemyList(std::vector<EnemyArchetype>& enemies)
+    {
+        if (!enemyManager)
+            return;
 
         static EnemyArchetype basic;
         basic.name = "Basic";
-        basic.maxHP = config.enemyBaseHealth*2;
+        basic.maxHP = config.enemyBaseHealth * 2;
         basic.moveSpeed = 10.0f;
         basic.shapeType = VoxelPhysicsBody::ShapeType::SPHERE;
         basic.mass = 50.0f;
         basic.radius = 2.5f * VOXEL_SIZE;
-        basic.cooldownsSec = { 4.0f, 0.0f, 0.0f };
-        basic.weight=1;
+        basic.cooldownsSec = {4.0f, 0.0f, 0.0f};
+        basic.weight = 1;
 
         static EnemyArchetype dasher;
         dasher.name = "Dasher";
@@ -130,53 +240,86 @@ namespace gl3 {
         dasher.shapeType = VoxelPhysicsBody::ShapeType::SPHERE;
         dasher.mass = 10.0f;
         dasher.radius = 2.0f * VOXEL_SIZE;
-        dasher.cooldownsSec = { 0.0f, 3.0f, 0.0f };
-        dasher.weight=2;
+        dasher.cooldownsSec = {0.0f, 3.0f, 0.0f};
+        dasher.weight = 2;
 
         static EnemyArchetype consumer;
         consumer.name = "Consumer";
-        consumer.maxHP = config.enemyBaseHealth*3;
+        consumer.maxHP = config.enemyBaseHealth * 3;
         consumer.moveSpeed = 30.0f;
         consumer.shapeType = VoxelPhysicsBody::ShapeType::SPHERE;
         consumer.mass = 10.0f;
         consumer.radius = 4.0f * VOXEL_SIZE;
-        consumer.cooldownsSec = { 6.0f, 10.0f, 0.0f };
+        consumer.cooldownsSec = {6.0f, 10.0f, 0.0f};
         consumer.weight = 3;
 
         static EnemyArchetype burrower;
         burrower.name = "Burrower";
-        burrower.maxHP = config.enemyBaseHealth*3;
+        burrower.maxHP = config.enemyBaseHealth * 3;
         burrower.moveSpeed = 20.0f;
         burrower.shapeType = VoxelPhysicsBody::ShapeType::SPHERE;
         burrower.mass = 10.0f;
         burrower.radius = 3.0f * VOXEL_SIZE;
-        burrower.cooldownsSec = { 0.0f, 6.0f, 0.0f };
+        burrower.cooldownsSec = {0.0f, 6.0f, 0.0f};
         burrower.weight = 2;
 
         static EnemyArchetype water;
         water.name = "Water";
-        water.maxHP = config.enemyBaseHealth*3;
+        water.maxHP = config.enemyBaseHealth * 3;
         water.moveSpeed = 20.0f;
         water.shapeType = VoxelPhysicsBody::ShapeType::SPHERE;
         water.mass = 10.0f;
         water.radius = 3.0f * VOXEL_SIZE;
-        water.cooldownsSec = { 4.0f, 0.0f, 0.0f };
+        water.cooldownsSec = {4.0f, 0.0f, 0.0f};
         water.weight = 2;
 
+        std::vector<EnemyArchetype> enemyTypes;
 
-        std::vector<EnemyArchetype> enemies;
-        enemies.push_back(basic);
-        enemies.push_back(dasher);
-        if(currentWave>BOSS_WAVE_INTERVAL)
+        enemyTypes.push_back(basic);
+        enemyTypes.push_back(dasher);
+
+        if (currentWave > BOSS_WAVE_INTERVAL)
         {
-            enemies.push_back(consumer);
+            enemyTypes.push_back(consumer);
         }
-        std::uniform_real_distribution<float> distEnemies(0, enemies.size());
-        int enemyPos = distEnemies(rng);
-        config.currentBudget+=enemies.at(enemyPos).weight;
-        enemyManager->spawn(enemies.at(enemyPos), spawnPos);
 
-        enemies.clear();
+        while (config.currentBudget < config.enemyBudget)
+        {
+            std::uniform_int_distribution<size_t> distEnemies(
+                    0,
+                    enemyTypes.size() - 1
+            );
+
+            size_t enemyPos = distEnemies(rng);
+
+            const EnemyArchetype& selectedEnemy = enemyTypes[enemyPos];
+
+            if (config.currentBudget + selectedEnemy.weight > config.enemyBudget)
+            {
+                continue;
+            }
+
+            config.currentBudget += selectedEnemy.weight;
+            enemies.push_back(selectedEnemy);
+        }
+    }
+
+    void WaveManager::spawnEnemy()
+    {
+        if (!enemyManager || currentEnemies.empty())
+            return;
+
+        glm::vec3 spawnPos = getRandomSpawnPosition(
+                playerPos,
+                MIN_SPAWN_DISTANCE,
+                MAX_SPAWN_DISTANCE
+        );
+
+        EnemyArchetype enemy = currentEnemies.front();
+
+        currentEnemies.erase(currentEnemies.begin());
+        enemyManager->spawn(enemy, spawnPos);
+
         enemiesSpawned++;
     }
 

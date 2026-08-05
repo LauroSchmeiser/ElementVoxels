@@ -90,6 +90,18 @@ namespace gl3 {
             return modeToString(nextWaveMode);
         }
 
+        float getRemainingTimerPercent() const {
+            return ((timeElapsed>0.0f)? (timeElapsed/timeBetween): 0);
+        }
+
+        void setTimer(float time) {
+            timeBetween = time;
+        }
+
+        void setCompletion(bool isComplete)
+        {
+            objectiveCompleted = isComplete;
+        }
 
     private:
         void spawnEnemy();
@@ -104,10 +116,13 @@ namespace gl3 {
         uint32_t currentWave = 0;
         WaveMode currentWaveMode = WaveMode::Preperation;
         WaveMode nextWaveMode = WaveMode::Hunt;
-
+        float timeBetween = 15.0f;
+        float timeElapsed = 0.0f;
+        bool objectiveCompleted = false;
         uint32_t enemiesRemaining = 0;
         uint32_t enemiesSpawned = 0;
         uint32_t enemiesToSpawn = 0;
+        std::vector<EnemyArchetype> currentEnemies;
         bool waveActive = false;
         bool bossWaveActive = false;
         uint64_t bossId = 0;
@@ -125,6 +140,10 @@ namespace gl3 {
         static constexpr float MAX_SPAWN_DISTANCE = 100.0f*VOXEL_SIZE;
 
         glm::vec3 playerPos;
+
+        void fillEnemyList(std::vector<EnemyArchetype> &enemies);
+
+        void startNextWaveMode();
     };
 
 }

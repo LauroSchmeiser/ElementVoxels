@@ -26,7 +26,7 @@ namespace gl3 {
     void LoadingScene::onExit(Game& game)
     {
         //glfwSetInputMode(game.getWindow(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-        std::cout<<"HelloWorld";
+        std::cout<<"HelloWorld\n";
     }
 
     void LoadingScene::update(Game& game, float dt)

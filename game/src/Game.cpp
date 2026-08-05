@@ -904,7 +904,7 @@ namespace gl3 {
                 ImGui::PopItemWidth();
             }
 
-            //renderWaveModeUI();
+            renderWaveModeUI();
 
             // In ImGui rendering:
             float intensity = waveManager.getWaveIntensity();
@@ -941,7 +941,7 @@ namespace gl3 {
         // ----------------
         // (B) Pause menu
         // ----------------
-        if (paused)
+        if (paused&&waveManager.getCurrentWaveMode()!=WaveMode::UpgradeSelection)
         {
             ImGuiIO& io = ImGui::GetIO();
             const ImVec2 center(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
@@ -1192,6 +1192,8 @@ namespace gl3 {
 
     void Game::renderCenteredTopText(const std::string& text)
     {
+        ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+
         ImGuiWindowFlags flags =
                 ImGuiWindowFlags_NoDecoration |
                 ImGuiWindowFlags_AlwaysAutoResize |
@@ -1201,15 +1203,10 @@ namespace gl3 {
                 ImGuiWindowFlags_NoNav |
                 ImGuiWindowFlags_NoBackground;
 
-        ImVec2 displaySize = ImGui::GetIO().DisplaySize;
-
-        ImVec2 textSize = ImGui::CalcTextSize(text.c_str());
-
-        float x = (displaySize.x - textSize.x) * 0.5f;
-
         ImGui::SetNextWindowPos(
-                ImVec2(x, 20.0f),
-                ImGuiCond_Always
+                ImVec2(displaySize.x * 0.5f, 20.0f),
+                ImGuiCond_Always,
+                ImVec2(0.5f, 0.0f)
         );
 
         if (ImGui::Begin("HUD_CenterText", nullptr, flags))
@@ -1228,6 +1225,32 @@ namespace gl3 {
                 "Next up: " +
                 std::string(waveManager.getNextWaveModeString())
         );
+        ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+
+        ImGuiWindowFlags flags =
+                ImGuiWindowFlags_NoDecoration |
+                ImGuiWindowFlags_AlwaysAutoResize |
+                ImGuiWindowFlags_NoMove |
+                ImGuiWindowFlags_NoSavedSettings |
+                ImGuiWindowFlags_NoFocusOnAppearing |
+                ImGuiWindowFlags_NoNav |
+                ImGuiWindowFlags_NoBackground;
+
+        ImGui::SetNextWindowPos(
+                ImVec2(displaySize.x * 0.5f, 100.0f),
+                ImGuiCond_Always,
+                ImVec2(0.5f, 0.0f)
+        );
+        if (ImGui::Begin("HUD_Timer", nullptr, flags))
+        {
+            renderProgressBar(
+                    "Time remaining",
+                    1-waveManager.getRemainingTimerPercent(),
+                    nullptr
+            );
+        }
+        ImGui::End();
+
     }
 
     void Game::renderHuntUI()
@@ -1281,7 +1304,8 @@ namespace gl3 {
         renderCenteredTopText("Survival");
 
         //float progress = waveManager.getSurvivalTimePercent();
-        float progress = 25.5f;
+        float progress = 1.0f-waveManager.getRemainingTimerPercent();
+        std::cout<<"current progress"<<progress<<"\n";
 
         ImVec2 displaySize = ImGui::GetIO().DisplaySize;
 
@@ -1379,9 +1403,8 @@ namespace gl3 {
         if (ImGui::Begin("HUD_Defense", nullptr, flags))
         {
             //float hp = waveManager.getDefenseHealthPercent();
-            //float time = waveManager.getDefenseTimePercent();
             float hp = 70.0f;
-            float time = 25.5f;
+            float time = 1.0f-waveManager.getRemainingTimerPercent();
 
             ImGui::TextUnformatted("Base Health");
 
@@ -1428,9 +1451,8 @@ namespace gl3 {
         if (ImGui::Begin("HUD_Defense", nullptr, flags))
         {
             //float hp = waveManager.getDefenseHealthPercent();
-            //float time = waveManager.getDefenseTimePercent();
             float hp = 70.0f;
-            float time = 25.5f;
+            float time = 1.0f-waveManager.getRemainingTimerPercent();
 
             ImGui::TextUnformatted("Base Health");
 
@@ -1503,9 +1525,10 @@ namespace gl3 {
             ImGui::PopStyleColor();
 
             ImGui::TextUnformatted("Time Remaining:");
+            float time = 1.0f-waveManager.getRemainingTimerPercent();
 
             ImGui::ProgressBar(
-                    0.3f,
+                    time,
                     ImVec2(400.0f, 30.0f)
             );
         }
@@ -1515,6 +1538,8 @@ namespace gl3 {
 
     void Game::renderUpgradeSelectionUI()
     {
+        setPaused(true);
+
         ImVec2 displaySize = ImGui::GetIO().DisplaySize;
 
         ImGuiWindowFlags flags =
@@ -1541,29 +1566,35 @@ namespace gl3 {
 
             const ImVec2 buttonSize(250.0f, 150.0f);
 
-            if (ImGui::Button("Upgrade A", buttonSize))
+            if (ImGui::Button("Heal 25% Health", buttonSize))
             {
                 // Select upgrade A
-                waveManager.setCurrentWaveMode(WaveMode::Preperation);
-                waveManager.setNextWaveMode(WaveMode::Destruction);
+                setPlayerHealth(glm::clamp(getPlayerHealth()+getPlayerMaxHealth()*0.25f, getPlayerHealth(), getPlayerMaxHealth()));
+                waveManager.setCompletion(true);
+                setPaused(false);
             }
 
             ImGui::SameLine();
 
-            if (ImGui::Button("Upgrade B", buttonSize))
+            if (ImGui::Button("Gain Max Health", buttonSize))
             {
                 // Select upgrade B
-                waveManager.setCurrentWaveMode(WaveMode::Destruction);
-                waveManager.setNextWaveMode(WaveMode::Destruction);
+                setPlayerMaxHealth(getPlayerMaxHealth()*2);
+                waveManager.setCompletion(true);
+                togglePaused();
+                setPaused(false);
+
             }
 
             ImGui::SameLine();
 
-            if (ImGui::Button("Upgrade C", buttonSize))
+            if (ImGui::Button("No Upgrade for youuuu", buttonSize))
             {
                 // Select upgrade C
-                waveManager.setCurrentWaveMode(WaveMode::Infection);
-                waveManager.setNextWaveMode(WaveMode::Destruction);
+                waveManager.setCompletion(true);
+                togglePaused();
+                setPaused(false);
+
             }
 
             ImGui::SetWindowFontScale(1.0f);
@@ -3068,9 +3099,9 @@ namespace gl3 {
     }
 
 void Game::updateDeltaTime() {
-float frameTime = glfwGetTime();
-deltaTime = frameTime - lastFrameTime;
-lastFrameTime = frameTime;
+    float frameTime = glfwGetTime();
+    deltaTime = deltaTime = frameTime - lastFrameTime;
+    lastFrameTime = frameTime;
 }
 
 //------Lighting-Code---------------------------------------------------------------------------------------------------------------------------
