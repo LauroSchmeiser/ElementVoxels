@@ -360,7 +360,6 @@ void main() {
         emiss += vertexColor * emissionIntensity;
     }
 
-
     vec3 diffuse = lightAccum * (albedo / PI);
     float aoFilled = 0.0;
     float aoTex = sampleTriplanarScalarFallback(

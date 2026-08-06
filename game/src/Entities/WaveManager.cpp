@@ -48,6 +48,13 @@ namespace gl3 {
                 objectiveCompleted=true;
             }
         }
+        if(currentWaveMode==WaveMode::Mining)
+        {
+            if(materialMined>=materialNeeded)
+            {
+                objectiveCompleted=true;
+            }
+        }
 
         // If boss wave, check if boss is dead
         if (bossWaveActive && bossId != 0) {
@@ -91,6 +98,7 @@ namespace gl3 {
     void WaveManager::startNextWaveMode()
     {
         config.waveNumber++;
+        config.enemyBaseHealth+=(config.waveNumber)*50.0f;
         currentWaveMode = nextWaveMode;
         timeElapsed = 0.0f;
         objectiveCompleted = false;
@@ -105,7 +113,7 @@ namespace gl3 {
 
         for (auto& enemy : enemyManager->all())
         {
-            enemyIds.push_back(enemy.inst.id);
+            enemyIds.push_back(enemy.inst.bodyId);
         }
 
         for (uint64_t id : enemyIds)
@@ -128,9 +136,9 @@ namespace gl3 {
                         WaveMode::Hunt,
                         WaveMode::Survival,
                         WaveMode::Mining,
-                        WaveMode::Defense,
-                        WaveMode::Destruction,
-                        WaveMode::Infection
+                        //WaveMode::Defense,
+                        //WaveMode::Destruction,
+                        //WaveMode::Infection
                 };
 
                 std::uniform_int_distribution<size_t> dist(
@@ -154,8 +162,17 @@ namespace gl3 {
                 break;
 
             case WaveMode::Mining:
-                setTimer(1.0f); //TODO:: Change back to -1 after testing other Modes
+            {
+                setTimer(-1.0f);
+
+                materialMined = 0;
+                materialNeeded = 1500*glm::sqrt(currentWave);
+
+                std::uniform_int_distribution<int> materialDist(0, 6);
+                materialToMine = materialDist(rng);
+
                 break;
+            }
 
             case WaveMode::Defense:
                 setTimer(60.0f);
@@ -189,7 +206,7 @@ namespace gl3 {
         bossWaveActive = (currentWave % BOSS_WAVE_INTERVAL == 0);
 
         if (bossWaveActive) {
-            config.waveNumber = currentWave;
+           // config.waveNumber = currentWave;
             config.enemyBudget = 0;
             config.isBossWave = true;
             enemiesToSpawn = 0;
@@ -198,7 +215,7 @@ namespace gl3 {
             g_SoundManager.playMusic(SoundID::BossTheme, true, 1.0f);
 
         } else {
-            config.waveNumber = currentWave;
+            //config.waveNumber = currentWave;
             config.enemyBudget = 3 + (currentWave - 1)*3;
             config.enemyBaseHealth+=(currentWave)*50;
             config.isBossWave = false;
@@ -437,7 +454,7 @@ namespace gl3 {
                     return "Stay alive to move on to the next wave!";
 
                 case WaveMode::Mining:
-                    return "Fill the bar by mining enough of the specified material to move on to the next wave!";
+                    return "Mine enough of the specified material using Q to move on to the next wave!";
 
                 case WaveMode::Defense:
                     return "Defend the core to move on to the next wave, if it is destroyed, a catastrophe will emerge!";
@@ -446,7 +463,7 @@ namespace gl3 {
                     return "Keep the enemies from finishing their construction, if they finish it, a catastrophe will emerge!";
 
                 case WaveMode::Infection:
-                    return "Keep the enemies from taking over the world by converting it to meat, if they convert the whole world, a catastrophe will emerge!";
+                    return "Keep the enemies from taking over the world by converting it to flesh, if they convert the whole world, a catastrophe will emerge!";
 
                 case WaveMode::Preperation:
                 default:

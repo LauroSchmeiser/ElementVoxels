@@ -242,42 +242,66 @@ namespace gl3 {
         std::array<std::string, M> aoPaths{};
         std::array<std::string, M> heightPaths{};
 
-        albedoPaths[0] = gl3::resolveAssetPath("textures/cobble.jpg").string();
+        albedoPaths[0] = gl3::resolveAssetPath("textures/marble_rock_03_diff_4k.jpg").string();
+        normalPaths[0] = gl3::resolveAssetPath("textures/marble_rock_03_nor_gl_4k.png").string();
+        roughPaths[0]  = gl3::resolveAssetPath("textures/marble_rock_03_rough_4k.png").string();
+        heightPaths[0] = gl3::resolveAssetPath("textures/marble_rock_03_disp_4k.png").string();
 
-        albedoPaths[1] = gl3::resolveAssetPath("textures/aerial_rocks_02_diff_4k.jpg").string();
-        normalPaths[1] = gl3::resolveAssetPath("textures/aerial_rocks_02_nor_gl_4k.png").string();
-        roughPaths[1]  = gl3::resolveAssetPath("textures/aerial_rocks_02_rough_4k.jpg").string();
-        heightPaths[1] = gl3::resolveAssetPath("textures/aerial_rocks_02_disp_4k.png").string();
+        albedoPaths[1] = gl3::resolveAssetPath("textures/ground_0035_color_1k.jpg").string();
+        aoPaths[1] = gl3::resolveAssetPath("textures/ground_0035_ao_1k.jpg").string();
+        normalPaths[1] = gl3::resolveAssetPath("textures/ground_0035_normal_opengl_1k.png").string();
+        roughPaths[1] = gl3::resolveAssetPath("textures/ground_0035_roughness_1k.jpg").string();
+        heightPaths[1] = gl3::resolveAssetPath("textures/ground_0035_height_1k.png").string();
 
-        albedoPaths[2] = gl3::resolveAssetPath("textures/aerial_rocks_04_diff_4k.jpg").string();
-        normalPaths[2] = gl3::resolveAssetPath("textures/aerial_rocks_04_nor_gl_4k.png").string();
-        roughPaths[2]  = gl3::resolveAssetPath("textures/aerial_rocks_04_rough_4k.jpg").string();
-        heightPaths[2] = gl3::resolveAssetPath("textures/aerial_rocks_04_disp_4k.png").string();
+        albedoPaths[2] = gl3::resolveAssetPath("textures/sand/ground_0024_color_1k.jpg").string();
+        normalPaths[2] = gl3::resolveAssetPath("textures/sand/ground_0024_normal_opengl_1k.png").string();
+        roughPaths[2]  = gl3::resolveAssetPath("textures/sand/ground_0024_roughness_1k.jpg").string();
+        aoPaths[2] = gl3::resolveAssetPath("textures/sand/ground_0024_ao_1k.jpg").string();;
+        heightPaths[2] = gl3::resolveAssetPath("textures/sand/ground_0024_height_1k.png").string();
 
-        albedoPaths[3] = gl3::resolveAssetPath("textures/ground_0035_color_1k.jpg").string();
-        aoPaths[3] = gl3::resolveAssetPath("textures/ground_0035_ao_1k.jpg").string();
-        normalPaths[3] = gl3::resolveAssetPath("textures/ground_0035_normal_opengl_1k.png").string();
-        roughPaths[3] = gl3::resolveAssetPath("textures/ground_0035_roughness_1k.jpg").string();
-        heightPaths[3] = gl3::resolveAssetPath("textures/ground_0035_height_1k.png").string();
+        albedoPaths[3] = gl3::resolveAssetPath("textures/rock_0001_color_1k.jpg").string();
+        normalPaths[3] = gl3::resolveAssetPath("textures/rock_0001_normal_opengl_1k.png").string();
+        roughPaths[3]  = gl3::resolveAssetPath("textures/rock_0001_roughness_1k.jpg").string();
+        //aoPaths[3] = gl3::resolveAssetPath("textures/rock_0001_ao_1k.jpg").string();;
+        heightPaths[3] = gl3::resolveAssetPath("textures/rock_0001_height_1k.png").string();
 
-        albedoPaths[4] = gl3::resolveAssetPath("textures/marble_rock_03_diff_4k.jpg").string();
-        normalPaths[4] = gl3::resolveAssetPath("textures/marble_rock_03_nor_gl_4k.png").string();
-        roughPaths[4]  = gl3::resolveAssetPath("textures/marble_rock_03_rough_4k.png").string();
-        heightPaths[4] = gl3::resolveAssetPath("textures/marble_rock_03_disp_4k.png").string();
+        //albedoPaths[2] = gl3::resolveAssetPath("textures/aerial_rocks_04_diff_4k.jpg").string();
+        //normalPaths[2] = gl3::resolveAssetPath("textures/aerial_rocks_04_nor_gl_4k.png").string();
+        //roughPaths[2]  = gl3::resolveAssetPath("textures/aerial_rocks_04_rough_4k.jpg").string();
+        //heightPaths[2] = gl3::resolveAssetPath("textures/aerial_rocks_04_disp_4k.png").string();
 
-        albedoPaths[5] = gl3::resolveAssetPath("textures/rock_0001_color_1k.jpg").string();
-        normalPaths[5] = gl3::resolveAssetPath("textures/rock_0001_normal_opengl_1k.png").string();
-        roughPaths[5]  = gl3::resolveAssetPath("textures/rock_0001_roughness_1k.jpg").string();
-        //aoPaths[5] = gl3::resolveAssetPath("textures/rock_0001_ao_1k.jpg").string();;
-        heightPaths[5] = gl3::resolveAssetPath("textures/rock_0001_height_1k.png").string();
+        //albedoPaths[3] = gl3::resolveAssetPath("textures/aerial_rocks_02_diff_4k.jpg").string();
+        //normalPaths[3] = gl3::resolveAssetPath("textures/aerial_rocks_02_nor_gl_4k.png").string();
+        //roughPaths[3]  = gl3::resolveAssetPath("textures/aerial_rocks_02_rough_4k.jpg").string();
+        //heightPaths[3] = gl3::resolveAssetPath("textures/aerial_rocks_02_disp_4k.png").string();
 
-        albedoPaths[6] = gl3::resolveAssetPath("textures/water.png").string();
+        albedoPaths[4] = gl3::resolveAssetPath("textures/metal/metal_0081_color_1k_edited.jpg").string();
+        normalPaths[4] = gl3::resolveAssetPath("textures/metal/metal_0081_normal_opengl_1k.png").string();
+        roughPaths[4]  = gl3::resolveAssetPath("textures/metal/metal_0081_roughness_1k.jpg").string();
+        aoPaths[7] = gl3::resolveAssetPath("textures/metal/metal_0081_ao_1k.jpg").string();;
+        heightPaths[4] = gl3::resolveAssetPath("textures/metal/metal_0081_height_1k.png").string();
 
-        albedoPaths[7] = gl3::resolveAssetPath("textures/flesh.jpg").string();
-        normalPaths[7] = gl3::resolveAssetPath("textures/flesh_normal_opengl_1k.png").string();
-        roughPaths[7]  = gl3::resolveAssetPath("textures/flesh_roughness_1k.jpg").string();
-        aoPaths[7] = gl3::resolveAssetPath("textures/flesh_ao_1k.jpg").string();;
-        heightPaths[7] = gl3::resolveAssetPath("textures/flesh_height_1k.png").string();
+        //albedoPaths[4] = gl3::resolveAssetPath("textures/cobble.jpg").string();
+
+        albedoPaths[5] = gl3::resolveAssetPath("textures/ice/others_0002_color_1k.jpg").string();
+        normalPaths[5] = gl3::resolveAssetPath("textures/ice/others_0002_normal_opengl_1k.png").string();
+        roughPaths[5]  = gl3::resolveAssetPath("textures/ice/others_0002_roughness_1k.jpg").string();
+        aoPaths[7] = gl3::resolveAssetPath("textures/ice/others_0002_ao_1k.jpg").string();;
+        heightPaths[5] = gl3::resolveAssetPath("textures/ice/others_0002_height_1k.png").string();
+
+        albedoPaths[6] = gl3::resolveAssetPath("textures/crystal/ground_0025_color_1k_edited.jpg").string();
+        normalPaths[6] = gl3::resolveAssetPath("textures/crystal/ground_0025_normal_opengl_1k.png").string();
+        aoPaths[7] = gl3::resolveAssetPath("textures/crystal/ground_0025_ao_1k.jpg").string();;
+        roughPaths[6]  = gl3::resolveAssetPath("textures/crystal/ground_0025_roughness_1k.jpg").string();
+        heightPaths[6] = gl3::resolveAssetPath("textures/crystal/ground_0025_height_1k.png").string();
+
+        //albedoPaths[6] = gl3::resolveAssetPath("textures/water.png").string();
+
+        albedoPaths[7] = gl3::resolveAssetPath("textures/flesh/flesh.jpg").string();
+        normalPaths[7] = gl3::resolveAssetPath("textures/flesh/flesh_normal_opengl_1k.png").string();
+        roughPaths[7]  = gl3::resolveAssetPath("textures/flesh/flesh_roughness_1k.jpg").string();
+        aoPaths[7] = gl3::resolveAssetPath("textures/flesh/flesh_ao_1k.jpg").string();;
+        heightPaths[7] = gl3::resolveAssetPath("textures/flesh/flesh_height_1k.png").string();
 
         albedoPaths[8] = gl3::resolveAssetPath("textures/EyeMaterial_new.png").string();
 
@@ -307,23 +331,23 @@ namespace gl3 {
 
         materials.params[2].roughness = 1.0f;
         materials.params[2].specular  = 0.05f;
-        materials.params[2].uvScale   = 0.05f;
+        materials.params[2].uvScale   = 0.02f;
 
         materials.params[3].roughness = 1.0f;
         materials.params[3].specular  = 0.05f;
-        materials.params[3].uvScale   = 0.05f;
+        materials.params[3].uvScale   = 0.01f;
 
-        materials.params[4].roughness = 1.0f;
-        materials.params[4].specular  = 0.05f;
-        materials.params[4].uvScale   = 0.05f;
+        materials.params[4].roughness = 0.3f;
+        materials.params[4].specular  = 0.5f;
+        materials.params[4].uvScale   = 0.015f;
 
-        materials.params[5].roughness = 1.0f;
-        materials.params[5].specular  = 0.05f;
-        materials.params[5].uvScale   = 0.05f;
+        materials.params[5].roughness = 0.0f;
+        materials.params[5].specular  = 1.0f;
+        materials.params[5].uvScale   = 0.015f;
 
-        materials.params[6].roughness = 1.0f;
-        materials.params[6].specular  = 0.05f;
-        materials.params[6].uvScale   = 0.05f;
+        materials.params[6].roughness = 0.1f;
+        materials.params[6].specular  = 0.75f;
+        materials.params[6].uvScale   = 0.015f;
 
         materials.params[7].roughness = 0.85f;
         materials.params[7].specular  = 0.2f;
@@ -338,7 +362,7 @@ namespace gl3 {
         materials.params[9].uvScale   = 0.125f;
 
         for (int i = 0; i < M; ++i) {
-            rough[i]   = materials.params[i].roughness; // float array
+            rough[i]   = materials.params[i].roughness;
             spec[i]    = materials.params[i].specular;
             uvScale[i] = materials.params[i].uvScale;
         }
@@ -770,6 +794,7 @@ namespace gl3 {
             case PreloadStage::Run_Input:
                 preloadStageName = "Setting up input...";
                 setupInput();
+                waveManager.resetWaveState();
                 preloadStage = PreloadStage::Run_World;
                 return 0.80f;
 
@@ -912,7 +937,7 @@ namespace gl3 {
 
             ImGui::PushStyleColor(ImGuiCol_Text, textColor);
             ImGui::Text("Wave: %d", waveManager.getCurrentWave());
-            ImGui::Text("Enemies: %d", waveManager.getEnemiesRemaining());
+         //   ImGui::Text("Enemies: %d", waveManager.getEnemiesRemaining());
             ImGui::PopStyleColor();
 
             if (waveManager.isBossActive()) {
@@ -1120,7 +1145,6 @@ namespace gl3 {
                     if (changed) {
                         g_SoundManager.playSound(SoundID::ButtonClick, 1.0f, 1.0f, true, true,4);
                         applyAudioSettings();
-                     //   applyVisualSettings();
                     }
 
                     ImGui::Spacing();
@@ -1225,6 +1249,7 @@ namespace gl3 {
                 "Next up: " +
                 std::string(waveManager.getNextWaveModeString())
         );
+
         ImVec2 displaySize = ImGui::GetIO().DisplaySize;
 
         ImGuiWindowFlags flags =
@@ -1241,6 +1266,19 @@ namespace gl3 {
                 ImGuiCond_Always,
                 ImVec2(0.5f, 0.0f)
         );
+        if (ImGui::Begin("HUD_Description", nullptr, flags))
+        {
+            ImGui::SetWindowFontScale(3.0f);
+            ImGui::TextUnformatted(waveManager.getNextWaveModeDescription());
+            ImGui::SetWindowFontScale(1.0f);
+        }
+        ImGui::End();
+
+        ImGui::SetNextWindowPos(
+                ImVec2(displaySize.x * 0.5f, 180.0f),
+                ImGuiCond_Always,
+                ImVec2(0.5f, 0.0f)
+        );
         if (ImGui::Begin("HUD_Timer", nullptr, flags))
         {
             renderProgressBar(
@@ -1250,7 +1288,6 @@ namespace gl3 {
             );
         }
         ImGui::End();
-
     }
 
     void Game::renderHuntUI()
@@ -1276,10 +1313,14 @@ namespace gl3 {
 
         if (ImGui::Begin("HUD_Hunt", nullptr, flags))
         {
+            ImGui::SetWindowFontScale(3.0f);
+
             ImGui::Text(
                     "Enemies remaining: %d",
                     waveManager.getEnemiesRemaining()
             );
+            ImGui::SetWindowFontScale(1.0f);
+
         }
 
         ImGui::End();
@@ -1290,7 +1331,9 @@ namespace gl3 {
             float progress,
             const char* overlay)
     {
+        ImGui::SetWindowFontScale(3.0f);
         ImGui::TextUnformatted(label);
+        ImGui::SetWindowFontScale(1.0f);
 
         ImGui::ProgressBar(
                 glm::clamp(progress, 0.0f, 1.0f),
@@ -1303,9 +1346,7 @@ namespace gl3 {
     {
         renderCenteredTopText("Survival");
 
-        //float progress = waveManager.getSurvivalTimePercent();
         float progress = 1.0f-waveManager.getRemainingTimerPercent();
-        std::cout<<"current progress"<<progress<<"\n";
 
         ImVec2 displaySize = ImGui::GetIO().DisplaySize;
 
@@ -1338,7 +1379,10 @@ namespace gl3 {
 
     void Game::renderMiningUI()
     {
-        renderCenteredTopText("Mining");
+        renderCenteredTopText(
+                std::string("Mining material: ") +
+                materialToString(waveManager.materialToMine, 1)
+        );
 
         ImVec2 displaySize = ImGui::GetIO().DisplaySize;
 
@@ -1359,9 +1403,7 @@ namespace gl3 {
 
         if (ImGui::Begin("HUD_Mining", nullptr, flags))
         {
-            //float progress = waveManager.getMiningProgress();
-            float progress = 0.5f;
-
+            float progress = ((float)waveManager.materialMined/(float)waveManager.materialNeeded);
 
             ImGui::ProgressBar(
                     progress,
@@ -2502,10 +2544,15 @@ namespace gl3 {
 
     static inline int decideMaterial(int random)
     {
-        if(random<35)
+        //0=Stone, 1=Earth, 2 = Sand, 3 = Shatterstone, 4 = Ice, 5 = Metal, 6= Crystal,7 = Flesh, 8 = Eye, 9 = Magma
+        if(random<20)
         {
             return 0;
-        } else if(random<45)
+        } else if(random<35)
+        {
+          return 6;
+        }
+        else if(random<45)
         {
             return 1;
         }
@@ -2577,6 +2624,10 @@ namespace gl3 {
         std::uniform_real_distribution<float> distColor(0.3f, 1.0f);
         std::uniform_real_distribution<float> distMat(0.0f, 100.9f);
 
+        std::uniform_real_distribution<float> waterDistColorR(0.0f, 0.1f);
+        std::uniform_real_distribution<float> waterDistColorG(0.4f, 0.9f);
+        std::uniform_real_distribution<float> waterDistColorB(0.5f, 1.0f);
+
         std::vector<WorldPlanet> worldPlanets;
 
         //clear old data:
@@ -2611,7 +2662,23 @@ namespace gl3 {
             p.color = glm::vec3(distColor(rng), distColor(rng), distColor(rng));
             p.type = 1; // solid
             p.material=decideMaterial((int)distMat(rng));
+            if(p.material==4)
+            {
+                p.color = glm::vec3(waterDistColorR(rng), waterDistColorG(rng), waterDistColorB(rng));
+            }
             //p.material=0;
+            worldPlanets.push_back(p);
+        }
+
+        // Create water planets (type 3)
+
+        int waterCount = 5 ;
+        for (int i = 0; i < waterCount; ++i) {
+            WorldPlanet p;
+            p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
+            p.radius = distScale(rng) * CHUNK_SIZE;
+            p.color = glm::vec3(waterDistColorR(rng), waterDistColorG(rng), waterDistColorB(rng));
+            p.type = 3;
             worldPlanets.push_back(p);
         }
 
@@ -2629,36 +2696,6 @@ namespace gl3 {
             p.type = 2; // fire
             p.material = 9; // fire
 
-            worldPlanets.push_back(p);
-        }
-
-        // Create water planets (type 3)
-        std::uniform_real_distribution<float> waterDistColorR(0.0f, 0.1f);
-        std::uniform_real_distribution<float> waterDistColorG(0.4f, 0.9f);
-        std::uniform_real_distribution<float> waterDistColorB(0.5f, 1.0f);
-
-        int waterCount = 5 ;
-        for (int i = 0; i < waterCount; ++i) {
-            WorldPlanet p;
-            p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
-            p.radius = distScale(rng) * CHUNK_SIZE;
-            p.color = glm::vec3(waterDistColorR(rng), waterDistColorG(rng), waterDistColorB(rng));
-            p.type = 3;
-            worldPlanets.push_back(p);
-        }
-
-        // Create gas planets (type 4)
-        std::uniform_real_distribution<float> gasDistColorR(0.0f, 0.0f);
-        std::uniform_real_distribution<float> gasDistColorG(1.0f, 1.0f);
-        std::uniform_real_distribution<float> gasDistColorB(0.0f, 0.0f);
-
-        int gasCount = 0;
-        for (int i = 0; i < gasCount; ++i) {
-            WorldPlanet p;
-            p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
-            p.radius = distScale(rng) * CHUNK_SIZE;
-            p.color = glm::vec3(gasDistColorR(rng), gasDistColorG(rng), gasDistColorB(rng));
-            p.type = 4;
             worldPlanets.push_back(p);
         }
 
@@ -2713,7 +2750,6 @@ namespace gl3 {
                                         }
                                     } else {
                                         float existingDensity = vox.density;
-
                                         if (planetDensity > existingDensity) {
                                             vox.density = planetDensity;
                                             vox.color = planet.color;
@@ -2721,6 +2757,8 @@ namespace gl3 {
                                             if (planetDensity >= -1.0f) {
                                                 vox.type = planet.type;
                                                 vox.material = planet.material;
+                                                vox.fluidDensity = -1.0f;
+
                                                 if (planetDensity >= 0) {
                                                     solidVoxels++;
                                                     chunkTouched = true;
@@ -3470,6 +3508,15 @@ if (actions["AirReset"].wasJustReleased) {
     spellSystem->castWall(spellCenter, glm::vec3(0,-1,0),
                   wallWidth, wallHeight, wallThickness,
                   0, 7.5f*VOXEL_SIZE,makeVoxelTypeMask({1}));
+}
+if(actions["RollLeft"].wasJustPressed)
+{
+    RayCastResult hit = rayCastFromCamera(5.0f);
+    glm::vec3 spellCenter = hit.hit ? hit.hitPosition :
+                            (cameraPos + getCameraFront() * 35.0f);
+
+    waveManager.materialMined+=mineSolidWorld(spellCenter, 12.0f);
+    std::cout<<"current material collected: "<<waveManager.materialMined<<"\n";
 }
 
 
@@ -6114,7 +6161,6 @@ glDepthMask(depthMask);
 
                                 Voxel& v = chunk->voxels[vx][vy][vz];
 
-                                // inside convertSolidWorldToType loop
                                 if (v.isSolid()) {
                                     v.type = static_cast<uint8_t>(type);
                                     if (v.type == 0) {
@@ -6136,6 +6182,82 @@ glDepthMask(depthMask);
         for (const auto& c : touched) {
             markChunkModified(c);
         }
+    }
+
+    int Game::mineSolidWorld(const glm::vec3& center, float radius)
+    {
+        if (!chunkManager) return 0;
+
+        const float r2 = radius * radius;
+
+        const int minCX = worldToChunk(center.x - radius);
+        const int maxCX = worldToChunk(center.x + radius);
+        const int minCY = worldToChunk(center.y - radius);
+        const int maxCY = worldToChunk(center.y + radius);
+        const int minCZ = worldToChunk(center.z - radius);
+        const int maxCZ = worldToChunk(center.z + radius);
+
+        int collected = 0;
+
+        std::vector<ChunkCoord> touched;
+        touched.reserve(64);
+
+        for (int cx = minCX; cx <= maxCX; ++cx)
+            for (int cy = minCY; cy <= maxCY; ++cy)
+                for (int cz = minCZ; cz <= maxCZ; ++cz)
+                {
+                    ChunkCoord cc{cx,cy,cz};
+                    Chunk* chunk = chunkManager->getChunk(cc);
+                    if (!chunk) continue;
+
+                    const glm::vec3 cmin = getChunkMin(cc);
+                    bool any = false;
+
+                    for (int vx = 0; vx <= CHUNK_SIZE; ++vx) {
+                        const float wx = cmin.x + vx * VOXEL_SIZE;
+                        const float dx = wx - center.x;
+                        const float dx2 = dx * dx;
+
+                        for (int vy = 0; vy <= CHUNK_SIZE; ++vy) {
+                            const float wy = cmin.y + vy * VOXEL_SIZE;
+                            const float dy = wy - center.y;
+                            const float dy2 = dy * dy;
+                            if (dx2 + dy2 > r2) continue;
+
+                            for (int vz = 0; vz <= CHUNK_SIZE; ++vz) {
+                                const float wz = cmin.z + vz * VOXEL_SIZE;
+                                const float dz = wz - center.z;
+                                const float d2 = dx2 + dy2 + dz * dz;
+                                if (d2 > r2) continue;
+
+                                Voxel& v = chunk->voxels[vx][vy][vz];
+
+                                if (v.isSolid()) {
+                                    v.type = static_cast<uint8_t>(0.0f);
+                                    if (v.type == 0) {
+                                        v.density = glm::min(v.density, -1.0f);
+                                    }
+                                    any = true;
+                                    if(v.material==waveManager.materialToMine)
+                                    {
+                                        collected++;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (any) {
+                        chunk->meshDirty = true;
+                        chunk->lightingDirty = true;
+                        touched.push_back(cc);
+                    }
+                }
+
+        for (const auto& c : touched) {
+            markChunkModified(c);
+        }
+        return collected;
     }
 
     void Game::applyDisplaySettings()
@@ -6441,5 +6563,62 @@ glDepthMask(depthMask);
         glBindVertexArray(postVAO);
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glBindVertexArray(0);
+    }
+
+    const char* Game::materialToString(uint32_t material, uint8_t type)
+    {
+        if(type==1) {
+            switch (material) {
+                case 0:
+                    return "Stone";
+                case 1:
+                    return "Earth";
+                case 2:
+                    return "Sand";
+                case 3:
+                    return "Shatterstone";
+                case 4:
+                    return "Metal";
+                case 5:
+                    return "Ice";
+                case 6:
+                    return "Crystal";
+                case 7:
+                    return "Flesh";
+                case 8:
+                    return "Eye";
+                case 9:
+                    return "Magma";
+                default:
+                    return "Unknown";
+            }
+        } else if(type==2)
+        {
+            switch (material) {
+                case 0:
+                    return "Cement";
+                case 1:
+                    return "Mud";
+                case 2:
+                    return "Quicksand";
+                case 3:
+                    return "Splinter Gel";
+                case 4:
+                    return "Molten Metal";
+                case 5:
+                    return "Water";
+                case 6:
+                    return "Liquid Crystal";
+                case 7:
+                    return "Blood";
+                case 8:
+                    return "Eye";
+                case 9:
+                    return "Magma";
+                default:
+                    return "Unknown";
+            }
+        }
+        return "Empty";
     }
 }

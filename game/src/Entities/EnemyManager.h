@@ -42,7 +42,7 @@ namespace gl3 {
 
         std::vector<EnemyRuntime>& all() { return enemies; }
 
-        void destroyEnemy(size_t index);
+        void destroyEnemy(uint64_t bodyId);
 
         uint32_t getEnemiesAlive() const { return (uint32_t)enemies.size(); }
 

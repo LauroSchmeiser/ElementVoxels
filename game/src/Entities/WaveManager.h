@@ -89,6 +89,9 @@ namespace gl3 {
         const char* getNextWaveModeString() const {
             return modeToString(nextWaveMode);
         }
+        const char* getNextWaveModeDescription() const {
+            return modeToDescription(nextWaveMode);
+        }
 
         float getRemainingTimerPercent() const {
             return ((timeElapsed>0.0f)? (timeElapsed/timeBetween): 0);
@@ -103,6 +106,18 @@ namespace gl3 {
             objectiveCompleted = isComplete;
         }
 
+        void resetWaveState()
+        {
+            currentWave=0;
+            currentWaveMode=WaveMode::Preperation;
+            nextWaveMode= WaveMode::Mining;
+        }
+
+        int materialToMine = -1;
+        int materialMined = 0;
+        int materialNeeded = 0;
+
+
     private:
         void spawnEnemy();
         void spawnBoss();
@@ -115,7 +130,7 @@ namespace gl3 {
         // Wave state
         uint32_t currentWave = 0;
         WaveMode currentWaveMode = WaveMode::Preperation;
-        WaveMode nextWaveMode = WaveMode::Hunt;
+        WaveMode nextWaveMode = WaveMode::Mining;
         float timeBetween = 15.0f;
         float timeElapsed = 0.0f;
         bool objectiveCompleted = false;

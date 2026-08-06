@@ -870,6 +870,10 @@ namespace gl3 {
         bool renderDamageFeedback(GLuint sceneTexture, GLuint destinationFBO);
 
         void beginPostProcess(GLuint destinationFBO);
+
+        int mineSolidWorld(const glm::vec3 &center, float radius);
+
+        const char* materialToString(uint32_t material, uint8_t type = 1);
     };
 
 }

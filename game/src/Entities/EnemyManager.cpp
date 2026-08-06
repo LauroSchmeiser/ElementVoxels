@@ -224,7 +224,7 @@ namespace gl3 {
             if (e.inst.hp <= 0.0f || totalVerts < kTooSmallVtx) {
                 g_SoundManager.playSound(SoundID::Crunch);
                 game->convertWorldToMaterial(e.inst.position,e.inst.baseRadius*1.5f,7);
-                destroyEnemy(i);
+                destroyEnemy(e.inst.bodyId);
                 continue;
             }
 
@@ -337,20 +337,37 @@ namespace gl3 {
         e.inst.meshDirty = false;
     }
 
-    void EnemyManager::destroyEnemy(size_t index) {
-        EnemyRuntime& e = enemies[index];
-        std::cout<<"destroy Enemy\n";
-        if (physicsMgr && e.inst.bodyId != 0) {
-            physicsMgr->removeBody(e.inst.bodyId);
-            e.inst.bodyId = 0;
-            e.inst.body = nullptr;
+    void EnemyManager::destroyEnemy(uint64_t bodyId) {
+        auto it = std::find_if(
+                enemies.begin(),
+                enemies.end(),
+                [bodyId](const EnemyRuntime& enemy) {
+                    return enemy.inst.bodyId == bodyId;
+                }
+        );
+
+        if (it == enemies.end()) {
+            return;
         }
 
-        for(int i=0;i<e.renderParts.size();i++)
-        {
-            destroyRenderMesh(e.renderParts.at(i).mesh);
+        EnemyRuntime& enemy = *it;
+
+        std::cout << "destroy Enemy\n";
+
+        if (physicsMgr && enemy.inst.bodyId != 0) {
+            physicsMgr->removeBody(enemy.inst.bodyId);
+            enemy.inst.bodyId = 0;
+            enemy.inst.body = nullptr;
         }
-        enemies[index] = std::move(enemies.back());
+
+        for (auto& part : enemy.renderParts) {
+            destroyRenderMesh(part.mesh);
+        }
+
+        if (it != enemies.end() - 1) {
+            *it = std::move(enemies.back());
+        }
+
         enemies.pop_back();
     }
 
