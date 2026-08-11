@@ -5157,6 +5157,20 @@ glDepthMask(depthMask);
         }
 
         updatePlayerAudio();
+        if(characterController->getState().isInFluid)
+        {
+            std::cout<<skillTree.GetPage(3).skills[7].level<<" skill leveled?\n";
+            std::cout<<(sampleMaterialAtWorld(chunkManager.get(),characterController->getPosition())==6u)<<" is in crystal?\n";
+        }
+        if(skillTree.GetPage(3).skills[7].level>0&&characterController->getState().isInFluid&&
+                                                   sampleMaterialAtWorld(chunkManager.get(),characterController->getPosition())==6u)
+        {
+            voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/crystal.frag");
+            fluidShader = std::make_unique<Shader>("shaders/fluid_voxel.vert", "shaders/crystal.frag");
+        } else{
+            voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel.frag");
+            fluidShader = std::make_unique<Shader>("shaders/fluid_voxel.vert", "shaders/fluid_voxel.frag");
+        }
     }
 
     void Game::alignCameraRollToUp(const glm::vec3& worldUp, float deltaTime) {
