@@ -41,6 +41,7 @@
 #include "Entities/WaveManager.h"
 #include "physics/MaterialCollisionPolicy.h"
 #include "Sounds/SoundManager.h"
+#include "ui/SkillTreeUI.h"
 
 #undef NEAR
 #undef FAR
@@ -742,7 +743,8 @@ namespace gl3 {
 
         enum class PauseSubmenu {
             Main,
-            Settings
+            Settings,
+            SkillTree
         };
 
         void applyMaterial9BurnAlongSegment(const glm::vec3 &from, const glm::vec3 &to, float radius);
@@ -773,6 +775,9 @@ namespace gl3 {
 
         const float nearPlane = 0.1f;
         const float farPlane = 1000.0f;
+
+        SkillTreeUI skillTree;
+        int selectedSkillPage = 0;
 
     public:
         void convertWorldToMaterial(const glm::vec3& center, float radius, uint32_t material);

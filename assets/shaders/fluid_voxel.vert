@@ -8,6 +8,7 @@ layout(location = 4) in uint aFlags;
 out vec3 vWorldPos;
 out vec3 vNormal;
 out vec3 vColor;
+flat out uint vFlags;
 
 uniform mat4 model;
 uniform mat4 mvp;
@@ -31,6 +32,7 @@ void main()
     vWorldPos = world.xyz;
     vNormal = normalize(mat3(transpose(inverse(model))) * aNormal);
     vColor = aColor;
+    vFlags = aFlags;
 
     gl_Position = mvp * vec4(pos, 1.0);
 }

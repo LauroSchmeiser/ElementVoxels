@@ -53,7 +53,7 @@ void SunBillboard::init(int maxInst) {
     glBindVertexArray(0);
 }
 
-void SunBillboard::render(const std::vector<SunInstance>& instances, const glm::mat4& view, const glm::mat4& proj, float time) {
+void SunBillboard::render(const std::vector<SunInstance>& instances, const glm::mat4& view, const glm::mat4& proj, float time, float gamma, float brightness) {
     if (instances.empty()) return;
 
     int count = (int)instances.size();
@@ -98,6 +98,9 @@ void SunBillboard::render(const std::vector<SunInstance>& instances, const glm::
     shader->setMatrix("view", view);
     shader->setMatrix("proj", proj);
     shader->setFloat("time", time);
+    shader->setFloat("uGamma",gamma);
+    shader->setFloat("uBrightness",brightness);
+
 
     glBindVertexArray(vao);
     glDrawArraysInstanced(GL_TRIANGLES, 0, 6, count);

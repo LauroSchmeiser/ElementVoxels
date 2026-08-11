@@ -19,7 +19,7 @@ public:
 
     // call every frame with current view/proj/time
     // instances: vector of SunInstance
-    void render(const std::vector<SunInstance>& instances, const glm::mat4& view, const glm::mat4& proj, float time);
+    void render(const std::vector<SunInstance>& instances, const glm::mat4& view, const glm::mat4& proj, float time, float gamma, float brightness);
 
     void shutdown();
 

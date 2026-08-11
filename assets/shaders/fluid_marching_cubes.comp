@@ -103,6 +103,38 @@ vec3 computeNormal(vec3 worldPos) {
     return (len > 1e-8) ? (-g / len) : vec3(0,1,0);
 }
 
+bool reserveVertices(uint count, out uint localIdx)
+{
+    localIdx = 0u;
+
+    if (uChunkMaxVerts < count) {
+        return false;
+    }
+
+    uint current = vertexCounter;
+
+    while (true) {
+        if (current > uChunkMaxVerts - count) {
+            return false;
+        }
+
+        uint previous = atomicCompSwap(
+        vertexCounter,
+        current,
+        current + count
+        );
+
+        if (previous == current) {
+            localIdx = current;
+            return true;
+        }
+
+        current = previous;
+    }
+
+    return false;
+}
+
 void main() {
     ivec3 cell = ivec3(gl_GlobalInvocationID);
     ivec3 cellsDim = voxelGridDim - ivec3(1);
@@ -124,7 +156,11 @@ void main() {
 
     const float EPS = 1e-6;
     int caseIndex = 0;
-    for (int i=0;i<8;i++) if (d[i] >= -EPS) caseIndex |= (1 << i);
+    for (int i = 0; i < 8; ++i) {
+        if (d[i] > EPS) {
+            caseIndex |= (1 << i);
+        }
+    }
 
     int e = edgeTable[caseIndex];
     if (e == 0) return;
@@ -181,28 +217,26 @@ void main() {
         if (length(n1) < 1e-6) n1=fn;
         if (length(n2) < 1e-6) n2=fn;
 
-        uint localIdx = atomicAdd(vertexCounter, 3u);
-        if (localIdx + 2u >= uChunkMaxVerts) {
-            break;
+        uint localIdx;
+        if (!reserveVertices(3u, localIdx)) {
+            return;
         }
 
         uint idx = baseVert + localIdx;
 
-        uint cellFlags = 0u;
-        for (int ci=0; ci<8; ++ci) {
-            uint t = voxels[voxelIndex(clampVoxel(corners[ci]))].type;
-            if (t == 2u) { cellFlags |= 1u; break; }
-        }
-
         uint cellMaterial = 0u;
-        for (int ci=0; ci<8; ++ci) {
-            if (d[ci] >= -EPS) {
-                cellMaterial = voxels[voxelIndex(clampVoxel(corners[ci]))].material;
-                break;
+        float strongestDensity = EPS;
+
+        for (int ci = 0; ci < 8; ++ci) {
+            if (d[ci] > strongestDensity) {
+                int voxelIdx = voxelIndex(corners[ci]);
+                strongestDensity = d[ci];
+                cellMaterial = voxels[voxelIdx].material;
             }
         }
-        uint FLUID_BIT = 1u << 7;
-        uint packedFlags = ((cellFlags & 1u)) | ((cellMaterial & 63u) << 1) | FLUID_BIT;
+
+        const uint FLUID_BIT = 1u << 7;
+        uint packedFlags = ((cellMaterial & 63u) << 1) | FLUID_BIT;
 
         verts[idx+0].pos=vec4(v0,1); verts[idx+0].normal=vec4(n0,0); verts[idx+0].color=vec4(col0,1);
         verts[idx+0].uv=computePlanarUV(v0); verts[idx+0].flags=uvec4(packedFlags,0,0,0);
