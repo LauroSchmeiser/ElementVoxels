@@ -236,7 +236,7 @@ namespace gl3 {
                                 (size_t)y * (CHUNK_SIZE + 1) +
                                 (size_t)z * (CHUNK_SIZE + 1) * (CHUNK_SIZE + 1);
 
-                        snap.voxelsLinear[idx] = chunk->voxels[x][y][z];
+                        snap.voxelsLinear[idx] = chunk->voxels(x,y,z);
                     }
 
             req.chunks.push_back(std::move(snap));
@@ -1287,15 +1287,15 @@ namespace gl3 {
                     glm::vec3 worldPos = chunkOrigin + glm::vec3((float)lx, (float)ly, (float)lz) * voxelSize;
 
                     float formationDensity = params.evaluate(worldPos);
-                    float existingDensity = chunk->voxels[lx][ly][lz].density;
+                    float existingDensity = chunk->voxels(lx,ly,lz).density;
 
                     if (formationDensity > existingDensity) {
-                        chunk->voxels[lx][ly][lz].density = formationDensity;
+                        chunk->voxels(lx,ly,lz).density = formationDensity;
 
                         if (formationDensity >= -1.0f) {
-                            chunk->voxels[lx][ly][lz].type = formation.type;
-                            chunk->voxels[lx][ly][lz].color = formation.color;
-                            chunk->voxels[lx][ly][lz].material = material;
+                            chunk->voxels(lx,ly,lz).type = formation.type;
+                            chunk->voxels(lx,ly,lz).color = formation.color;
+                            chunk->voxels(lx,ly,lz).material = material;
 
                             if (formationDensity >= 0.0f) {
                                 chunkTouched = true;
@@ -1432,7 +1432,7 @@ namespace gl3 {
                         // Optional: add some noise for natural look
                         // density = std::max(0.0f, std::min(1.0f, density));
 
-                        auto& voxel = chunk->voxels[lx][ly][lz];
+                        auto& voxel = chunk->voxels(lx,ly,lz);
                         if (density > voxel.density) {
                             voxel.density = density;
                             voxel.type = formation.type;
@@ -1502,7 +1502,7 @@ namespace gl3 {
                         density = std::max(0.0f, 1.0f - (maxDistToEdge / (voxelSize * 2.0f)));
                     }
 
-                    auto& voxel = chunk->voxels[lx][ly][lz];
+                    auto& voxel = chunk->voxels(lx,ly,lz);
                     if (density > voxel.density) {
                         voxel.density = density;
                         voxel.type = formation.type;
@@ -1810,7 +1810,7 @@ namespace gl3 {
                                 float sdfValue = spell.formationParams.evaluate(worldPos);
 
                                 if (sdfValue >= -removeMargin) {
-                                    auto& v = chunk->voxels[lx][ly][lz];
+                                    auto& v = chunk->voxels(lx,ly,lz);
                                     v.density = -1.0f;
                                     v.type = 0;
                                     chunkModified = true;

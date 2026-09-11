@@ -1978,7 +1978,7 @@ namespace gl3 {
         for (int x = 0; x <= CHUNK_SIZE; ++x)
             for (int y = 0; y <= CHUNK_SIZE; ++y)
                 for (int z = 0; z <= CHUNK_SIZE; ++z)
-                    if (chunk.voxels[x][y][z].isSolid())
+                    if (chunk.voxels(x,y,z).isSolid())
                         return true;
         return false;
     }
@@ -2086,7 +2086,7 @@ namespace gl3 {
                 for (int y = startY; y <= endY; y += step)
                     for (int z = startZ; z <= endZ; z += step)
                     {
-                        const Voxel& v = chunk->voxels[x][y][z];
+                        const Voxel& v = chunk->voxels(x,y,z);
                         if (v.type != targetType) continue;
                         bool excluded = false;
                         for(auto& material : excludedMaterials)
@@ -2176,7 +2176,7 @@ namespace gl3 {
                                 stop=true;
                                 continue;
                             }
-                            const Voxel& voxel = chunk->voxels[x][y][z];
+                            const Voxel& voxel = chunk->voxels(x,y,z);
 
                             if (voxel.isSolid() && voxel.material == targetMaterial) {
                                 glm::vec3 worldPos = chunkMin + glm::vec3((float)x, (float)y, (float)z) * VOXEL_SIZE;
@@ -2954,7 +2954,7 @@ namespace gl3 {
                                     // Calculate this planet's SDF value
                                     float planetDensity = planet.radius - dist; // Positive inside, negative outside
 
-                                    Voxel& vox = chunk->voxels[lx][ly][lz];
+                                    Voxel& vox = chunk->voxels(lx,ly,lz);
 
                                     if (planet.type == 3) {
                                         if (planetDensity > vox.fluidDensity) {
@@ -3389,7 +3389,7 @@ int count = 0;
 for (int x = 0; x <= CHUNK_SIZE; ++x) {
     for (int y = 0; y <= CHUNK_SIZE; ++y) {
         for (int z = 0; z <= CHUNK_SIZE; ++z) {
-            const auto &vox = chunk->voxels[x][y][z];
+            const auto &vox = chunk->voxels(x,y,z);
             if (vox.type == 2) { // Fire / emissive voxel
                 glm::vec3 voxelWorldPos = chunkOrigin + glm::vec3((float)x, (float)y, (float)z) * gl3::VOXEL_SIZE;
                 sumPos += voxelWorldPos;
@@ -4856,11 +4856,11 @@ glDepthMask(depthMask);
                     localPos.z >= 0 && localPos.z < CHUNK_SIZE) {
 
                     // Check if this voxel is solid
-                    if (chunk->voxels[localPos.x][localPos.y][localPos.z].type!=0) {
+                    if (chunk->voxels(localPos.x,localPos.y,localPos.z).type!=0) {
                         result.hitPosition = samplePos;
                         result.hitNormal = calculateNormalAt(chunk, localPos);
                         result.distance = currentDist;
-                        result.voxelMat = chunk->voxels[localPos.x][localPos.y][localPos.z].material;
+                        result.voxelMat = chunk->voxels(localPos.x,localPos.y,localPos.z).material;
                         result.hit = true;
                         return result;
                     }
@@ -4886,12 +4886,12 @@ glDepthMask(depthMask);
             return glm::vec3(0, 1, 0); // Fallback
         }
 
-        float dx = chunk->voxels[pos.x+1][pos.y][pos.z].density -
-                   chunk->voxels[pos.x-1][pos.y][pos.z].density;
-        float dy = chunk->voxels[pos.x][pos.y+1][pos.z].density -
-                   chunk->voxels[pos.x][pos.y-1][pos.z].density;
-        float dz = chunk->voxels[pos.x][pos.y][pos.z+1].density -
-                   chunk->voxels[pos.x][pos.y][pos.z-1].density;
+        float dx = chunk->voxels(pos.x+1,pos.y,pos.z).density -
+                   chunk->voxels(pos.x-1,pos.y,pos.z).density;
+        float dy = chunk->voxels(pos.x,pos.y+1,pos.z).density -
+                   chunk->voxels(pos.x,pos.y-1,pos.z).density;
+        float dz = chunk->voxels(pos.x,pos.y,pos.z+1).density -
+                   chunk->voxels(pos.x,pos.y,pos.z-1).density;
 
         glm::vec3 normal(dx, dy, dz);
         if (glm::length(normal) > 0.0001f) {
@@ -4957,7 +4957,7 @@ glDepthMask(depthMask);
             int lx = glm::clamp((int)std::round(localCorner.x), 0, CHUNK_SIZE);
             int ly = glm::clamp((int)std::round(localCorner.y), 0, CHUNK_SIZE);
             int lz = glm::clamp((int)std::round(localCorner.z), 0, CHUNK_SIZE);
-            return chunk->voxels[lx][ly][lz].density;
+            return chunk->voxels(lx,ly,lz).density;
             };
 
         float s000 = sampleCorner(0,0,0);
@@ -5007,7 +5007,7 @@ glDepthMask(depthMask);
             int lx = glm::clamp((int)std::round(localCorner.x), 0, CHUNK_SIZE);
             int ly = glm::clamp((int)std::round(localCorner.y), 0, CHUNK_SIZE);
             int lz = glm::clamp((int)std::round(localCorner.z), 0, CHUNK_SIZE);
-            return chunk->voxels[lx][ly][lz].fluidDensity;
+            return chunk->voxels(lx,ly,lz).fluidDensity;
         };
 
         float s000 = sampleCorner(0,0,0);
@@ -5051,7 +5051,7 @@ glDepthMask(depthMask);
         int iy = glm::clamp((int)std::round(local.y), 0, CHUNK_SIZE);
         int iz = glm::clamp((int)std::round(local.z), 0, CHUNK_SIZE);
 
-        const Voxel& v = chunk->voxels[ix][iy][iz];
+        const Voxel& v = chunk->voxels(ix,iy,iz);
         if (v.type == 4 && v.density >= 0.0f) {
             return v.density;
         }
@@ -5073,7 +5073,7 @@ glDepthMask(depthMask);
         int iy = glm::clamp((int)std::round(local.y), 0, CHUNK_SIZE);
         int iz = glm::clamp((int)std::round(local.z), 0, CHUNK_SIZE);
 
-        const Voxel& v = chunk->voxels[ix][iy][iz];
+        const Voxel& v = chunk->voxels(ix,iy,iz);
         return (v.type == 4) ? v.color : glm::vec3(0.5f, 0.6f, 0.7f);
     }
 
@@ -5110,7 +5110,7 @@ glDepthMask(depthMask);
         int iy = glm::clamp((int)std::round(local.y), 0, CHUNK_SIZE);
         int iz = glm::clamp((int)std::round(local.z), 0, CHUNK_SIZE);
 
-        return chunk->voxels[ix][iy][iz].material;
+        return chunk->voxels(ix,iy,iz).material;
     }
 
     uint8_t Game::sampleTypeAtWorld(FixedGridChunkManager* chunkManager, const glm::vec3& worldPos) {
@@ -5135,7 +5135,7 @@ glDepthMask(depthMask);
         int iy = glm::clamp((int)std::round(local.y), 0, CHUNK_SIZE);
         int iz = glm::clamp((int)std::round(local.z), 0, CHUNK_SIZE);
 
-        return chunk->voxels[ix][iy][iz].type;
+        return chunk->voxels(ix,iy,iz).type;
     }
 
 
@@ -6199,7 +6199,7 @@ glDepthMask(depthMask);
                                 const float d2 = dx2 + dy2 + dz * dz;
                                 if (d2 > r2) continue;
 
-                                Voxel& v = chunk->voxels[vx][vy][vz];
+                                Voxel& v = chunk->voxels(vx,vy,vz);
 
                                 // Make voxel solid
                                 v.type = 1;
@@ -6269,7 +6269,7 @@ glDepthMask(depthMask);
                                 const float d2 = dx2 + dy2 + dz * dz;
                                 if (d2 > r2) continue;
 
-                                Voxel& v = chunk->voxels[vx][vy][vz];
+                                Voxel& v = chunk->voxels(vx,vy,vz);
                                 if (!v.isSolid()) continue;
 
                                 v.type = 0;
@@ -6339,7 +6339,7 @@ glDepthMask(depthMask);
                                 const float d2 = dx2 + dy2 + dz * dz;
                                 if (d2 > r2) continue;
 
-                                Voxel& v = chunk->voxels[vx][vy][vz];
+                                Voxel& v = chunk->voxels(vx,vy,vz);
 
                                 // only convert existing solid/active voxels
                                 if (v.type > 0 && v.isSolid()) {
@@ -6410,7 +6410,7 @@ glDepthMask(depthMask);
 
                                 if (d2 > r2) continue;
 
-                                Voxel& v = chunk->voxels[vx][vy][vz];
+                                Voxel& v = chunk->voxels(vx,vy,vz);
                                 v.type = static_cast<uint8_t>(type);
 
                                 const float distance = glm::sqrt(d2);
@@ -6511,7 +6511,7 @@ glDepthMask(depthMask);
 
                                 if (d2 > r2) continue;
 
-                                Voxel& v = chunk->voxels[vx][vy][vz];
+                                Voxel& v = chunk->voxels(vx,vy,vz);
                                 if (!v.isSolid()) continue;
 
                                 v.type = static_cast<uint8_t>(type);
@@ -6602,7 +6602,7 @@ glDepthMask(depthMask);
 
                                 if (d2 > r2) continue;
 
-                                Voxel& v = chunk->voxels[vx][vy][vz];
+                                Voxel& v = chunk->voxels(vx,vy,vz);
                                 if (v.isSolid()) continue;
 
                                 v.type = static_cast<uint8_t>(type);
@@ -6682,7 +6682,7 @@ glDepthMask(depthMask);
                                 const float d2 = dx2 + dy2 + dz * dz;
                                 if (d2 > r2) continue;
 
-                                Voxel& v = chunk->voxels[vx][vy][vz];
+                                Voxel& v = chunk->voxels(vx,vy,vz);
 
                                 // only convert existing solid/active voxels
                                 if (v.type == 0 && !v.isSolid()) {
@@ -6751,7 +6751,7 @@ glDepthMask(depthMask);
                                 const float d2 = dx2 + dy2 + dz * dz;
                                 if (d2 > r2) continue;
 
-                                Voxel& v = chunk->voxels[vx][vy][vz];
+                                Voxel& v = chunk->voxels(vx,vy,vz);
 
                                 if (v.isSolid()) {
                                     v.type = static_cast<uint8_t>(0.0f);
@@ -7070,7 +7070,7 @@ glDepthMask(depthMask);
         int iy = glm::clamp((int)std::round(local.y), 0, CHUNK_SIZE);
         int iz = glm::clamp((int)std::round(local.z), 0, CHUNK_SIZE);
 
-        const Voxel& v = chunk->voxels[ix][iy][iz];
+        const Voxel& v = chunk->voxels(ix,iy,iz);
         return v.hasFluid() ? v.color : glm::vec3(0.1f, 0.3f, 0.8f);
     }
 

@@ -106,7 +106,7 @@ namespace gl3 {
         iy = glm::clamp(iy, 0, CHUNK_SIZE);
         iz = glm::clamp(iz, 0, CHUNK_SIZE);
 
-        const Voxel& v = chunk->voxels[ix][iy][iz];
+        const Voxel& v = chunk->voxels(ix,iy,iz);
 
         // Fluid no longer shares this field (see Voxel::fluidDensity), so the
         // solid density is already fluid-free by construction here.
@@ -154,7 +154,7 @@ namespace gl3 {
             int lx = glm::clamp((int)std::round(localCorner.x), 0, CHUNK_SIZE);
             int ly = glm::clamp((int)std::round(localCorner.y), 0, CHUNK_SIZE);
             int lz = glm::clamp((int)std::round(localCorner.z), 0, CHUNK_SIZE);
-            return chunk->voxels[lx][ly][lz].fluidDensity;
+            return chunk->voxels(lx,ly,lz).fluidDensity;
         };
 
         float samples[2][2][2];
@@ -204,7 +204,7 @@ namespace gl3 {
         iy = glm::clamp(iy, 0, CHUNK_SIZE);
         iz = glm::clamp(iz, 0, CHUNK_SIZE);
 
-        return chunk->voxels[ix][iy][iz].density;
+        return chunk->voxels(ix,iy,iz).density;
     }
 
     // Trilinear sample of the density field at arbitrary world position.

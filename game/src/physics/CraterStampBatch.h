@@ -100,7 +100,7 @@ namespace gl3 {
                                     float wz = cmin.z + vz * VOXEL_SIZE;
                                     glm::vec3 p(wx,wy,wz);
 
-                                    Voxel& v = chunk->voxels[vx][vy][vz];
+                                    Voxel& v = chunk->voxels(vx,vy,vz);
                                     if (v.density < densityThreshold) continue;
 
                                     CellKey ck = cellOf(p);

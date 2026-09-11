@@ -250,7 +250,7 @@ namespace gl3 {
                             localX >= 0 && localX <= CHUNK_SIZE &&
                             localY >= 0 && localY <= CHUNK_SIZE &&
                             localZ >= 0 && localZ <= CHUNK_SIZE) {
-                            srcVoxel = &neighbor->voxels[localX][localY][localZ];
+                            srcVoxel = &neighbor->voxels(localX,localY,localZ);
                         }
                     }
 
@@ -260,7 +260,7 @@ namespace gl3 {
                         int clampX = glm::clamp(x, 0, CHUNK_SIZE);
                         int clampY = glm::clamp(y, 0, CHUNK_SIZE);
                         int clampZ = glm::clamp(z, 0, CHUNK_SIZE);
-                        srcVoxel = &chunk.voxels[clampX][clampY][clampZ];
+                        srcVoxel = &chunk.voxels(clampX,clampY,clampZ);
                     }
 
                     // Copy data
@@ -819,7 +819,7 @@ namespace gl3 {
                             localX >= 0 && localX <= CHUNK_SIZE &&
                             localY >= 0 && localY <= CHUNK_SIZE &&
                             localZ >= 0 && localZ <= CHUNK_SIZE) {
-                            srcVoxel = &neighbor->voxels[localX][localY][localZ];
+                            srcVoxel = &neighbor->voxels(localX,localY,localZ);
                         }
                     }
 
@@ -827,7 +827,7 @@ namespace gl3 {
                         int clampX = glm::clamp(x, 0, CHUNK_SIZE);
                         int clampY = glm::clamp(y, 0, CHUNK_SIZE);
                         int clampZ = glm::clamp(z, 0, CHUNK_SIZE);
-                        srcVoxel = &chunk.voxels[clampX][clampY][clampZ];
+                        srcVoxel = &chunk.voxels(clampX,clampY,clampZ);
                     }
 
                     voxels[idx].density = srcVoxel->density;

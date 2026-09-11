@@ -87,14 +87,14 @@ namespace gl3 {
         int iz1 = glm::min(iz + 1, CHUNK_SIZE);
 
         // Sample 8 corners
-        float s000 = chunk->voxels[ix][iy][iz].density;
-        float s100 = chunk->voxels[ix1][iy][iz].density;
-        float s010 = chunk->voxels[ix][iy1][iz].density;
-        float s110 = chunk->voxels[ix1][iy1][iz].density;
-        float s001 = chunk->voxels[ix][iy][iz1].density;
-        float s101 = chunk->voxels[ix1][iy][iz1].density;
-        float s011 = chunk->voxels[ix][iy1][iz1].density;
-        float s111 = chunk->voxels[ix1][iy1][iz1].density;
+        float s000 = chunk->voxels(ix,iy,iz).density;
+        float s100 = chunk->voxels(ix1,iy,iz).density;
+        float s010 = chunk->voxels(ix,iy,iz).density;
+        float s110 = chunk->voxels(ix1,iy1,iz).density;
+        float s001 = chunk->voxels(ix,iy,iz1).density;
+        float s101 = chunk->voxels(ix1,iy,iz1).density;
+        float s011 = chunk->voxels(ix,iy1,iz1).density;
+        float s111 = chunk->voxels(ix1,iy1,iz1).density;
 
         // Trilinear interpolation
         auto lerp = [](float a, float b, float t) { return a + (b - a) * t; };
@@ -219,7 +219,7 @@ namespace gl3 {
         Chunk* chunk = chunkManager->getChunk(ChunkCoord{cx, cy, cz});
         if (!chunk) return -10000.0f;
 
-        return chunk->voxels[lx][ly][lz].density;
+        return chunk->voxels(lx,ly,lz).density;
     }
 
     float VoxelPhysicsManager::sampleDensityTrilinear(const glm::vec3& worldPos) {
@@ -891,7 +891,7 @@ namespace gl3 {
             int ly = glm::clamp((int)std::round(localCorner.y), 0, CHUNK_SIZE);
             int lz = glm::clamp((int)std::round(localCorner.z), 0, CHUNK_SIZE);
 
-            return chunk->voxels[lx][ly][lz].fluidDensity;
+            return chunk->voxels(lx,ly,lz).fluidDensity;
         };
 
         float samples[2][2][2];

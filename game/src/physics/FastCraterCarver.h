@@ -105,7 +105,7 @@ namespace gl3 {
                                     float distSq = dxSq + dySq + dz*dz;
                                     if (distSq > radiusSq) continue;
 
-                                    Voxel& v = chunk->voxels[vx][vy][vz];
+                                    Voxel& v = chunk->voxels(vx,vy,vz);
                                     if (v.density < densityThreshold) continue;
                                     if (!(allowedTypeMask & (1u << v.type))) continue;
 

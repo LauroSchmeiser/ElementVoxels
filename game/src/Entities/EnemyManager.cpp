@@ -406,7 +406,7 @@ namespace gl3 {
                     localPos.y >= 0 && localPos.y <= CHUNK_SIZE &&
                     localPos.z >= 0 && localPos.z <= CHUNK_SIZE) {
 
-                    if (chunk->voxels[localPos.x][localPos.y][localPos.z].isSolid()) {
+                    if (chunk->voxels(localPos.x,localPos.y,localPos.z).isSolid()) {
                         result.hitPosition = samplePos;
                         result.hitNormal = chunkMgr->calculateNormalAt(chunk, localPos);
                         result.distance = currentDist;

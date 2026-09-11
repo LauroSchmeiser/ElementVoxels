@@ -178,7 +178,7 @@ namespace gl3 {
                         const float distSq = dxSq + dySq + dz * dz;
                         if (distSq > radiusSq) continue;
 
-                        Voxel& voxel = chunk->voxels[vx][vy][vz];
+                        Voxel& voxel = chunk->voxels(vx,vy,vz);
 
                         if (!params.additive && voxel.density < params.densityThreshold) {
                             continue;
@@ -242,7 +242,7 @@ namespace gl3 {
                 Chunk* chunk = chunkManager->getChunk(update.coord);
                 if (!chunk) continue;
 
-                Voxel& voxel = chunk->voxels[update.localPos.x][update.localPos.y][update.localPos.z];
+                Voxel& voxel = chunk->voxels(update.localPos.x,update.localPos.y,update.localPos.z);
                 voxel.density = update.newDensity;
                 voxel.type = update.newType;
                 voxel.color = update.color;

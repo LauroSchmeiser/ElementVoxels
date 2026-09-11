@@ -189,12 +189,12 @@ namespace gl3 {
                 return glm::vec3(0, 1, 0); // Fallback
             }
 
-            float dx = chunk->voxels[pos.x+1][pos.y][pos.z].density -
-                       chunk->voxels[pos.x-1][pos.y][pos.z].density;
-            float dy = chunk->voxels[pos.x][pos.y+1][pos.z].density -
-                       chunk->voxels[pos.x][pos.y-1][pos.z].density;
-            float dz = chunk->voxels[pos.x][pos.y][pos.z+1].density -
-                       chunk->voxels[pos.x][pos.y][pos.z-1].density;
+            float dx = chunk->voxels(pos.x+1,pos.y,pos.z).density -
+                       chunk->voxels(pos.x-1,pos.y,pos.z).density;
+            float dy = chunk->voxels(pos.x,pos.y+1,pos.z).density -
+                       chunk->voxels(pos.x,pos.y-1,pos.z).density;
+            float dz = chunk->voxels(pos.x,pos.y,pos.z+1).density -
+                       chunk->voxels(pos.x,pos.y,pos.z-1).density;
 
             glm::vec3 normal(dx, dy, dz);
             if (glm::length(normal) > 0.0001f) {
@@ -352,7 +352,7 @@ namespace gl3 {
             for (int x = 0; x <= CHUNK_SIZE; ++x) {
                 for (int y = 0; y <= CHUNK_SIZE; ++y) {
                     for (int z = 0; z <= CHUNK_SIZE; ++z) {
-                        const auto &vox = chunk->voxels[x][y][z];
+                        const auto &vox = chunk->voxels(x,y,z);
                         if (vox.type == 2) { // Fire / emissive voxel
                             glm::vec3 voxelWorldPos = chunkOrigin + glm::vec3((float)x, (float)y, (float)z) * gl3::VOXEL_SIZE;
                             sumPos += voxelWorldPos;
