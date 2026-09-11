@@ -15,7 +15,7 @@ namespace gl3 {
     };
 
     struct MaterialSystem {
-        static constexpr int kMaxMaterials = 64;
+        static constexpr int kMaxMaterials = 24;
 
         GLuint albedoArrayTex = 0;
         GLuint normalArrayTex = 0;

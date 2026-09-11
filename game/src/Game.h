@@ -147,6 +147,7 @@ namespace gl3 {
             glm::vec3 hitNormal;
             float distance;
             bool hit;
+            uint32_t voxelMat = 0u;
         };
 
         struct ImpactInstanceGPU {
@@ -270,6 +271,8 @@ namespace gl3 {
                                    const glm::vec3& hitPos,
                                    const glm::vec3& hitNormal,
                                    float playerSpeed);
+        void onEnemyDamage(gl3::VoxelPhysicsBody* body,
+                          float damage);
 
         int estimateAvailableVoxels(const glm::vec3& center, float radius, std::vector<uint32_t> excludedMaterials ,uint32_t targetType, int maxNeeded);
 
@@ -421,7 +424,7 @@ namespace gl3 {
         // World-Variables:
         const int DIM = CHUNK_SIZE+2; //Chunk Size with a bit off padding for marching cubes
         size_t voxelCount = DIM * DIM * DIM; //How many voxels can be in one Chunk
-        static constexpr int RenderingRange = 25; //Range around Camera that is rendered
+        static constexpr int RenderingRange = 15; //Range around Camera that is rendered
 
         size_t CHUNK_MAX_VERTS = 0;           // computed once from DIM
 
@@ -591,6 +594,11 @@ namespace gl3 {
             for(auto& damageInstance : playerDamageInstances)
             {
                 sum += damageInstance.amount;
+            }
+
+            if(skillTree.GetPage(3).skills[2].level>0&&sampleMaterialAtWorld(chunkManager.get(),characterController->getPosition())==6u)
+            {
+                sum/2.0f;
             }
 
             playerDamageInstances.clear();
@@ -879,6 +887,12 @@ namespace gl3 {
         int mineSolidWorld(const glm::vec3 &center, float radius);
 
         const char* materialToString(uint32_t material, uint8_t type = 1);
+
+        void convertEmptyWorldToMaterial(const glm::vec3 &center, float radius, uint32_t material);
+
+        void convertEmptyWorldToType(const glm::vec3 &center, float radius, uint32_t type);
+
+        SkillTreeUI getSkillTree(){ return skillTree;};
     };
 
 }

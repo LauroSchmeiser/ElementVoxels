@@ -87,7 +87,7 @@ public:
                          { "Thick Fluids", "Your fluid spells become denser, block solids, damage enemies, and slow them.", 0, 1, 0 },
                          { "Healing Water", "Fluids slowly heal you.", 0, 1, 0 },
                          { "Expansion", "Allows you to spread the fluid you are in to a radius.", 1, 1, 0 },
-                         { "Tidal Force", "Greatly increase the power and reach of your fluid spells.", 1, 1, 0 },
+                         { "Tidal Force", "Greatly increase the scale and reach of your fluid spells.", 1, 1, 0 },
                          { "Stream", "Shoot a beam of compressed fluid that deals damage over time, knocks back enemies and bodies, damages the world, and removes voxels over time.", 2, 5, 0 },
                          { "Ocean's Wrath", "Master the destructive potential of water and fluid.", 2, 1, 0 },
                          { "Fluid Mastery", "All fluids now deal damage over time to enemies within them.", 3, 1, 0 },
@@ -113,12 +113,12 @@ public:
         pages[3].skills =
                 {{
                          { "Pull", "Allows you to pull a body towards you or pull yourself towards the world.", -1, 1, 0 },
-                         { "Crystal Attunement", "Increase the effects and efficiency of crystal casts. Your crystals are harder to destroy.", 0, 1, 0 },
+                         { "Crystal Attunement", "Increase the effects and efficiency of crystal casts. Crystal spells are harder to destroy.", 0, 1, 0 },
                          { "Meditation", "While emerged in liquid crystal, take less damage and slowly heal.", 0, 1, 0 },
                          { "Spiritual Casting", "Gain access to spirit energy that can be used instead of material. Energy recharges over time and faster while meditating.", 0, 1, 0 },
                          { "Focused Chant", "Charge your spells to increase their size and speed while taking in material over time.", 1, 1, 0 },
-                         { "Astral Projection", "Extend your spiritual abilities beyond your physical body.", 1, 1, 0 },
-                         { "Teleportation", "Transmit your body to a different crystal surface or liquid crystal.", 2, 1, 0 },
+                         { "Warding Crystals", "Your Crystals liquidize on impact and will solidify to ward of harm.", 1, 1, 0 },
+                         { "Astral Projection", "Transmit your body to a different crystal surface or liquid crystal.", 2, 1, 0 },
                          { "Sixth Sense", "Gain better perception when emerged within liquid crystal or standing on crystal.", 2, 1, 0 },
                          { "Deep Reserves", "Greatly increase your Energy pool. Energy can also be replenished by casting crystal spells.", 3, 1, 0 },
                          { "Crystal Transcendence", "Master crystal and spirit energy, greatly enhancing your abilities.", 3, 1, 0 }
@@ -153,6 +153,24 @@ public:
                          { "Crimson Rebirth", "Gain greater control over blood and the boundary between life and death.", 3, 1, 0 },
                          { "Hemomantic Ascension", "Achieve mastery over blood, flesh, and life itself.", 3, 1, 0 }
                  }};
+    }
+
+    void Reset()
+    {
+        for (Page& page : pages)
+        {
+            page.level = 1;
+            page.xp = 0.0f;
+            page.xpRequired = 100.0f;
+            page.skillPoints = 1;
+
+            for (Skill& skill : page.skills)
+                skill.level = 0;
+        }
+
+        currentPage = 0;
+        hoveredSkill = -1;
+        selectedSkill = -1;
     }
 
     void Draw() {
@@ -204,6 +222,12 @@ public:
     {
         return pages[std::clamp(index, 0, 5)];
     }
+
+    void SetPage(int index)
+    {
+        currentPage = std::clamp(index, 0, 5);
+    }
+
 
     Page& GetCurrentPage()
     {

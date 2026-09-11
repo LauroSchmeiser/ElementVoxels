@@ -40,6 +40,8 @@ namespace gl3 {
 
         void generateChunkMesh(Chunk* chunk);
 
+        void clearLightCaches();
+
         ChunkRenderer(FixedGridChunkManager* chunkMgr);
 
         void initialize();

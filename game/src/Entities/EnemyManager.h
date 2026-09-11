@@ -8,6 +8,11 @@
 
 namespace gl3 {
 
+    using EnemyDamageCallback = std::function<void(
+            VoxelPhysicsBody* body,
+            float damage
+    )>;
+
     struct PhysicsMeshData;
 
     struct EnemyRenderPart {
@@ -78,6 +83,7 @@ namespace gl3 {
         EnemyRuntime* findByBodyId(uint64_t bodyId);
         const EnemyRuntime* findByBodyId(uint64_t bodyId) const;
 
+        void setEnemyDamageCallback(EnemyDamageCallback cb) { enemyDamageCallback = cb; }
 
     private:
         Game* game = nullptr;
@@ -93,6 +99,9 @@ namespace gl3 {
         void destroyRenderMesh(PhysicsMeshData &mesh);
 
         glm::quat rotateFromTo(const glm::vec3 &from, const glm::vec3 &to);
+
+        EnemyDamageCallback enemyDamageCallback;
+
     };
 
 }

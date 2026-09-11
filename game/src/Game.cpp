@@ -414,8 +414,8 @@ namespace gl3 {
         materials.params[6].specular  = 0.75f;
         materials.params[6].uvScale   = 0.015f;
 
-        materials.params[7].roughness = 0.85f;
-        materials.params[7].specular  = 0.2f;
+        materials.params[7].roughness = 0.95f;
+        materials.params[7].specular  = 0.05f;
         materials.params[7].uvScale   = 0.125f;
 
         materials.params[8].roughness = 0.05f;
@@ -475,9 +475,11 @@ namespace gl3 {
 
     void Game::setupSpellContext()
     {
+        skillTree.Reset();
         SpellWorldContext ctx;
         ctx.chunks = chunkManager.get();
         ctx.physics = voxelPhysics.get();
+        ctx.skillTree = &skillTree;
         ctx.worldToChunk = [](float w){ return Game::worldToChunk(w); };
         ctx.getCameraFront = [this](){ return getCameraFront(); };
         ctx.getChunkMin = [this](const ChunkCoord& c){ return getChunkMin(c); };
@@ -585,7 +587,12 @@ namespace gl3 {
 
         enemyManager = std::make_unique<EnemyManager>();
         enemyManager->init(voxelPhysics.get(),chunkManager.get(), this);
-
+        enemyManager->setEnemyDamageCallback(
+                [this](gl3::VoxelPhysicsBody* body,
+                       float damage) {
+                    onEnemyDamage(body, damage);
+                }
+        );
         waveManager.init(enemyManager.get());
     }
 
@@ -816,6 +823,7 @@ namespace gl3 {
             }
         }
 
+
         switch (preloadStage)
         {
             // ---------------- immutable boot ----------------
@@ -934,10 +942,16 @@ namespace gl3 {
 
                 // 2) Drain dirty chunks during loading (this is the important part)
                 // Uses your existing budgeted manager path (MAX_CALC_PER_FRAME in manager)
-                chunkManager->rebuildDirtyChunks([this](Chunk* chunk) {
-                    chunkRenderer->generateChunkMesh(chunk);
-                    chunkRenderer->generateFluidMesh(chunk);
-                }, cameraPos);
+                chunkManager->rebuildDirtyChunks(
+                        [this](Chunk* chunk) {
+                            chunkRenderer->generateChunkMesh(chunk);
+
+                            if (chunk->hasFluid) {
+                                chunkRenderer->generateFluidMesh(chunk);
+                            }
+                        },
+                        cameraPos
+                );
 
                 // 3) Rebuild light-index buffer for current camera neighborhood
                 chunkRenderer->buildAndUploadChunkLightIndexBuffer(
@@ -1989,7 +2003,7 @@ namespace gl3 {
 
 
     void Game::markChunkModified(const ChunkCoord &coord) {
-        Chunk *chunk = chunkManager->getChunk(coord);
+        Chunk *chunk = chunkManager->getOrCreateChunk(coord);
         if (chunk) {
             if (!chunk->isCleared)
             {
@@ -2001,7 +2015,7 @@ namespace gl3 {
                 for (int dy=-1; dy<=1; ++dy)
                     for (int dz=-1; dz<=1; ++dz) {
                         ChunkCoord neighbor{coord.x + dx, coord.y + dy, coord.z + dz};
-                        Chunk *neighborChunk = chunkManager->getChunk(neighbor);
+                        Chunk *neighborChunk = chunkManager->getOrCreateChunk(neighbor);
                         if (neighborChunk) {
                             if (!neighborChunk->isCleared) {
                                 neighborChunk->meshDirty = true;
@@ -2014,7 +2028,7 @@ namespace gl3 {
     }
 
     void Game::unloadChunk(const ChunkCoord &coord) {
-        Chunk *chunk = chunkManager->getChunk(coord);
+        Chunk *chunk = chunkManager->getOrCreateChunk(coord);
         if (chunk) {
             chunk->clear();
         }
@@ -2389,7 +2403,7 @@ namespace gl3 {
         int cz = worldToChunk(worldPos.z);
 
         ChunkCoord coord{cx, cy, cz};
-        Chunk* chunk = chunkManager->getChunk(coord);
+        Chunk* chunk = chunkManager->getOrCreateChunk(coord);
 
         if (!chunk) {
             std::cout << "No chunk found at impact position\n";
@@ -2695,6 +2709,9 @@ namespace gl3 {
         actions.addAction("CastFleshSphere", {GLFW_KEY_X});
         actions.addAction("CastFireSphere", {GLFW_KEY_I});
 
+        actions.addAction("Teleport", {GLFW_KEY_1});
+        actions.addAction("ConvertToFluid", {GLFW_KEY_2});
+        actions.addAction("ExpandFluid", {GLFW_KEY_3});
 
         actions.addAction("CastWall", {GLFW_KEY_R});
         actions.addAction("AirReset", {GLFW_KEY_C});
@@ -2798,11 +2815,12 @@ namespace gl3 {
         std::vector<WorldPlanet> worldPlanets;
 
         //clear old data:
+        chunkRenderer->clearLightCaches();
         chunkManager->clearAll();
 
 
         // Create solid planets (type 1)
-        int planetCount = 24;
+        int planetCount = 150;
 
         int testMat = -1;
 
@@ -2849,7 +2867,7 @@ namespace gl3 {
 
         // Create water planets (type 3)
 
-        int waterCount = 12 ;
+        int waterCount = 80 ;
         for (int i = 0; i < waterCount; ++i) {
             WorldPlanet p;
             p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
@@ -2920,7 +2938,7 @@ namespace gl3 {
                         ChunkCoord coord{cx, cy, cz};
 
                         // Get or create chunk using MultiGridChunkManager
-                        Chunk *chunk = chunkManager->getChunk(coord);
+                        Chunk *chunk = chunkManager->getOrCreateChunk(coord);
 
                         if (!chunk) continue;
 
@@ -2976,11 +2994,6 @@ namespace gl3 {
                             chunk->lightingDirty = true;
                             FilledChunks++;
                             chunkManager->markChunkDirty(coord);
-
-                            // Rebuild lights for this chunk if it contains fire
-                            if (planet.type == 2) {
-                                rebuildChunkLights(coord);
-                            }
                         }
                     }
                 }
@@ -3356,7 +3369,7 @@ void Game::refreshMergedEmissiveBillboards()
 
 void Game::rebuildChunkLights(const ChunkCoord &coord) {
 ZoneScoped;
-Chunk *chunk = chunkManager->getChunk(coord);
+Chunk *chunk = chunkManager->getOrCreateChunk(coord);
 if (!chunk) return;
 
 chunk->emissiveLights.clear();
@@ -3473,17 +3486,18 @@ void Game::update() {
         refreshMergedEmissiveBillboards();
     }
     {
-    TRACY_CPU_ZONE("Game::Recalc Solid Meshes and Lights");
-    chunkManager->rebuildDirtyChunks([this](Chunk* chunk) {
-        chunkRenderer->generateChunkMesh(chunk);
-    },cameraPos);
+        TRACY_CPU_ZONE("Game::RebuildSolidAndFluidMeshes");
 
-    {
-        TRACY_CPU_ZONE("Game::Recalc Fluid Meshes and Lights");
-            chunkManager->rebuildDirtyChunks([this](Chunk *chunk) {
-                chunkRenderer->generateFluidMesh(chunk);
-            }, cameraPos);
-        }
+        chunkManager->rebuildDirtyChunks(
+                [this](Chunk* chunk) {
+                    chunkRenderer->generateChunkMesh(chunk);
+
+                    if (chunk->hasFluid) {
+                        chunkRenderer->generateFluidMesh(chunk);
+                    }
+                },
+                cameraPos
+        );
     }
 
 // per-chunk light index buffer
@@ -3649,6 +3663,52 @@ if (actions["CastSphere"].wasJustReleased) {
         spellSystem->castSphere(spellCenter, spellRadius, activeSpellMat, spellStrength, getCameraFront(), VOXEL_SIZE*CHUNK_SIZE*3, makeVoxelTypeMask({1}));
 }
 
+
+if (actions["Teleport"].wasJustReleased&&skillTree.GetPage(3).skills[6].level>0) {
+    RayCastResult hit = rayCastFromCamera(1000.0f);
+    if(hit.hit&& hit.voxelMat==6u)
+    {
+        std::cout << "Teleport Triggered\n";
+        characterController->setPosition(hit.hitPosition);
+    }
+}
+
+if (actions["Pull"].wasJustReleased&&skillTree.GetPage(3).skills[0].level>0) {
+    RayCastResult hit = rayCastFromCamera(500.0f);
+    if(hit.hit)
+    {
+        bool isBody = false;
+        uint64_t bodyID;
+        for(auto& body : voxelPhysics->getBodies())
+        {
+            glm::vec3 dir = hit.hitPosition-body->position;
+            float dist = glm::sqrt(dir.x*dir.x+dir.y*dir.y+dir.z*dir.z);
+            if(dist <= 0.5f)
+            {
+                isBody = true;
+                bodyID = body->id;
+                break;
+            }
+        }
+        if(isBody)
+        {
+            voxelPhysics->getBodyById(bodyID)->position += glm::normalize(characterController->getPosition()-voxelPhysics->getBodyById(bodyID)->position)*glm::vec3(3.0f);
+        } else
+        {
+            characterController->setPosition(glm::normalize(characterController->getPosition()-hit.hitPosition));
+        }
+
+        std::cout << "Pull Triggered\n";
+    }
+}
+
+if(actions["ConvertToFluid"].wasJustReleased&&skillTree.GetPage(1).skills[1].level>0) {
+    convertSolidWorldToType(characterController->getPosition(), 60.0f, 3);
+}
+if(actions["ExpandFluid"].wasJustReleased&&characterController->getState().isInFluid&&skillTree.GetPage(1).skills[4].level>0) {
+    convertEmptyWorldToMaterial(characterController->getPosition(),90.0f, sampleMaterialAtWorld(chunkManager.get(),characterController->getPosition()));
+    convertEmptyWorldToType(characterController->getPosition(), 90.0f, 3);
+}
 if (actions["CastFleshSphere"].wasJustReleased) {
     std::cout << "Flesh Sphere Spell Triggered\n";
     RayCastResult hit = rayCastFromCamera(5.0f);
@@ -3717,6 +3777,7 @@ if(actions["RollLeft"].wasJustPressed)
                             (cameraPos + getCameraFront() * 35.0f);
 
     waveManager.materialMined+=mineSolidWorld(spellCenter, 12.0f);
+
     std::cout<<"current material collected: "<<waveManager.materialMined<<"\n";
 }
 
@@ -3725,6 +3786,14 @@ if(actions["RollLeft"].wasJustPressed)
 
 // Update camera to follow character
 updateCamera();
+if(skillTree.GetPage(3).skills[2].level>0&&sampleMaterialAtWorld(chunkManager.get(),characterController->getPosition())==6u)
+{
+    setPlayerHealth(getPlayerHealth()+2.5f*deltaTime);
+}
+if(skillTree.GetPage(1).skills[3].level>0)
+{
+    setPlayerHealth(getPlayerHealth()+5.0f*deltaTime);
+}
 burn01(1.0f,5.0f);
 
 // Update dynamic chunks
@@ -3859,7 +3928,7 @@ glDepthMask(depthMask);
                 for (int cy = minCY; cy <= maxCY; ++cy) {
                     for (int cz = minCZ; cz <= maxCZ; ++cz) {
                         ChunkCoord coord{cx, cy, cz};
-                        Chunk* chunk = chunkManager->getChunk(coord);
+                        Chunk* chunk = chunkManager->getOrCreateChunk(coord);
                         if (!chunk) continue;
 
                         // Skip empty chunks (no geometry)
@@ -4679,7 +4748,7 @@ glDepthMask(depthMask);
         for (int cx = std::max(camCX - renderRadius, -R); cx <= std::min(camCX + renderRadius, R); ++cx) {
             for (int cy = std::max(camCY - renderRadius, -R); cy <= std::min(camCY + renderRadius, R); ++cy) {
                 for (int cz = std::max(camCZ - renderRadius, -R); cz <= std::min(camCZ + renderRadius, R); ++cz) {
-                    Chunk* chunk = chunkManager->getChunk({cx, cy, cz});
+                    Chunk* chunk = chunkManager->getOrCreateChunk({cx, cy, cz});
                     if (!chunk) continue;
 
                     if (chunk->hasGas && chunk->gpuSlot != FixedGridChunkManager::INVALID_GPU_SLOT) {
@@ -4755,11 +4824,11 @@ glDepthMask(depthMask);
         RayCastResult result;
         result.hit = false;
 
-        glm::vec3 rayDir = getCameraFront();
+        glm::vec3 rayDir = glm::normalize(getCameraFront());
         glm::vec3 rayOrigin = cameraPos;
 
         // Step through the ray
-        float stepSize = 1.0f;
+        const float stepSize = VOXEL_SIZE * 0.25f;
         float currentDist = 0.0f;
 
         while (currentDist < maxDistance) {
@@ -4771,7 +4840,7 @@ glDepthMask(depthMask);
             coord.y = worldToChunk(samplePos.y);
             coord.z = worldToChunk(samplePos.z);
 
-            Chunk* chunk = chunkManager->getChunk(coord);
+            Chunk* chunk = chunkManager->getOrCreateChunk(coord);
             if (chunk) {
                 // Convert world position to local chunk coordinates
                 glm::vec3 chunkMin = getChunkMin(coord);
@@ -4782,15 +4851,16 @@ glDepthMask(depthMask);
                 );
 
                 // Check bounds
-                if (localPos.x >= 0 && localPos.x <= CHUNK_SIZE &&
-                    localPos.y >= 0 && localPos.y <= CHUNK_SIZE &&
-                    localPos.z >= 0 && localPos.z <= CHUNK_SIZE) {
+                if (localPos.x >= 0 && localPos.x < CHUNK_SIZE &&
+                    localPos.y >= 0 && localPos.y < CHUNK_SIZE &&
+                    localPos.z >= 0 && localPos.z < CHUNK_SIZE) {
 
                     // Check if this voxel is solid
-                    if (chunk->voxels[localPos.x][localPos.y][localPos.z].isSolid()) {
+                    if (chunk->voxels[localPos.x][localPos.y][localPos.z].type!=0) {
                         result.hitPosition = samplePos;
-                        result.hitNormal = calculateNormalAt(chunk, localPos); // We'll implement this
+                        result.hitNormal = calculateNormalAt(chunk, localPos);
                         result.distance = currentDist;
+                        result.voxelMat = chunk->voxels[localPos.x][localPos.y][localPos.z].material;
                         result.hit = true;
                         return result;
                     }
@@ -4880,7 +4950,7 @@ glDepthMask(depthMask);
             int cy = worldToChunk(cornerWorld.y);
             int cz = worldToChunk(cornerWorld.z);
             ChunkCoord coord{cx, cy, cz};
-            Chunk* chunk = chunkManager->getChunk(coord);
+            Chunk* chunk = chunkManager->getOrCreateChunk(coord);
             if (!chunk) return -1000.0f;
             // local index inside that chunk (0..CHUNK_SIZE)
             glm::vec3 localCorner = (cornerWorld - getChunkMin(coord)) / VOXEL_SIZE;
@@ -4931,7 +5001,7 @@ glDepthMask(depthMask);
             int cy = worldToChunk(cornerWorld.y);
             int cz = worldToChunk(cornerWorld.z);
             ChunkCoord coord{cx, cy, cz};
-            Chunk* chunk = chunkManager->getChunk(coord);
+            Chunk* chunk = chunkManager->getOrCreateChunk(coord);
             if (!chunk) return -1000.0f;
             glm::vec3 localCorner = (cornerWorld - getChunkMin(coord)) / VOXEL_SIZE;
             int lx = glm::clamp((int)std::round(localCorner.x), 0, CHUNK_SIZE);
@@ -4969,7 +5039,7 @@ glDepthMask(depthMask);
         int cz = static_cast<int>(std::floor(worldPos.z / chunkWorldSize));
 
         ChunkCoord coord{cx, cy, cz};
-        Chunk* chunk = chunkManager->getChunk(coord);
+        Chunk* chunk = chunkManager->getOrCreateChunk(coord);
         if (!chunk) return 0.0f;
 
         glm::vec3 chunkMin = glm::vec3(coord.x * chunkWorldSize,
@@ -4994,7 +5064,7 @@ glDepthMask(depthMask);
         int cy = static_cast<int>(std::floor(worldPos.y / chunkWorldSize));
         int cz = static_cast<int>(std::floor(worldPos.z / chunkWorldSize));
 
-        Chunk* chunk = chunkManager->getChunk({cx, cy, cz});
+        Chunk* chunk = chunkManager->getOrCreateChunk({cx, cy, cz});
         if (!chunk) return glm::vec3(0.5f, 0.6f, 0.7f);
 
         glm::vec3 chunkMin = getChunkMin({cx, cy, cz});
@@ -5027,7 +5097,7 @@ glDepthMask(depthMask);
         int cz = static_cast<int>(std::floor(worldPos.z / chunkWorldSize));
 
         ChunkCoord coord{cx, cy, cz};
-        Chunk* chunk = chunkManager->getChunk(coord);
+        Chunk* chunk = chunkManager->getOrCreateChunk(coord);
         if (!chunk) return 0;
 
         glm::vec3 chunkMin = glm::vec3(coord.x * chunkWorldSize,
@@ -5052,7 +5122,7 @@ glDepthMask(depthMask);
         int cz = static_cast<int>(std::floor(worldPos.z / chunkWorldSize));
 
         ChunkCoord coord{cx, cy, cz};
-        Chunk* chunk = chunkManager->getChunk(coord);
+        Chunk* chunk = chunkManager->getOrCreateChunk(coord);
         if (!chunk) return 0;
 
         glm::vec3 chunkMin = glm::vec3(coord.x * chunkWorldSize,
@@ -5107,8 +5177,8 @@ glDepthMask(depthMask);
                            characterController->getState().isInFluid;
 
             if (canRoll) {
-                if (actions["RollLeft"].isPressed)  rollAmount += rollSpeedDeg * deltaTime;
-                if (actions["RollRight"].isPressed) rollAmount -= rollSpeedDeg * deltaTime;
+                if (actions["RollLeft"].isHolding())  rollAmount += rollSpeedDeg * deltaTime;
+                if (actions["RollRight"].isHolding()) rollAmount -= rollSpeedDeg * deltaTime;
             }
 
             if (std::abs(rollAmount) > 1e-6f) {
@@ -5647,7 +5717,7 @@ glDepthMask(depthMask);
                     resolveAssetPath("shaders/speedlines.vert"),
                     resolveAssetPath("shaders/speedlines.frag")
             );
-            std::cout << "Speed lines shader loaded successfully\n";
+            //std::cout << "Speed lines shader loaded successfully\n";
         } catch (const std::exception& e) {
             std::cerr << "Failed to load speed lines shader: " << e.what() << "\n";
             speedLinesShader = nullptr;
@@ -5737,11 +5807,9 @@ glDepthMask(depthMask);
 
         speedLinesShader->setVec3("uLineColor", lineColor);
 
-        // Enable blending for speed lines
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-        // Draw fullscreen triangle
         glBindVertexArray(postVAO);
         glDrawArrays(GL_TRIANGLES,0,3);
         glBindVertexArray(0);
@@ -6108,7 +6176,7 @@ glDepthMask(depthMask);
                 for (int cz = minCZ; cz <= maxCZ; ++cz)
                 {
                     ChunkCoord cc{cx,cy,cz};
-                    Chunk* chunk = chunkManager->getChunk(cc);
+                    Chunk* chunk = chunkManager->getOrCreateChunk(cc);
                     if (!chunk) continue;
 
                     const glm::vec3 cmin = getChunkMin(cc);
@@ -6178,7 +6246,7 @@ glDepthMask(depthMask);
                 for (int cz = minCZ; cz <= maxCZ; ++cz)
                 {
                     ChunkCoord cc{cx,cy,cz};
-                    Chunk* chunk = chunkManager->getChunk(cc);
+                    Chunk* chunk = chunkManager->getOrCreateChunk(cc);
                     if (!chunk) continue;
 
                     const glm::vec3 cmin = getChunkMin(cc);
@@ -6248,7 +6316,7 @@ glDepthMask(depthMask);
                 for (int cz = minCZ; cz <= maxCZ; ++cz)
                 {
                     ChunkCoord cc{cx,cy,cz};
-                    Chunk* chunk = chunkManager->getChunk(cc);
+                    Chunk* chunk = chunkManager->getOrCreateChunk(cc);
                     if (!chunk) continue;
 
                     const glm::vec3 cmin = getChunkMin(cc);
@@ -6294,9 +6362,12 @@ glDepthMask(depthMask);
         }
     }
 
-    void Game::convertWorldToType(const glm::vec3& center, float radius, uint32_t type, float strength)
+    void Game::convertWorldToType(const glm::vec3& center,
+                                  float radius,
+                                  uint32_t type,
+                                  float strength)
     {
-        if (!chunkManager) return;
+        if (!chunkManager || radius <= 0.0f || strength <= 0.0f) return;
 
         const float r2 = radius * radius;
 
@@ -6310,15 +6381,11 @@ glDepthMask(depthMask);
         std::vector<ChunkCoord> touched;
         touched.reserve(64);
 
-        // optional use of strength: if <=0, do nothing
-        if (strength <= 0.0f) return;
-
-        for (int cx = minCX; cx <= maxCX; ++cx)
-            for (int cy = minCY; cy <= maxCY; ++cy)
-                for (int cz = minCZ; cz <= maxCZ; ++cz)
-                {
-                    ChunkCoord cc{cx,cy,cz};
-                    Chunk* chunk = chunkManager->getChunk(cc);
+        for (int cx = minCX; cx <= maxCX; ++cx) {
+            for (int cy = minCY; cy <= maxCY; ++cy) {
+                for (int cz = minCZ; cz <= maxCZ; ++cz) {
+                    ChunkCoord cc{cx, cy, cz};
+                    Chunk* chunk = chunkManager->getOrCreateChunk(cc);
                     if (!chunk) continue;
 
                     const glm::vec3 cmin = getChunkMin(cc);
@@ -6333,23 +6400,51 @@ glDepthMask(depthMask);
                             const float wy = cmin.y + vy * VOXEL_SIZE;
                             const float dy = wy - center.y;
                             const float dy2 = dy * dy;
+
                             if (dx2 + dy2 > r2) continue;
 
                             for (int vz = 0; vz <= CHUNK_SIZE; ++vz) {
                                 const float wz = cmin.z + vz * VOXEL_SIZE;
                                 const float dz = wz - center.z;
                                 const float d2 = dx2 + dy2 + dz * dz;
+
                                 if (d2 > r2) continue;
 
                                 Voxel& v = chunk->voxels[vx][vy][vz];
-
-                                // convert all voxels in sphere (world-to-type)
                                 v.type = static_cast<uint8_t>(type);
 
-                                // keep density coherent if setting to empty
-                                if (v.type == 0) {
-                                    v.density = glm::min(v.density, -1.0f);
+                                const float distance = glm::sqrt(d2);
+                                const float falloff = glm::clamp(
+                                        1.0f - distance / radius,
+                                        0.0f,
+                                        1.0f
+                                );
+
+                                if (v.type == 3) {
+                                    // Fluid mesh is generated from fluidDensity.
+                                    // Remove the solid field so this voxel is not rendered twice.
+                                    v.density = -1.0f;
+                                    v.fluidDensity = glm::max(
+                                            v.fluidDensity,
+                                            glm::max(0.01f, strength * falloff)
+                                    );
+
+                                    // Optional: uncomment if type 3 should always be water.
+                                    // v.material = 5;
+
+                                    chunk->hasFluid = true;
                                 }
+                                else if (v.type == 0) {
+                                    // Empty voxel: remove from both mesh fields.
+                                    v.density = -1.0f;
+                                    v.fluidDensity = -1.0f;
+                                }
+                                else {
+                                    // Other types are solid.
+                                    v.density = glm::max(v.density, strength * falloff);
+                                    v.fluidDensity = -1.0f;
+                                }
+
                                 any = true;
                             }
                         }
@@ -6361,13 +6456,189 @@ glDepthMask(depthMask);
                         touched.push_back(cc);
                     }
                 }
+            }
+        }
 
-        for (const auto& c : touched) {
+        for (const ChunkCoord& c : touched) {
             markChunkModified(c);
         }
     }
 
-    void Game::convertSolidWorldToType(const glm::vec3& center, float radius, uint32_t type)
+    void Game::convertSolidWorldToType(const glm::vec3& center,
+                                       float radius,
+                                       uint32_t type)
+    {
+        if (!chunkManager || radius <= 0.0f) return;
+
+        const float r2 = radius * radius;
+
+        const int minCX = worldToChunk(center.x - radius);
+        const int maxCX = worldToChunk(center.x + radius);
+        const int minCY = worldToChunk(center.y - radius);
+        const int maxCY = worldToChunk(center.y + radius);
+        const int minCZ = worldToChunk(center.z - radius);
+        const int maxCZ = worldToChunk(center.z + radius);
+
+        std::vector<ChunkCoord> touched;
+        touched.reserve(64);
+
+        for (int cx = minCX; cx <= maxCX; ++cx) {
+            for (int cy = minCY; cy <= maxCY; ++cy) {
+                for (int cz = minCZ; cz <= maxCZ; ++cz) {
+                    ChunkCoord cc{cx, cy, cz};
+                    Chunk* chunk = chunkManager->getOrCreateChunk(cc);
+                    if (!chunk) continue;
+
+                    const glm::vec3 cmin = getChunkMin(cc);
+                    bool any = false;
+
+                    for (int vx = 0; vx <= CHUNK_SIZE; ++vx) {
+                        const float wx = cmin.x + vx * VOXEL_SIZE;
+                        const float dx = wx - center.x;
+                        const float dx2 = dx * dx;
+
+                        for (int vy = 0; vy <= CHUNK_SIZE; ++vy) {
+                            const float wy = cmin.y + vy * VOXEL_SIZE;
+                            const float dy = wy - center.y;
+                            const float dy2 = dy * dy;
+
+                            if (dx2 + dy2 > r2) continue;
+
+                            for (int vz = 0; vz <= CHUNK_SIZE; ++vz) {
+                                const float wz = cmin.z + vz * VOXEL_SIZE;
+                                const float dz = wz - center.z;
+                                const float d2 = dx2 + dy2 + dz * dz;
+
+                                if (d2 > r2) continue;
+
+                                Voxel& v = chunk->voxels[vx][vy][vz];
+                                if (!v.isSolid()) continue;
+
+                                v.type = static_cast<uint8_t>(type);
+
+                                if (v.type == 3) {
+                                    // Solid -> fluid conversion.
+                                    v.density = -1.0f;
+                                    v.fluidDensity = 1.0f;
+
+                                    // Optional: uncomment if converted fluid is always water.
+                                    // v.material = 5;
+
+                                    chunk->hasFluid = true;
+                                }
+                                else if (v.type == 0) {
+                                    // Solid -> empty conversion.
+                                    v.density = -1.0f;
+                                    v.fluidDensity = -1.0f;
+                                }
+                                else {
+                                    // Solid -> a different solid type.
+                                    v.fluidDensity = -1.0f;
+                                }
+
+                                any = true;
+                            }
+                        }
+                    }
+
+                    if (any) {
+                        chunk->meshDirty = true;
+                        chunk->lightingDirty = true;
+                        touched.push_back(cc);
+                    }
+                }
+            }
+        }
+
+        for (const ChunkCoord& c : touched) {
+            markChunkModified(c);
+        }
+    }
+
+    void Game::convertEmptyWorldToType(const glm::vec3& center,
+                                       float radius,
+                                       uint32_t type)
+    {
+        if (!chunkManager || radius <= 0.0f) return;
+
+        const float r2 = radius * radius;
+
+        const int minCX = worldToChunk(center.x - radius);
+        const int maxCX = worldToChunk(center.x + radius);
+        const int minCY = worldToChunk(center.y - radius);
+        const int maxCY = worldToChunk(center.y + radius);
+        const int minCZ = worldToChunk(center.z - radius);
+        const int maxCZ = worldToChunk(center.z + radius);
+
+        std::vector<ChunkCoord> touched;
+        touched.reserve(64);
+
+        for (int cx = minCX; cx <= maxCX; ++cx) {
+            for (int cy = minCY; cy <= maxCY; ++cy) {
+                for (int cz = minCZ; cz <= maxCZ; ++cz) {
+                    ChunkCoord cc{cx, cy, cz};
+                    Chunk* chunk = chunkManager->getOrCreateChunk(cc);
+                    if (!chunk) continue;
+
+                    const glm::vec3 cmin = getChunkMin(cc);
+                    bool any = false;
+
+                    for (int vx = 0; vx <= CHUNK_SIZE; ++vx) {
+                        const float wx = cmin.x + vx * VOXEL_SIZE;
+                        const float dx = wx - center.x;
+                        const float dx2 = dx * dx;
+
+                        for (int vy = 0; vy <= CHUNK_SIZE; ++vy) {
+                            const float wy = cmin.y + vy * VOXEL_SIZE;
+                            const float dy = wy - center.y;
+                            const float dy2 = dy * dy;
+
+                            if (dx2 + dy2 > r2) continue;
+
+                            for (int vz = 0; vz <= CHUNK_SIZE; ++vz) {
+                                const float wz = cmin.z + vz * VOXEL_SIZE;
+                                const float dz = wz - center.z;
+                                const float d2 = dx2 + dy2 + dz * dz;
+
+                                if (d2 > r2) continue;
+
+                                Voxel& v = chunk->voxels[vx][vy][vz];
+                                if (v.isSolid()) continue;
+
+                                v.type = static_cast<uint8_t>(type);
+
+                                if (v.type == 3) {
+                                    // Solid -> fluid conversion.
+                                    v.density = -1.0f;
+                                    v.fluidDensity = 1.0f;
+                                    chunk->hasFluid = true;
+                                    v.color = sampleFluidColorAtWorld(center);
+                                }
+                                else {
+                                    v.density=1.0f;
+                                    v.fluidDensity = -1.0f;
+                                }
+
+                                any = true;
+                            }
+                        }
+                    }
+
+                    if (any) {
+                        chunk->meshDirty = true;
+                        chunk->lightingDirty = true;
+                        touched.push_back(cc);
+                    }
+                }
+            }
+        }
+
+        for (const ChunkCoord& c : touched) {
+            markChunkModified(c);
+        }
+    }
+
+    void Game::convertEmptyWorldToMaterial(const glm::vec3& center, float radius, uint32_t material)
     {
         if (!chunkManager) return;
 
@@ -6388,7 +6659,7 @@ glDepthMask(depthMask);
                 for (int cz = minCZ; cz <= maxCZ; ++cz)
                 {
                     ChunkCoord cc{cx,cy,cz};
-                    Chunk* chunk = chunkManager->getChunk(cc);
+                    Chunk* chunk = chunkManager->getOrCreateChunk(cc);
                     if (!chunk) continue;
 
                     const glm::vec3 cmin = getChunkMin(cc);
@@ -6413,11 +6684,9 @@ glDepthMask(depthMask);
 
                                 Voxel& v = chunk->voxels[vx][vy][vz];
 
-                                if (v.isSolid()) {
-                                    v.type = static_cast<uint8_t>(type);
-                                    if (v.type == 0) {
-                                        v.density = glm::min(v.density, -1.0f);
-                                    }
+                                // only convert existing solid/active voxels
+                                if (v.type == 0 && !v.isSolid()) {
+                                    v.material = material;
                                     any = true;
                                 }
                             }
@@ -6459,7 +6728,7 @@ glDepthMask(depthMask);
                 for (int cz = minCZ; cz <= maxCZ; ++cz)
                 {
                     ChunkCoord cc{cx,cy,cz};
-                    Chunk* chunk = chunkManager->getChunk(cc);
+                    Chunk* chunk = chunkManager->getOrCreateChunk(cc);
                     if (!chunk) continue;
 
                     const glm::vec3 cmin = getChunkMin(cc);
@@ -6494,6 +6763,32 @@ glDepthMask(depthMask);
                                     {
                                         collected++;
                                     }
+                                    int page = 0;
+                                    if(v.material==6u)
+                                    {
+                                        page = 3;
+                                    }
+                                    else if(v.type==3u||v.material==5u)
+                                    {
+                                        page = 1;
+                                    } else if(v.material==7u||v.material==8u)
+                                    {
+                                        page = 5;
+                                    }
+                                    else if(v.material==9u||v.type==2u)
+                                    {
+                                        page = 0;
+                                    }
+                                    else if(v.material==4u||v.material==3u)
+                                    {
+                                        page = 2;
+                                    }
+                                    else
+                                    {
+                                        page = 4;
+                                    }
+                                    skillTree.SetPage(page);
+                                    skillTree.AddXP(0.05f);
                                 }
                             }
                         }
@@ -6765,7 +7060,7 @@ glDepthMask(depthMask);
         int cy = (int)std::floor(worldPos.y / chunkWorldSize);
         int cz = (int)std::floor(worldPos.z / chunkWorldSize);
 
-        Chunk* chunk = chunkManager->getChunk({cx, cy, cz});
+        Chunk* chunk = chunkManager->getOrCreateChunk({cx, cy, cz});
         if (!chunk) return glm::vec3(0.1f, 0.3f, 0.8f);
 
         glm::vec3 chunkMin = getChunkMin({cx,cy,cz});
@@ -6803,7 +7098,7 @@ glDepthMask(depthMask);
         if (!screenShader) {
             screenShader = new Shader(
                     "shaders/post_fullscreen.vert",
-                    "shaders/screen_quad.frag"  // Simple shader that just samples a texture
+                    "shaders/screen_quad.frag"
             );
         }
 
@@ -6872,5 +7167,9 @@ glDepthMask(depthMask);
             }
         }
         return "Empty";
+    }
+
+    void Game::onEnemyDamage(gl3::VoxelPhysicsBody *body, float damage) {
+
     }
 }

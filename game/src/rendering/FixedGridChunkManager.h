@@ -11,6 +11,7 @@
 #include "Chunk.h"
 #include "glm/glm.hpp"
 #include "iostream"
+#include <memory>
 
 namespace gl3 {
 
@@ -21,28 +22,16 @@ namespace gl3 {
 
         explicit FixedGridChunkManager(int radiusChunks)
                 : R(radiusChunks),
-                  dim(2 * R + 1),
-                  chunks((size_t)dim * dim * dim)
+                  dim(2 * R + 1)
         {
-            for (int z = -R; z <= R; ++z)
-                for (int y = -R; y <= R; ++y)
-                    for (int x = -R; x <= R; ++x)
-                    {
-                        const uint32_t index = toIndex({x,y,z});
-                        assert(index < chunks.size());
-                        Chunk& c = chunks[index];
-                        c.coord = {x,y,z};
-                        c.gpuSlot = INVALID_GPU_SLOT;
-                        c.clear();
-                        c.isCleared = false;
-                    }
         }
 
         int radius() const { return R; }
         int dimension() const { return dim; }
         uint32_t maxChunksGpu() const { return MAX_GPU_SLOTS; }
-        size_t totalChunksInGrid() const { return chunks.size(); }
-
+        size_t totalChunksInGrid() const {
+            return chunks.size();
+        }
         bool inBounds(const ChunkCoord& cc) const {
             return (cc.x >= -R && cc.x <= R &&
                     cc.y >= -R && cc.y <= R &&
@@ -51,7 +40,54 @@ namespace gl3 {
 
         Chunk* getChunk(const ChunkCoord& cc) {
             if (!inBounds(cc)) return nullptr;
-            return &chunks[toIndex(cc)];
+
+            auto it = chunks.find(cc);
+            return it == chunks.end() ? nullptr : it->second.get();
+        }
+
+        const Chunk* getChunk(const ChunkCoord& cc) const {
+            if (!inBounds(cc)) return nullptr;
+
+            auto it = chunks.find(cc);
+            return it == chunks.end() ? nullptr : it->second.get();
+        }
+
+        Chunk* getOrCreateChunk(const ChunkCoord& cc) {
+            if (!inBounds(cc)) return nullptr;
+
+            auto it = chunks.find(cc);
+
+            if (it != chunks.end()) {
+                Chunk* chunk = it->second.get();
+
+                if (chunk->isCleared) {
+                    chunk->resetVoxels();
+                    chunk->coord = cc;
+                    chunk->gpuSlot = INVALID_GPU_SLOT;
+                    chunk->isCleared = false;
+                    chunk->hasEmissive = false;
+                    chunk->hasFluid = false;
+                    chunk->hasGas = false;
+                    chunk->inEmissiveList = false;
+                    chunk->emissiveLights.clear();
+                    chunk->gpuCache.vertexCount = 0;
+                    chunk->gpuCache.isValid = false;
+                    chunk->gpuCache.nearbyLights.clear();
+                    chunk->meshDirty = true;
+                    chunk->lightingDirty = true;
+                }
+
+                return chunk;
+            }
+
+            auto chunk = std::make_unique<Chunk>();
+            chunk->coord = cc;
+            chunk->gpuSlot = INVALID_GPU_SLOT;
+            chunk->isCleared = false;
+
+            Chunk* result = chunk.get();
+            chunks.emplace(cc, std::move(chunk));
+            return result;
         }
 
         uint32_t allocateGpuSlot(const ChunkCoord& coord) {
@@ -62,17 +98,20 @@ namespace gl3 {
                 return chunk->gpuSlot;
             }
 
-            uint32_t slot;
+            uint32_t slot = INVALID_GPU_SLOT;
+
             if (!freeGpuSlots.empty()) {
                 slot = freeGpuSlots.back();
                 freeGpuSlots.pop_back();
             } else if (nextGpuSlot < MAX_GPU_SLOTS) {
                 slot = nextGpuSlot++;
             } else {
-                if (!evictFurthestChunk(coord)) {
+                if (!evictFurthestChunk(coord) || freeGpuSlots.empty()) {
                     return INVALID_GPU_SLOT;
                 }
-                slot = nextGpuSlot - 1;
+
+                slot = freeGpuSlots.back();
+                freeGpuSlots.pop_back();
             }
 
             chunk->gpuSlot = slot;
@@ -175,53 +214,41 @@ namespace gl3 {
         }
 
         void forEachChunk(const std::function<void(Chunk*)>& fn) {
-            for (auto& c : chunks) fn(&c);
+            for (auto& [coord, chunk] : chunks) {
+                fn(chunk.get());
+            }
         }
 
-
         void clearAll() {
-            for (auto& c : chunks) {
-                c.clear();
-                c.isCleared = false;
-                c.gpuSlot = INVALID_GPU_SLOT;
-                c.gpuCache.isValid = false;
-                markChunkDirty(c.coord);
+            for (auto& [coord, chunk] : chunks) {
+                chunk->clear();
+                chunk->coord = coord;
+                chunk->gpuSlot = INVALID_GPU_SLOT;
+                chunk->isCleared = true;
+                chunk->meshDirty = false;
+                chunk->lightingDirty = false;
             }
 
+            dirtyChunks.clear();
             nextGpuSlot = 0;
             freeGpuSlots.clear();
             slotToChunkCoord.clear();
             activeSlots.clear();
         }
 
+
         void forEachEmissiveChunk(const std::function<void(Chunk*)>& fn) {
-            for (uint32_t idx : emissiveIndices) {
-                Chunk& c = chunks[idx];
-                if (!c.hasEmissive) continue;
-                fn(&c);
+            for (auto& [coord, chunk] : chunks) {
+                if (chunk->hasEmissive) {
+                    fn(chunk.get());
+                }
             }
         }
 
         void updateEmissiveMembership(Chunk& c) {
             const bool nowEmissive = !c.emissiveLights.empty();
-
-            if (nowEmissive && !c.inEmissiveList) {
-                c.hasEmissive = true;
-                c.inEmissiveList = true;
-                emissiveIndices.push_back(toIndex(c.coord));
-            } else if (!nowEmissive) {
-                c.hasEmissive = false;
-                removeEmissiveIndex(toIndex(c.coord));
-                c.inEmissiveList = false;
-            }
-        }
-
-        void removeEmissiveIndex(uint32_t idx) {
-            auto it = std::find(emissiveIndices.begin(), emissiveIndices.end(), idx);
-            if (it == emissiveIndices.end()) return;
-            *it = emissiveIndices.back();
-            emissiveIndices.pop_back();
-            chunks[idx].inEmissiveList = false;
+            c.hasEmissive = nowEmissive;
+            c.inEmissiveList = nowEmissive;
         }
 
         std::vector<std::pair<ChunkCoord, Chunk*>> getChunksInRadius(
@@ -279,7 +306,9 @@ namespace gl3 {
                 dirtyChunks.pop_back();
 
                 Chunk* chunk = getChunk(coord);
-                if (!chunk) continue;
+                if (!chunk || chunk->isCleared) {
+                    continue;
+                }
 
                 if (chunk->lightingDirty) {
                     rebuildChunkLighting(chunk);
@@ -305,7 +334,7 @@ namespace gl3 {
         }
 
         void rebuildChunkLighting(Chunk* chunk) {
-            if (!chunk) return;
+            if (!chunk || chunk->isCleared) return;
             chunk->emissiveLights.clear();
 
             // chunk origin in world units
@@ -356,9 +385,9 @@ namespace gl3 {
         int R = 0;
         int dim = 0;
         const int MAX_CALC_PER_FRAME = 8;
-        std::vector<Chunk> chunks;
+
+        std::unordered_map<ChunkCoord, std::unique_ptr<Chunk>, ChunkCoordHash> chunks;
         std::vector<ChunkCoord> dirtyChunks;
-        std::vector<uint32_t> emissiveIndices;
 
         uint32_t nextGpuSlot = 0;
         std::vector<uint32_t> freeGpuSlots;

@@ -107,7 +107,7 @@ bool SoundManager::loadSound(SoundID id, const std::string& filepath, SoundType 
         }
 
         sounds[id] = std::move(entry);
-        std::cout << "Loaded sound: " << filepath << std::endl;
+        //std::cout << "Loaded sound: " << filepath << std::endl;
         return true;
     }
     catch (const std::exception& e) {

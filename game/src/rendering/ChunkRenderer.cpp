@@ -9,9 +9,10 @@ namespace gl3 {
     }
 
     void ChunkRenderer::initialize() {
+        MAX_CHUNKS_GPU = static_cast<int>(chunkManager->maxChunksGpu());
+
         marchingCubesShader = std::make_unique<Shader>("shaders/marching_cubes.comp");
         setupSSBOsAndTables();
-        //MAX_CHUNKS_GPU = (int)chunkManager->maxChunksGpu();
         setupLightSSBOs();
         setupChunkBatchBuffers(MAX_CHUNKS_GPU);
         fluidMarchingCubesShader = std::make_unique<Shader>("shaders/fluid_marching_cubes.comp");
@@ -423,6 +424,13 @@ namespace gl3 {
     inline uint32_t ChunkRenderer::lightIndexFromPtr(const VoxelLight* ptr) const {
         const VoxelLight* base = mergedEmissiveLightPool.data();
         return (uint32_t)(ptr - base);
+    }
+
+    void ChunkRenderer::clearLightCaches()
+    {
+        lightSpatialHash.clear();
+        flatEmissiveLightList.clear();
+        mergedEmissiveLightPool.clear();
     }
 
     void ChunkRenderer::updateChunkLights(Chunk *chunk) {

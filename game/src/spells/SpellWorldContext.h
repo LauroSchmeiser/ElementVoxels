@@ -2,6 +2,7 @@
 #include <functional>
 #include <glm/glm.hpp>
 #include "../rendering/VoxelStructures.h"
+#include "../ui/SkillTreeUI.h"
 
 namespace gl3 {
 
@@ -12,10 +13,12 @@ namespace gl3 {
     struct SpellWorldContext {
         FixedGridChunkManager* chunks = nullptr;
         VoxelPhysicsManager* physics = nullptr;
+        SkillTreeUI* skillTree = nullptr;
 
         // world helpers
         std::function<int(float)> worldToChunk;
         std::function<glm::vec3()> getCameraFront;
+
         std::function<glm::vec3(const ChunkCoord&)> getChunkMin;
         std::function<void(const ChunkCoord&)> markChunkModified;
 

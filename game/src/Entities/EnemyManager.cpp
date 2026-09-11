@@ -138,6 +138,10 @@ namespace gl3 {
             }
 
             if (e.inst.body && e.inst.hp > 0.0f) {
+                if(game&&game->getSkillTree().GetPage(1).skills[5].level>0&&Game::sampleTypeAtWorld(chunkMgr,e.inst.position)==3u)
+                {
+                    e.inst.hp-=2.0f*dt;
+                }
                 glm::vec3 moveDir = dir;
                 float moveSpeed = e.inst.type.moveSpeed;
 

@@ -319,6 +319,7 @@ namespace gl3 {
             float desiredVolumeWorld = (float)visual.size() * voxelVolumeWorld;
 
             const float packingEfficiency = 0.3f;
+
             constexpr float PI = 3.14159265358979323846f;
             const float minWorldDim = VOXEL_SIZE * 0.15f;
 
@@ -369,6 +370,9 @@ namespace gl3 {
                 default:
                     break;
             }
+
+            if(dominantType==3u) {adjusted.radius*=2.0f; adjusted.sizeX*2.0f;adjusted.sizeY*2.0f;adjusted.sizeZ*2.0f;}
+            ///Todo get info about skill unlock
 
             adjusted.center = req.center;
 
