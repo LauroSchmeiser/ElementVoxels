@@ -12,6 +12,7 @@ namespace gl3 {
         MAX_CHUNKS_GPU = static_cast<int>(chunkManager->maxChunksGpu());
 
         marchingCubesShader = std::make_unique<Shader>("shaders/marching_cubes.comp");
+        finalizeIndirectShader = std::make_unique<Shader>("shaders/finalize_indirect.comp");
         setupSSBOsAndTables();
         setupLightSSBOs();
         setupChunkBatchBuffers(MAX_CHUNKS_GPU);
@@ -69,8 +70,33 @@ namespace gl3 {
 
     }
 
+    void ChunkRenderer::resolvePendingVertexCounts()
+    {
+        if (pendingCountChunks.empty()) return;
 
-    void ChunkRenderer::generateChunkMesh(Chunk* chunk)
+        size_t writeIdx = 0;
+        for (size_t i = 0; i < pendingCountChunks.size(); ++i) {
+            Chunk* chunk = pendingCountChunks[i];
+            if (chunk->isCleared) {
+                continue;
+            }
+            bool resolved = tryResolveChunkVertexCount(chunk);
+            if (!resolved) {
+                pendingCountChunks[writeIdx++] = chunk;
+            }
+        }
+        pendingCountChunks.resize(writeIdx);
+    }
+
+    void ChunkRenderer::requestChunkMesh(Chunk* chunk, int lod)
+    {
+        if (!chunk) return;
+        int lodStep = lodToStep(lod);
+        chunk->pendingLod = lod;
+        generateChunkMesh(chunk, lodStep);
+    }
+
+    void ChunkRenderer::generateChunkMesh(Chunk* chunk, int lodStep)
     {
         if (ssboVoxels == 0 || ssboCounter == 0 || chunkIndirectBuffer == 0 || globalChunkVertexBuffer == 0) {
             std::cout << "ChunkRenderer not initialized properly\n";
@@ -78,14 +104,16 @@ namespace gl3 {
         }
 
         if (!chunk || !chunk->voxelData || chunk->isCleared) {
-             return;
+            return;
         }
         if (chunk->gpuSlot == FixedGridChunkManager::INVALID_GPU_SLOT ||
             chunk->gpuSlot >= static_cast<uint32_t>(MAX_CHUNKS_GPU)) {
             std::cout << "Invalid chunk GPU slot: " << chunk->gpuSlot
-            << " (MAX=" << MAX_CHUNKS_GPU << ")\n";
+                      << " (MAX=" << MAX_CHUNKS_GPU << ")\n";
             return;
         }
+
+        if (lodStep < 1) lodStep = 1;
 
         if (chunk->isCleared) {
             DrawArraysIndirectCommand cmd{};
@@ -107,8 +135,6 @@ namespace gl3 {
             return;
         }
 
-        // TODO: optional CPU early-out: if no solid, also set cmd.count=0 as above and return.
-
         glm::vec3 chunkOrigin(
                 chunk->coord.x * CHUNK_SIZE * gl3::VOXEL_SIZE,
                 chunk->coord.y * CHUNK_SIZE * gl3::VOXEL_SIZE,
@@ -124,45 +150,67 @@ namespace gl3 {
 
         marchingCubesShader->setUInt("uChunkSlot", chunk->gpuSlot);
         marchingCubesShader->setUInt("uChunkMaxVerts", (uint32_t)CHUNK_MAX_VERTS);
+        marchingCubesShader->setInt("uLodStep", lodStep);
+        marchingCubesShader->setFloat("uNormalH", 0.5f * (float)lodStep);
 
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssboVoxels);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, ssboEdgeTable);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, ssboTriTable);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, ssboCounter);
-
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, globalChunkVertexBuffer);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, chunkIndirectBuffer);
 
-        int cellsPerAxis = DIM - 1;
+        int cellsPerAxis = (DIM - 1) / lodStep;
+        if (cellsPerAxis < 1) cellsPerAxis = 1;
         int groups = (cellsPerAxis + 7) / 8;
-        glDispatchCompute(groups, groups, groups);
 
+        glDispatchCompute(groups, groups, groups);
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT |
                         GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT |
                         GL_COMMAND_BARRIER_BIT);
 
-        // readback vertexCounter (4 bytes)
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
-        uint32_t produced = 0;
-        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(uint32_t), &produced);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        finalizeIndirectShader->use();
+        finalizeIndirectShader->setUInt("uChunkSlot", chunk->gpuSlot);
+        finalizeIndirectShader->setUInt("uChunkMaxVerts", (uint32_t)CHUNK_MAX_VERTS);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, ssboCounter);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, chunkIndirectBuffer);
+        glDispatchCompute(1, 1, 1);
+        glMemoryBarrier(GL_COMMAND_BARRIER_BIT | GL_SHADER_STORAGE_BARRIER_BIT);
 
-        DrawArraysIndirectCommand cmd{};
-        cmd.count = produced;
-        chunk->gpuCache.vertexCount = produced;
-        cmd.instanceCount = 1;
-        cmd.first = chunk->gpuSlot * (uint32_t)CHUNK_MAX_VERTS;
-        cmd.baseInstance = chunk->gpuSlot;
+        // --- Async vertex count readback (CPU-side, non-blocking) ---
+        ensureCounterReadbackBuffer(chunk);
 
-        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, chunkIndirectBuffer);
-        glBufferSubData(GL_DRAW_INDIRECT_BUFFER,
-                        chunk->gpuSlot * sizeof(DrawArraysIndirectCommand),
-                        sizeof(DrawArraysIndirectCommand),
-                        &cmd);
-        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+        glBindBuffer(GL_COPY_READ_BUFFER, ssboCounter);
+        glBindBuffer(GL_COPY_WRITE_BUFFER, chunk->gpuCache.counterReadbackBuffer);
+        glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER, 0, 0, sizeof(uint32_t));
+        glBindBuffer(GL_COPY_READ_BUFFER, 0);
+        glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
+
+        if (chunk->gpuCache.counterFence != 0) {
+            glDeleteSync(chunk->gpuCache.counterFence);
+            chunk->gpuCache.counterFence = 0;
+        }
+        chunk->gpuCache.counterFence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+
+        if (!chunk->gpuCache.hasPendingCount) {
+            chunk->gpuCache.hasPendingCount = true;
+            pendingCountChunks.push_back(chunk);
+        }
 
         chunk->gpuCache.isValid = true;
         chunk->meshDirty = false;
+        chunk->currentLod = (lodStep == 1) ? 0 : (int)std::log2((double)lodStep);
+        chunk->pendingLod = -1;
+    }
+
+    void ChunkRenderer::ensureCounterReadbackBuffer(Chunk* chunk)
+    {
+        if (chunk->gpuCache.counterReadbackBuffer != 0) return;
+
+        glGenBuffers(1, &chunk->gpuCache.counterReadbackBuffer);
+        glBindBuffer(GL_COPY_WRITE_BUFFER, chunk->gpuCache.counterReadbackBuffer);
+        glBufferData(GL_COPY_WRITE_BUFFER, sizeof(uint32_t), nullptr, GL_STREAM_READ);
+        glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
     }
 
     bool ChunkRenderer::tryResolveChunkVertexCount(Chunk* chunk)
@@ -170,12 +218,10 @@ namespace gl3 {
         if (!chunk->gpuCache.hasPendingCount || !chunk->gpuCache.counterFence)
             return false;
 
-        // Non-blocking poll:
-        GLenum res = glClientWaitSync(chunk->gpuCache.counterFence, 0, 0);
+        GLenum res = glClientWaitSync(chunk->gpuCache.counterFence, 0, 0); // non-blocking
         if (res == GL_TIMEOUT_EXPIRED)
             return false;
 
-        // Fence signaled (or already signaled). Read the 4 bytes.
         glDeleteSync(chunk->gpuCache.counterFence);
         chunk->gpuCache.counterFence = 0;
         chunk->gpuCache.hasPendingCount = false;
@@ -183,7 +229,7 @@ namespace gl3 {
         glBindBuffer(GL_COPY_READ_BUFFER, chunk->gpuCache.counterReadbackBuffer);
         void* ptr = glMapBufferRange(GL_COPY_READ_BUFFER, 0, sizeof(uint32_t), GL_MAP_READ_BIT);
         if (ptr) {
-            chunk->gpuCache.vertexCount = *reinterpret_cast<uint32_t*>(ptr);
+            chunk->gpuCache.vertexCount = std::min(*reinterpret_cast<uint32_t*>(ptr), (uint32_t)CHUNK_MAX_VERTS);
             glUnmapBuffer(GL_COPY_READ_BUFFER);
         }
         glBindBuffer(GL_COPY_READ_BUFFER, 0);
@@ -768,29 +814,38 @@ namespace gl3 {
 
         int cellsPerAxis = DIM - 1;
         int groups = (cellsPerAxis + 7) / 8;
-        glDispatchCompute(groups, groups, groups);
 
+        glDispatchCompute(groups, groups, groups);
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT |
                         GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT |
                         GL_COMMAND_BARRIER_BIT);
 
-        uint32_t produced = 0;
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboCounter);
-        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(uint32_t), &produced);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        finalizeIndirectShader->use();
+        finalizeIndirectShader->setUInt("uChunkSlot", chunk->gpuSlot);
+        finalizeIndirectShader->setUInt("uChunkMaxVerts", (uint32_t)FLUID_CHUNK_MAX_VERTS);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, ssboCounter);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, fluidIndirectBuffer);
+        glDispatchCompute(1, 1, 1);
+        glMemoryBarrier(GL_COMMAND_BARRIER_BIT | GL_SHADER_STORAGE_BARRIER_BIT);
 
-        DrawArraysIndirectCommand cmd{};
-        cmd.count = produced;
-        cmd.instanceCount = 1;
-        cmd.first = chunk->gpuSlot * (uint32_t)FLUID_CHUNK_MAX_VERTS;
-        cmd.baseInstance = chunk->gpuSlot;
+        ensureFluidCounterReadbackBuffer(chunk);
 
-        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, fluidIndirectBuffer);
-        glBufferSubData(GL_DRAW_INDIRECT_BUFFER,
-                        chunk->gpuSlot * sizeof(DrawArraysIndirectCommand),
-                        sizeof(DrawArraysIndirectCommand),
-                        &cmd);
-        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+        glBindBuffer(GL_COPY_READ_BUFFER, ssboCounter);
+        glBindBuffer(GL_COPY_WRITE_BUFFER, chunk->gpuCache.fluidCounterReadbackBuffer);
+        glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER, 0, 0, sizeof(uint32_t));
+        glBindBuffer(GL_COPY_READ_BUFFER, 0);
+        glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
+
+        if (chunk->gpuCache.fluidCounterFence != 0) {
+            glDeleteSync(chunk->gpuCache.fluidCounterFence);
+            chunk->gpuCache.fluidCounterFence = 0;
+        }
+        chunk->gpuCache.fluidCounterFence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+
+        if (!chunk->gpuCache.hasPendingFluidCount) {
+            chunk->gpuCache.hasPendingFluidCount = true;
+            pendingFluidCountChunks.push_back(chunk);
+        }
     }
 
     void ChunkRenderer::uploadVoxelChunkToGasSlot(const Chunk& chunk)
@@ -864,5 +919,57 @@ namespace gl3 {
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssboGasVoxels);
         glBufferSubData(GL_SHADER_STORAGE_BUFFER, offset, chunkBytes, voxels.data());
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
+
+    void ChunkRenderer::ensureFluidCounterReadbackBuffer(Chunk* chunk)
+    {
+        if (chunk->gpuCache.fluidCounterReadbackBuffer != 0) return;
+
+        glGenBuffers(1, &chunk->gpuCache.fluidCounterReadbackBuffer);
+        glBindBuffer(GL_COPY_WRITE_BUFFER, chunk->gpuCache.fluidCounterReadbackBuffer);
+        glBufferData(GL_COPY_WRITE_BUFFER, sizeof(uint32_t), nullptr, GL_STREAM_READ);
+        glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
+    }
+
+    bool ChunkRenderer::tryResolveFluidVertexCount(Chunk* chunk)
+    {
+        if (!chunk->gpuCache.hasPendingFluidCount || !chunk->gpuCache.fluidCounterFence)
+            return false;
+
+        GLenum res = glClientWaitSync(chunk->gpuCache.fluidCounterFence, 0, 0); // non-blocking
+        if (res == GL_TIMEOUT_EXPIRED)
+            return false;
+
+        glDeleteSync(chunk->gpuCache.fluidCounterFence);
+        chunk->gpuCache.fluidCounterFence = 0;
+        chunk->gpuCache.hasPendingFluidCount = false;
+
+        glBindBuffer(GL_COPY_READ_BUFFER, chunk->gpuCache.fluidCounterReadbackBuffer);
+        void* ptr = glMapBufferRange(GL_COPY_READ_BUFFER, 0, sizeof(uint32_t), GL_MAP_READ_BIT);
+        if (ptr) {
+            chunk->gpuCache.fluidVertexCount = std::min(*reinterpret_cast<uint32_t*>(ptr), (uint32_t)FLUID_CHUNK_MAX_VERTS);
+            glUnmapBuffer(GL_COPY_READ_BUFFER);
+        }
+        glBindBuffer(GL_COPY_READ_BUFFER, 0);
+
+        return true;
+    }
+
+    void ChunkRenderer::resolvePendingFluidVertexCounts()
+    {
+        if (pendingFluidCountChunks.empty()) return;
+
+        size_t writeIdx = 0;
+        for (size_t i = 0; i < pendingFluidCountChunks.size(); ++i) {
+            Chunk* chunk = pendingFluidCountChunks[i];
+            if (chunk->isCleared) {
+                continue;
+            }
+            bool resolved = tryResolveFluidVertexCount(chunk);
+            if (!resolved) {
+                pendingFluidCountChunks[writeIdx++] = chunk;
+            }
+        }
+        pendingFluidCountChunks.resize(writeIdx);
     }
 }

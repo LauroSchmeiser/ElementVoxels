@@ -1,0 +1,16 @@
+#version 430
+layout(local_size_x = 1) in;
+
+struct DrawArraysIndirectCommand { uint count; uint instanceCount; uint first; uint baseInstance; };
+layout(std430, binding = 3) buffer Counter { uint vertexCounter; };
+layout(std430, binding = 5) buffer Indirect { DrawArraysIndirectCommand cmds[]; };
+
+uniform uint uChunkSlot;
+uniform uint uChunkMaxVerts;
+
+void main() {
+    cmds[uChunkSlot].count         = min(vertexCounter, uChunkMaxVerts);
+    cmds[uChunkSlot].instanceCount = 1u;
+    cmds[uChunkSlot].first         = uChunkSlot * uChunkMaxVerts;
+    cmds[uChunkSlot].baseInstance  = uChunkSlot;
+}

@@ -33,6 +33,9 @@ namespace gl3 {
         uint32_t gpuSlot = 0;
         bool queuedForRebuild = false;
 
+        int currentLod = -1;
+        int pendingLod = -1;
+
         struct BurnState {
             bool active = false;
             float t = 0.0f;
@@ -59,6 +62,11 @@ namespace gl3 {
             GLsync counterFence = 0;
             uint32_t pendingVertexCount = 0;
             bool hasPendingCount = false;
+
+            uint32_t fluidVertexCount = 0;
+            GLuint fluidCounterReadbackBuffer = 0;
+            GLsync fluidCounterFence = 0;
+            bool hasPendingFluidCount = false;
         } gpuCache;
 
         Chunk() {
@@ -100,8 +108,10 @@ namespace gl3 {
             if (gpuCache.triangleSSBO != 0) { glDeleteBuffers(1, &gpuCache.triangleSSBO); gpuCache.triangleSSBO = 0; }
             if (gpuCache.counterReadbackBuffer != 0) { glDeleteBuffers(1, &gpuCache.counterReadbackBuffer); gpuCache.counterReadbackBuffer = 0; }
             if (gpuCache.counterFence != 0) { glDeleteSync(gpuCache.counterFence); gpuCache.counterFence = 0; }
+            if (gpuCache.fluidCounterReadbackBuffer != 0) { glDeleteBuffers(1, &gpuCache.fluidCounterReadbackBuffer); gpuCache.fluidCounterReadbackBuffer = 0; }
+            if (gpuCache.fluidCounterFence != 0) { glDeleteSync(gpuCache.fluidCounterFence); gpuCache.fluidCounterFence = 0; }
 
-            releaseVoxels(); // <-- actually free the big array now
+            releaseVoxels();
 
             hasEmissive = false;
             hasFluid = false;
@@ -110,6 +120,8 @@ namespace gl3 {
             gpuCache.vertexCount = 0;
             gpuCache.isValid = false;
             gpuCache.hasPendingCount = false;
+            gpuCache.fluidVertexCount = 0;
+            gpuCache.hasPendingFluidCount = false;
             gpuCache.nearbyLights.clear();
             emissiveLights.clear();
             meshDirty = true;

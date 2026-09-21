@@ -3505,13 +3505,22 @@ void Game::update() {
 
         chunkManager->rebuildDirtyChunks(
                 [this](Chunk* chunk) {
-                    chunkRenderer->generateChunkMesh(chunk);
+                    float dist = glm::distance(
+                            chunkManager->getChunkMin(chunk->coord) + glm::vec3(CHUNK_SIZE * VOXEL_SIZE * 0.5f),
+                            cameraPos
+                    );
 
+                    int lod = 0;
+                    if (dist > lodDistance3) lod = 3;
+                    else if (dist > lodDistance2) lod = 2;
+                    else if (dist > lodDistance1) lod = 1;
+
+                    chunkRenderer->requestChunkMesh(chunk, lod);
                     if (chunk->hasFluid) {
                         chunkRenderer->generateFluidMesh(chunk);
                     }
                 },
-                rebuildCameraPos,
+                cameraPos,
                 pv
         );
     }
@@ -3830,6 +3839,28 @@ burn01(1.0f,5.0f);
 
 }
 
+    void Game::updateChunkLODs()
+    {
+        chunkManager->forEachChunk([this](Chunk* chunk) {
+            if (chunk->isCleared || !chunk->voxelData) return;
+            if (chunk->gpuSlot == FixedGridChunkManager::INVALID_GPU_SLOT) return;
+
+            float dist = glm::distance(
+                    chunkManager->getChunkMin(chunk->coord) + glm::vec3(CHUNK_SIZE * VOXEL_SIZE * 0.5f),
+                    cameraPos
+            );
+
+            int lod = 0;
+            if (dist > lodDistance3) lod = 3;
+            else if (dist > lodDistance2) lod = 2;
+            else if (dist > lodDistance1) lod = 1;
+
+            if (chunk->currentLod != lod) {
+                chunkManager->markChunkDirty(chunk->coord);
+            }
+        });
+    }
+
 glm::vec3 Game::getCameraFront() const {
         return glm::normalize(cameraForward);
     }
@@ -3955,10 +3986,13 @@ glDepthMask(depthMask);
         if (frameCounter % 60 == 0) {
             TRACY_CPU_ZONE("renderChunks::cleanupDistantSlots");
             chunkManager->cleanupDistantChunks(cameraPos, cameraForward, renderRadius);
+            updateChunkLODs();
         }
 
         visibleSlots.clear();
         visibleFluidSlots.clear();
+        chunkRenderer->resolvePendingVertexCounts();
+        chunkRenderer->resolvePendingFluidVertexCounts();
 
         // Generate meshes / rebuild emissive lights
         {
@@ -3995,18 +4029,8 @@ glDepthMask(depthMask);
                             continue;
                         }
 
-                        // Chunk has solid mesh
-                        DrawArraysIndirectCommand cmd{};
-                        cmd.count = chunk->gpuCache.vertexCount;
-                        cmd.instanceCount = 1;
-                        cmd.first = chunk->gpuSlot * (uint32_t)CHUNK_MAX_VERTS;
-                        cmd.baseInstance = chunk->gpuSlot;
+                        visibleSlots.push_back(chunk->gpuSlot);
 
-                        if (cmd.count > 0) {
-                            visibleSlots.push_back(chunk->gpuSlot);
-                        }
-
-                        // ALSO add to fluid list if it has fluid (even if it has solid mesh too)
                         if (chunk->hasFluid) {
                             visibleFluidSlots.push_back(chunk->gpuSlot);
                         }
@@ -4778,98 +4802,6 @@ glDepthMask(depthMask);
         glDisable(GL_BLEND);
         glCullFace(GL_BACK);
         glDisable(GL_CULL_FACE);
-    }
-
-    void Game::renderGas() {
-        if (!gasRayMarchShader) return;
-
-        // Collect gas chunks in view
-        struct GasChunkData {
-            glm::vec3 origin;
-            uint32_t baseIndex;
-            glm::ivec3 dims;
-        };
-        std::vector<GasChunkData> gasChunkData;
-
-        const int R = chunkManager->radius();
-        const int camCX = worldToChunk(cameraPos.x);
-        const int camCY = worldToChunk(cameraPos.y);
-        const int camCZ = worldToChunk(cameraPos.z);
-        const int renderRadius = RenderingRange;
-
-        // Check each chunk in view
-        for (int cx = std::max(camCX - renderRadius, -R); cx <= std::min(camCX + renderRadius, R); ++cx) {
-            for (int cy = std::max(camCY - renderRadius, -R); cy <= std::min(camCY + renderRadius, R); ++cy) {
-                for (int cz = std::max(camCZ - renderRadius, -R); cz <= std::min(camCZ + renderRadius, R); ++cz) {
-                    Chunk* chunk = chunkManager->getOrCreateChunk({cx, cy, cz});
-                    if (!chunk) continue;
-
-                    if (chunk->hasGas && chunk->gpuSlot != FixedGridChunkManager::INVALID_GPU_SLOT) {
-                        chunkRenderer->uploadVoxelChunkToGasSlot(*chunk);
-
-                        GasChunkData data;
-                        data.origin = getChunkMin({cx, cy, cz});
-                        data.baseIndex = chunk->gpuSlot * ((CHUNK_SIZE + 2) * (CHUNK_SIZE + 2) * (CHUNK_SIZE + 2));
-                        data.dims = glm::ivec3(CHUNK_SIZE + 2);
-                        gasChunkData.push_back(data);
-                    }
-                }
-            }
-        }
-
-        if (gasChunkData.empty()) {
-            return;
-        }
-
-        // Calculate matrices
-        float aspect = (windowHeight == 0) ? (float)windowWidth : (float)windowWidth / (float)windowHeight;
-        glm::vec3 velocity = characterController->getVelocity();
-        float speed = glm::sqrt(velocity.x*velocity.x+velocity.y*velocity.y+velocity.z*velocity.z);
-        glm::mat4 projection = glm::perspective(glm::radians((45.0f*(1+(speed/(characterController->settings.terminalVelocity/4))))*settings.fov), aspect, nearPlane, farPlane);
-        glm::vec3 camUp = getCameraUp();
-        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + getCameraFront(), camUp);
-        glm::mat4 pv = projection * view;
-
-        // Bind gas FBO
-        glBindFramebuffer(GL_FRAMEBUFFER, gasFBO);
-        glViewport(0, 0, windowWidth, windowHeight);
-        glClearColor(0, 0, 0, 0);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-        gasRayMarchShader->use();
-        glm::mat4 invPV = glm::inverse(pv);
-        gasRayMarchShader->setMatrix("uInvViewProjection", invPV);
-        gasRayMarchShader->setMatrix("uViewProjection", pv);
-        gasRayMarchShader->setMatrix("uView", view);
-        gasRayMarchShader->setVec3("uCameraPos", cameraPos);
-        gasRayMarchShader->setFloat("uVoxelSize", VOXEL_SIZE);
-        gasRayMarchShader->setFloat("uNear", 0.1f);
-        gasRayMarchShader->setFloat("uFar", 500.0f);
-        gasRayMarchShader->setInt("uChunkCount", (int)gasChunkData.size());
-
-        // Upload gas chunk data to SSBO
-        static GLuint gasChunkSSBO = 0;
-        if (gasChunkSSBO == 0) {
-            glGenBuffers(1, &gasChunkSSBO);
-        }
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, gasChunkSSBO);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, gasChunkData.size() * sizeof(GasChunkData), gasChunkData.data(), GL_DYNAMIC_DRAW);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, gasChunkSSBO);
-
-        // Bind main voxel SSBO
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, chunkRenderer->ssboGasVoxels);
-
-        // Bind images
-        glBindImageTexture(0, gasColorTex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
-        glBindImageTexture(1, gasDensityTex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_R16F);
-
-        // Dispatch at half resolution for performance
-        int groupsX = (windowWidth + 7) / 8;
-        int groupsY = (windowHeight + 7) / 8;
-        glDispatchCompute(groupsX, groupsY, 1);
-
-        glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }
 
 ////----Helper Functions------------------------------------------------------------------------------------------------------------------------

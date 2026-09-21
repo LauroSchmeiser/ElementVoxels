@@ -424,7 +424,10 @@ namespace gl3 {
         // World-Variables:
         const int DIM = CHUNK_SIZE+2; //Chunk Size with a bit off padding for marching cubes
         size_t voxelCount = DIM * DIM * DIM; //How many voxels can be in one Chunk
-        static constexpr int RenderingRange = 5; //Range around Camera that is rendered
+        static constexpr int RenderingRange = 25; //Range around Camera that is rendered
+        float lodDistance1 = 200.0f;   // beyond this -> lodStep 2
+        float lodDistance2 = 500.0f;   // beyond this -> lodStep 4
+        float lodDistance3 = 1200.0f;  // beyond this -> lodStep 8
 
         size_t CHUNK_MAX_VERTS = 0;           // computed once from DIM
 
@@ -895,6 +898,8 @@ namespace gl3 {
         SkillTreeUI getSkillTree(){ return skillTree;};
 
         bool shouldKeepChunkResident(int cx, int cy, int cz, const glm::vec3 &cameraFront, float renderRadius) const;
+
+        void updateChunkLODs();
     };
 
 }

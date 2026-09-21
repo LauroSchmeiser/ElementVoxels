@@ -42,6 +42,9 @@ uniform float voxelSize;
 uniform uint uChunkSlot;
 uniform uint uChunkMaxVerts;
 
+uniform int uLodStep;
+uniform float uNormalH;
+
 int voxelIndex(ivec3 p) {
     return p.x + p.y * voxelGridDim.x + p.z * voxelGridDim.x * voxelGridDim.y;
 }
@@ -104,7 +107,7 @@ float sampleDensityTrilinear(vec3 idxF) {
 vec3 computeNormal(vec3 worldPos) {
     vec3 idxF = (worldPos - gridOrigin) / voxelSize;
     idxF = clamp(idxF, vec3(1.0), vec3(voxelGridDim) - vec3(2.0));
-    const float h = 0.5;
+    const float h = uNormalH;
     float dx = sampleDensityTrilinear(idxF + vec3(h,0,0)) - sampleDensityTrilinear(idxF - vec3(h,0,0));
     float dy = sampleDensityTrilinear(idxF + vec3(0,h,0)) - sampleDensityTrilinear(idxF - vec3(0,h,0));
     float dz = sampleDensityTrilinear(idxF + vec3(0,0,h)) - sampleDensityTrilinear(idxF - vec3(0,0,h));
@@ -114,18 +117,20 @@ vec3 computeNormal(vec3 worldPos) {
 }
 
 void main() {
-    ivec3 cell = ivec3(gl_GlobalInvocationID);
-    ivec3 cellsDim = voxelGridDim - ivec3(1);
-    if (any(greaterThanEqual(cell, cellsDim))) return;
+    ivec3 cellCoord = ivec3(gl_GlobalInvocationID);
+    ivec3 cellsDim = (voxelGridDim - ivec3(1)) / uLodStep;
+    if (any(greaterThanEqual(cellCoord, cellsDim))) return;
+
+    ivec3 cell = cellCoord * uLodStep;
 
     ivec3 p0 = cell;
-    ivec3 p1 = cell + ivec3(1,0,0);
-    ivec3 p2 = cell + ivec3(1,1,0);
-    ivec3 p3 = cell + ivec3(0,1,0);
-    ivec3 p4 = cell + ivec3(0,0,1);
-    ivec3 p5 = cell + ivec3(1,0,1);
-    ivec3 p6 = cell + ivec3(1,1,1);
-    ivec3 p7 = cell + ivec3(0,1,1);
+    ivec3 p1 = cell + ivec3(uLodStep,0,0);
+    ivec3 p2 = cell + ivec3(uLodStep,uLodStep,0);
+    ivec3 p3 = cell + ivec3(0,uLodStep,0);
+    ivec3 p4 = cell + ivec3(0,0,uLodStep);
+    ivec3 p5 = cell + ivec3(uLodStep,0,uLodStep);
+    ivec3 p6 = cell + ivec3(uLodStep,uLodStep,uLodStep);
+    ivec3 p7 = cell + ivec3(0,uLodStep,uLodStep);
 
     float d[8];
     vec3  c[8];
@@ -222,13 +227,13 @@ void main() {
         verts[idx+2].pos=vec4(v2,1); verts[idx+2].normal=vec4(n2,0); verts[idx+2].color=vec4(col2,1);
         verts[idx+2].uv=computePlanarUV(v2); verts[idx+2].flags=uvec4(packedFlags,0,0,0);
     }
-    /*
-        if (all(equal(gl_GlobalInvocationID, uvec3(0,0,0)))) {
-            memoryBarrierBuffer();
+    barrier();
+    memoryBarrierBuffer();
 
-            cmds[uChunkSlot].count         = vertexCounter;
-            cmds[uChunkSlot].instanceCount = 1u;
-            cmds[uChunkSlot].first         = baseVert;
-            cmds[uChunkSlot].baseInstance  = uChunkSlot;
-        }*/
+    if (all(equal(gl_GlobalInvocationID, uvec3(0,0,0)))) {
+        cmds[uChunkSlot].count         = min(vertexCounter, uChunkMaxVerts);
+        cmds[uChunkSlot].instanceCount = 1u;
+        cmds[uChunkSlot].first         = uChunkSlot * uChunkMaxVerts;
+        cmds[uChunkSlot].baseInstance  = uChunkSlot;
+    }
 }

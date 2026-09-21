@@ -488,10 +488,11 @@ namespace gl3 {
         void markChunkDirty(const ChunkCoord& coord) {
             Chunk* chunk = getChunk(coord);
 
-            // The caller should only queue chunks that already exist.
             if (!chunk || chunk->isCleared || !chunk->voxelData) {
                 return;
             }
+
+            chunk->meshDirty = true;
 
             if (chunk->queuedForRebuild) {
                 return;
@@ -552,7 +553,7 @@ namespace gl3 {
     private:
         int R = 0;
         int dim = 0;
-        const int MAX_CALC_PER_FRAME = 2;
+        const int MAX_CALC_PER_FRAME = 10;
 
         std::unordered_map<ChunkCoord, std::unique_ptr<Chunk>, ChunkCoordHash> chunks;
         std::vector<ChunkCoord> dirtyChunks;

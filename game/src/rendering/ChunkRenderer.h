@@ -15,6 +15,7 @@ namespace gl3 {
 
         FixedGridChunkManager* chunkManager = nullptr;
         std::unique_ptr<Shader> marchingCubesShader;
+        std::unique_ptr<Shader> finalizeIndirectShader;
 
         const int DIM = CHUNK_SIZE+2; //Chunk Size with a bit off padding for marching cubes
         size_t voxelCount = DIM * DIM * DIM; //How many voxels can be in one Chunk
@@ -33,11 +34,17 @@ namespace gl3 {
         void resetAtomicCounter();
         void setComputeUniforms(const glm::vec3& chunkOrigin, Shader& computeShader);
         void setupChunkBatchBuffers(int maxChunksGpu);
+        void ensureCounterReadbackBuffer(Chunk *chunk);
+
+        void ensureFluidCounterReadbackBuffer(Chunk* chunk);
+        bool tryResolveFluidVertexCount(Chunk* chunk);
 
     public:
         int MAX_CHUNKS_GPU = 1850;
 
-        void generateChunkMesh(Chunk* chunk);
+        void generateChunkMesh(Chunk* chunk, int lodStep = 1);
+        void requestChunkMesh(Chunk* chunk, int lod);
+        static int lodToStep(int lod) { return 1 << lod; }
 
         void clearLightCaches();
 
@@ -89,6 +96,14 @@ namespace gl3 {
         GLuint ssboGasVoxels = 0;
 
         void uploadVoxelChunkToGasSlot(const Chunk &chunk);
+
+        std::vector<Chunk*> pendingCountChunks;
+
+        void resolvePendingVertexCounts();
+
+        void resolvePendingFluidVertexCounts();
+        std::vector<Chunk*> pendingFluidCountChunks;
+
     };
 
 }
