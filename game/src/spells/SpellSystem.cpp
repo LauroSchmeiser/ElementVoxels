@@ -235,7 +235,7 @@ namespace gl3 {
                                 (size_t)x +
                                 (size_t)y * (CHUNK_SIZE + 1) +
                                 (size_t)z * (CHUNK_SIZE + 1) * (CHUNK_SIZE + 1);
-
+                        if(!chunk->voxelData) continue;
                         snap.voxelsLinear[idx] = chunk->voxels(x,y,z);
                     }
 
@@ -901,7 +901,7 @@ namespace gl3 {
                 for (int cz = minCZ; cz <= maxCZ; ++cz)
                 {
                     ChunkCoord coord{cx, cy, cz};
-                    Chunk* chunk = ctx.chunks->getChunk(coord);
+                    Chunk* chunk = ctx.chunks->getOrCreateChunk(coord);
                     if (!chunk || !chunk->gpuCache.isValid) continue;
                     if (chunk->gpuCache.vertexCount == 0) continue;
 
@@ -1068,7 +1068,7 @@ namespace gl3 {
             for (int cy = minCY; cy <= maxCY; ++cy) {
                 for (int cz = minCZ; cz <= maxCZ; ++cz) {
                     ChunkCoord coord{cx, cy, cz};
-                    Chunk* chunk = ctx.chunks->getChunk(coord);
+                    Chunk* chunk = ctx.chunks->getOrCreateChunk(coord);
                     if (!chunk || !chunk->gpuCache.isValid) continue;
                     if (chunk->gpuCache.vertexCount == 0) continue;
 
@@ -1343,7 +1343,7 @@ namespace gl3 {
             for (int cy = minCY; cy <= maxCY; ++cy) {
                 for (int cz = minCZ; cz <= maxCZ; ++cz) {
                     ChunkCoord coord{cx, cy, cz};
-                    Chunk* chunk = ctx.chunks->getChunk(coord);
+                    Chunk* chunk = ctx.chunks->getOrCreateChunk(coord);
                     if (!chunk) continue;
 
                     glm::vec3 chunkOrigin = ctx.getChunkMin(coord);
@@ -1559,7 +1559,7 @@ namespace gl3 {
             for (int cy = regenMinCY; cy <= regenMaxCY; ++cy) {
                 for (int cz = regenMinCZ; cz <= regenMaxCZ; ++cz) {
                     ChunkCoord coord{cx, cy, cz};
-                    Chunk* chunk = ctx.chunks->getChunk(coord);
+                    Chunk* chunk = ctx.chunks->getOrCreateChunk(coord);
                     if (chunk && chunk->meshDirty && ctx.generateChunkMesh) {
                         ctx.generateChunkMesh(chunk);
                     }
@@ -1797,7 +1797,7 @@ namespace gl3 {
             for (int cy = minCY; cy <= maxCY; ++cy) {
                 for (int cz = minCZ; cz <= maxCZ; ++cz) {
                     ChunkCoord coord{cx, cy, cz};
-                    Chunk* chunk = ctx.chunks->getChunk(coord);
+                    Chunk* chunk = ctx.chunks->getOrCreateChunk(coord);
                     if (!chunk) continue;
 
                     glm::vec3 chunkOrigin = ctx.getChunkMin(coord);

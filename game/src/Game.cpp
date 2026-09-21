@@ -920,7 +920,6 @@ namespace gl3 {
             case PreloadStage::Run_Camera:
                 preloadStageName = "Setting up camera...";
                 setupCamera();
-                static_assert(gl3::CHUNK_SIZE == 16);
                 assert(DIM == gl3::CHUNK_SIZE + 2 && "DIM must be CHUNK_SIZE+2 for padded uploadVoxelChunk");
                 preloadStage = PreloadStage::Run_Lighting;
                 return 0.92f;
@@ -940,19 +939,6 @@ namespace gl3 {
                 chunkRenderer->updateLightSpatialHash();
                 chunkRenderer->uploadMergedLightsToGPU();
 
-                // 2) Drain dirty chunks during loading (this is the important part)
-                // Uses your existing budgeted manager path (MAX_CALC_PER_FRAME in manager)
-                chunkManager->rebuildDirtyChunks(
-                        [this](Chunk* chunk) {
-                            chunkRenderer->generateChunkMesh(chunk);
-
-                            if (chunk->hasFluid) {
-                                chunkRenderer->generateFluidMesh(chunk);
-                            }
-                        },
-                        cameraPos
-                );
-
                 // 3) Rebuild light-index buffer for current camera neighborhood
                 chunkRenderer->buildAndUploadChunkLightIndexBuffer(
                         worldToChunk(cameraPos.x),
@@ -962,11 +948,6 @@ namespace gl3 {
                 );
 
                 chunkRenderer->collectMergedEmissiveBillboards(emissiveBillboards);
-
-                // 4) Stay in this stage until no dirty chunks remain
-                if (chunkManager->hasDirtyChunks()) {
-                    return 0.92f; // keep loading screen up
-                }
 
                 preloadStage = PreloadStage::Done;
                 return 0.99f;
@@ -2804,7 +2785,7 @@ namespace gl3 {
         float worldMax = chunkManager->radius() * chunkWorld;
 
         std::uniform_real_distribution<float> distPos(-worldMax * 0.9f, worldMax * 0.9f);
-        std::uniform_real_distribution<float> distScale(0.5f, 3.0f);
+        std::uniform_real_distribution<float> distScale(1.5f, 4.0f);
         std::uniform_real_distribution<float> distColor(0.3f, 1.0f);
         std::uniform_real_distribution<float> distMat(0.0f, 100.9f);
 
@@ -2820,7 +2801,7 @@ namespace gl3 {
 
 
         // Create solid planets (type 1)
-        int planetCount = 150;
+        int planetCount = 7*WORLD_RADIUS_CHUNKS;
 
         int testMat = -1;
 
@@ -2867,7 +2848,7 @@ namespace gl3 {
 
         // Create water planets (type 3)
 
-        int waterCount = 80 ;
+        int waterCount = 4*WORLD_RADIUS_CHUNKS ;
         for (int i = 0; i < waterCount; ++i) {
             WorldPlanet p;
             p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
@@ -3371,6 +3352,11 @@ void Game::rebuildChunkLights(const ChunkCoord &coord) {
 ZoneScoped;
 Chunk *chunk = chunkManager->getOrCreateChunk(coord);
 if (!chunk) return;
+    if (!chunk->voxelData) {
+        chunk->emissiveLights.clear();
+        chunk->lightingDirty = false;
+        return;
+    }
 
 chunk->emissiveLights.clear();
 
@@ -3460,12 +3446,14 @@ void Game::update() {
     TRACY_CPU_ZONE("Game::update()");
 
     // Update merged lights occasionally (CPU) + upload to GPU
-    if (frameCounter % 283 == 0) {
+    /*if (frameCounter % 283 == 0) {
+        TRACY_CPU_ZONE("Game::updateSpacialHash()");
         chunkRenderer->updateLightSpatialHash();
         emissiveBillboardsDirty = true;
-    }
+    }*/
     if(frameCounter%261==0)
     {
+        TRACY_CPU_ZONE("Game::uploadLightsToGPU()");
         chunkRenderer->uploadMergedLightsToGPU();
     }
     if (frameCounter % 247 == 0) {
@@ -3488,6 +3476,33 @@ void Game::update() {
     {
         TRACY_CPU_ZONE("Game::RebuildSolidAndFluidMeshes");
 
+        const glm::vec3 rebuildCameraPos = characterController->getPosition();
+
+        const float aspect = (windowHeight == 0)
+                             ? static_cast<float>(windowWidth)
+                             : static_cast<float>(windowWidth) / static_cast<float>(windowHeight);
+
+        const glm::vec3 velocity = characterController->getVelocity();
+        const float speed = glm::length(velocity);
+
+        const glm::mat4 projection = glm::perspective(
+                glm::radians(
+                        (45.0f * (1.0f + speed / (characterController->settings.terminalVelocity / 4.0f)))
+                        * settings.fov
+                ),
+                aspect,
+                nearPlane,
+                farPlane
+        );
+
+        const glm::mat4 view = glm::lookAt(
+                cameraPos,
+                cameraPos + getCameraFront(),
+                getCameraUp()
+        );
+
+        const glm::mat4 pv = projection * view;
+
         chunkManager->rebuildDirtyChunks(
                 [this](Chunk* chunk) {
                     chunkRenderer->generateChunkMesh(chunk);
@@ -3496,7 +3511,8 @@ void Game::update() {
                         chunkRenderer->generateFluidMesh(chunk);
                     }
                 },
-                cameraPos
+                rebuildCameraPos,
+                pv
         );
     }
 
@@ -3519,7 +3535,7 @@ if(getPlayerHealth()<=0)
 {
     glm::vec3 dir = characterController->getPosition();
     float dist = glm::sqrt(dir.x*dir.x+dir.y*dir.y+dir.z*dir.z);
-    if(dist>550.0f)
+    if(dist>VOXEL_SIZE*CHUNK_SIZE*WORLD_RADIUS_CHUNKS*2.0f)
     {
         g_SoundManager.playSound(SoundID::Suffocate);
         registerPlayerDamage({
@@ -3818,6 +3834,38 @@ glm::vec3 Game::getCameraFront() const {
         return glm::normalize(cameraForward);
     }
 
+    bool Game::shouldKeepChunkResident(
+            int cx, int cy, int cz,
+            const glm::vec3& cameraFront,
+            float renderRadius) const
+    {
+        constexpr float chunkWorldSize = CHUNK_SIZE * VOXEL_SIZE;
+        float chunkRadius =
+                0.5f * glm::sqrt(3.0f) * chunkWorldSize; // bounding-sphere radius
+
+        const glm::vec3 chunkCenter =
+                (glm::vec3((float)cx, (float)cy, (float)cz) + glm::vec3(0.5f))
+                * chunkWorldSize;
+
+        const glm::vec3 toChunk = chunkCenter - cameraPos;
+        const float distance = glm::length(toChunk);
+
+        // Always retain nearby chunks: they can enter view immediately when turning.
+        const float alwaysKeepDistance = 2.0f * chunkWorldSize;
+        if (distance <= alwaysKeepDistance + chunkRadius) {
+            return true;
+        }
+
+        const glm::vec3 direction = toChunk / distance;
+
+        constexpr float halfConeDegrees = 55.0f;
+        const float minDot = glm::cos(glm::radians(halfConeDegrees));
+
+        const float sphereAngularMargin =
+                glm::clamp(chunkRadius / distance, 0.0f, 0.5f);
+
+        return glm::dot(cameraFront, direction) >= (minDot - sphereAngularMargin);
+    }
 
 ////----Rendering Code--------------------------------------------------------------------------------------------------------------------------
 
@@ -3906,7 +3954,7 @@ glDepthMask(depthMask);
         // Cleanup distant chunks periodically (every 60 frames)
         if (frameCounter % 60 == 0) {
             TRACY_CPU_ZONE("renderChunks::cleanupDistantSlots");
-            chunkManager->cleanupDistantSlots(cameraPos, renderRadius);
+            chunkManager->cleanupDistantChunks(cameraPos, cameraForward, renderRadius);
         }
 
         visibleSlots.clear();
@@ -3916,6 +3964,8 @@ glDepthMask(depthMask);
         {
             TRACY_CPU_ZONE("renderChunks::PrepareMeshesAndLights");
             const int R = chunkManager->radius();
+            const glm::vec3 cameraFront = glm::normalize(getCameraFront());
+
 
             const int minCX = std::max(camCX - renderRadius, -R);
             const int maxCX = std::min(camCX + renderRadius, R);
@@ -3927,18 +3977,21 @@ glDepthMask(depthMask);
             for (int cx = minCX; cx <= maxCX; ++cx) {
                 for (int cy = minCY; cy <= maxCY; ++cy) {
                     for (int cz = minCZ; cz <= maxCZ; ++cz) {
+                        if (!shouldKeepChunkResident(cx, cy, cz, cameraFront, renderRadius)) {
+                            continue;
+                        }
                         ChunkCoord coord{cx, cy, cz};
-                        Chunk* chunk = chunkManager->getOrCreateChunk(coord);
+                        Chunk* chunk = chunkManager->getChunk(coord);
+
                         if (!chunk) continue;
 
                         // Skip empty chunks (no geometry)
                         if (chunk->isCleared) continue;
 
-                        // If chunk has no solid mesh but has fluid, add to fluid list
-                        if (!chunk->gpuCache.isValid) {
-                            if (chunk->hasFluid) {
-                                visibleFluidSlots.push_back(chunk->gpuSlot);
-                            }
+                        if (!chunk->gpuCache.isValid ||
+                            chunk->gpuSlot == FixedGridChunkManager::INVALID_GPU_SLOT) {
+                            chunk->meshDirty = true;
+                            chunkManager->markChunkDirty(coord);
                             continue;
                         }
 
@@ -5227,11 +5280,6 @@ glDepthMask(depthMask);
         }
 
         updatePlayerAudio();
-        if(characterController->getState().isInFluid)
-        {
-            std::cout<<skillTree.GetPage(3).skills[7].level<<" skill leveled?\n";
-            std::cout<<(sampleMaterialAtWorld(chunkManager.get(),characterController->getPosition())==6u)<<" is in crystal?\n";
-        }
         if(skillTree.GetPage(3).skills[7].level>0&&characterController->getState().isInFluid&&
                                                    sampleMaterialAtWorld(chunkManager.get(),characterController->getPosition())==6u)
         {

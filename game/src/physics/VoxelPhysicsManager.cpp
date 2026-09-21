@@ -59,7 +59,7 @@ namespace gl3 {
         int cz = static_cast<int>(std::floor(worldPos.z / chunkWorldSize));
 
         ChunkCoord coord{cx, cy, cz};
-        Chunk* chunk = chunkManager->getChunk(coord);
+        Chunk* chunk = chunkManager->getOrCreateChunk(coord);
         if (!chunk) return -10000.0f;
 
         glm::vec3 chunkMin(cx * chunkWorldSize, cy * chunkWorldSize, cz * chunkWorldSize);
@@ -216,7 +216,7 @@ namespace gl3 {
         ly = glm::clamp(ly, 0, CHUNK_SIZE);
         lz = glm::clamp(lz, 0, CHUNK_SIZE);
 
-        Chunk* chunk = chunkManager->getChunk(ChunkCoord{cx, cy, cz});
+        Chunk* chunk = chunkManager->getOrCreateChunk(ChunkCoord{cx, cy, cz});
         if (!chunk) return -10000.0f;
 
         return chunk->voxels(lx,ly,lz).density;
@@ -519,7 +519,7 @@ namespace gl3 {
 
                         ChunkCoord coord{cx, cy, cz};
                         const float impactVfxBaseCooldown = 2.0f;
-                        Chunk* chunk = chunkManager->getChunk(coord);
+                        Chunk* chunk = chunkManager->getOrCreateChunk(coord);
                         const bool inEmissive = (chunk && chunk->inEmissiveList);
 
                         if (sphereIntersectsWorld(*body, p, n, pen) && !inEmissive) {
@@ -876,7 +876,7 @@ namespace gl3 {
             int cz = static_cast<int>(std::floor(cornerWorld.z / chunkWorldSize));
 
             ChunkCoord coord{cx, cy, cz};
-            Chunk* chunk = chunkManager->getChunk(coord);
+            Chunk* chunk = chunkManager->getOrCreateChunk (coord);
             if (!chunk) return -1000.0f;
 
             glm::vec3 chunkOrigin(

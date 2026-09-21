@@ -31,6 +31,7 @@ namespace gl3 {
         ChunkCoord coord;
         bool meshDirty = true;
         uint32_t gpuSlot = 0;
+        bool queuedForRebuild = false;
 
         struct BurnState {
             bool active = false;
@@ -113,6 +114,7 @@ namespace gl3 {
             emissiveLights.clear();
             meshDirty = true;
             lightingDirty = true;
+            queuedForRebuild=false;
         }
 
         void updateTypeFlags() {

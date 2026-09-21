@@ -77,10 +77,13 @@ namespace gl3 {
             return;
         }
 
-        if (!chunk) return;
-
-        if (chunk->gpuSlot >= (uint32_t)MAX_CHUNKS_GPU) {
-            std::cout << "THis is a BAD SLOT: " << chunk->gpuSlot << " MAX=" << MAX_CHUNKS_GPU << "\n";
+        if (!chunk || !chunk->voxelData || chunk->isCleared) {
+             return;
+        }
+        if (chunk->gpuSlot == FixedGridChunkManager::INVALID_GPU_SLOT ||
+            chunk->gpuSlot >= static_cast<uint32_t>(MAX_CHUNKS_GPU)) {
+            std::cout << "Invalid chunk GPU slot: " << chunk->gpuSlot
+            << " (MAX=" << MAX_CHUNKS_GPU << ")\n";
             return;
         }
 
@@ -246,7 +249,7 @@ namespace gl3 {
                         }
 
                         Chunk *neighbor = chunkManager->getChunk(neighborCoord);
-                        if (neighbor &&
+                        if (neighbor && neighbor->voxelData &&
                             localX >= 0 && localX <= CHUNK_SIZE &&
                             localY >= 0 && localY <= CHUNK_SIZE &&
                             localZ >= 0 && localZ <= CHUNK_SIZE) {
@@ -365,7 +368,7 @@ namespace gl3 {
         static int lastRenderRadius = renderRadius;
 
         const int UPDATE_INTERVAL = 213;
-        const int CAM_MOVE_THRESHOLD = CHUNK_SIZE;
+        const int CAM_MOVE_THRESHOLD = 5;
 
         bool needsUpdate = false;
 
@@ -397,8 +400,12 @@ namespace gl3 {
                 for (int cz = camCZ - renderRadius; cz <= camCZ + renderRadius; ++cz) {
                     Chunk* chunk = chunkManager->getChunk({cx,cy,cz});
                     if (!chunk) continue;
-                    if (!chunk->gpuCache.isValid) continue;
-
+                    if (!chunk->voxelData ||
+                    chunk->isCleared||
+                    !chunk->gpuCache.isValid ||
+                    chunk->gpuSlot == FixedGridChunkManager::INVALID_GPU_SLOT) {
+                        continue;
+                    }
                     if (frameCounter - chunk->gpuCache.lastLightUpdateFrame > LIGHT_UPDATE_INTERVAL ||
                         chunk->gpuCache.nearbyLights.empty()) {
                         updateChunkLights(chunk);
@@ -728,7 +735,15 @@ namespace gl3 {
 
     void ChunkRenderer::generateFluidMesh(Chunk* chunk)
     {
-        if (!chunk) return;
+        if (!chunk || !chunk->voxelData || chunk->isCleared) {
+            return;
+        }
+        if (chunk->gpuSlot == FixedGridChunkManager::INVALID_GPU_SLOT ||
+            chunk->gpuSlot >= static_cast<uint32_t>(MAX_CHUNKS_GPU)) {
+            std::cout << "Invalid chunk GPU slot: " << chunk->gpuSlot
+                      << " (MAX=" << MAX_CHUNKS_GPU << ")\n";
+            return;
+        }
 
         fluidMarchingCubesShader->use();
 
@@ -814,8 +829,8 @@ namespace gl3 {
                         if (z == -1) { neighborCoord.z -= 1; localZ = CHUNK_SIZE - 1; }
                         else if (z == CHUNK_SIZE) { neighborCoord.z += 1; localZ = 0; }
 
-                        Chunk* neighbor = chunkManager->getChunk(neighborCoord);
-                        if (neighbor &&
+                        Chunk *neighbor = chunkManager->getChunk(neighborCoord);
+                        if (neighbor && neighbor->voxelData&&
                             localX >= 0 && localX <= CHUNK_SIZE &&
                             localY >= 0 && localY <= CHUNK_SIZE &&
                             localZ >= 0 && localZ <= CHUNK_SIZE) {

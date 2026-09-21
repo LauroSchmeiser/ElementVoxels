@@ -8,7 +8,7 @@
 namespace gl3 {
     constexpr int CHUNK_SIZE = 16;
     constexpr float VOXEL_SIZE = 3.0f;
-    static constexpr int WORLD_RADIUS_CHUNKS = 15;
+    static constexpr int WORLD_RADIUS_CHUNKS = 12;
 
     struct Voxel {
         uint8_t type = 0;

@@ -19,14 +19,13 @@ namespace gl3 {
         const int DIM = CHUNK_SIZE+2; //Chunk Size with a bit off padding for marching cubes
         size_t voxelCount = DIM * DIM * DIM; //How many voxels can be in one Chunk
 
-        size_t maxVerts = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5 * 3;
         GLuint ssboEdgeTable = 0, ssboTriTable = 0,
                 ssboCounter = 0, ssboTriangles = 0, particleSSBO = 0, fieldBitsSSBO = 0;
 
         GLuint globalChunkVertexBuffer = 0;
 
         size_t CHUNK_MAX_VERTS = 0;
-        size_t vertLimit=10000;
+        size_t vertLimit=7000;
 
         void setupSSBOsAndTables();
         bool tryResolveChunkVertexCount(Chunk* chunk);
@@ -36,7 +35,7 @@ namespace gl3 {
         void setupChunkBatchBuffers(int maxChunksGpu);
 
     public:
-        int MAX_CHUNKS_GPU = 1550;
+        int MAX_CHUNKS_GPU = 1850;
 
         void generateChunkMesh(Chunk* chunk);
 

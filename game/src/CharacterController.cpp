@@ -89,7 +89,7 @@ namespace gl3 {
         int cz = static_cast<int>(std::floor(worldPos.z / chunkWorldSize));
 
         ChunkCoord coord{cx, cy, cz};
-        Chunk *chunk = chunkManager->getChunk(coord);
+        Chunk *chunk = chunkManager->getOrCreateChunk(coord);
         if (!chunk) return -10000.0f;
 
         glm::vec3 chunkMin = glm::vec3(coord.x * chunkWorldSize,
@@ -147,7 +147,7 @@ namespace gl3 {
             int cy = static_cast<int>(std::floor(cornerWorld.y / chunkWorldSize));
             int cz = static_cast<int>(std::floor(cornerWorld.z / chunkWorldSize));
             ChunkCoord coord{cx, cy, cz};
-            Chunk *chunk = chunkManager->getChunk(coord);
+            Chunk *chunk = chunkManager->getOrCreateChunk(coord);
             if (!chunk) return -1000.0f;
             glm::vec3 chunkOrigin = glm::vec3(coord.x * chunkWorldSize, coord.y * chunkWorldSize, coord.z * chunkWorldSize);
             glm::vec3 localCorner = (cornerWorld - chunkOrigin) / VOXEL_SIZE;
@@ -185,7 +185,7 @@ namespace gl3 {
         int cz = static_cast<int>(std::floor(worldPos.z / chunkWorldSize));
 
         ChunkCoord coord{cx, cy, cz};
-        Chunk *chunk = chunkManager->getChunk(coord);
+        Chunk *chunk = chunkManager->getOrCreateChunk(coord);
         if (!chunk) return -10000.0f;
 
         glm::vec3 chunkMin = glm::vec3(coord.x * chunkWorldSize,

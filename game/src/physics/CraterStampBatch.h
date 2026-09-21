@@ -84,7 +84,7 @@ namespace gl3 {
                 for (int cy = minCY; cy <= maxCY; ++cy) {
                     for (int cz = minCZ; cz <= maxCZ; ++cz) {
                         ChunkCoord cc{cx,cy,cz};
-                        Chunk* chunk = mgr->getChunk(cc);
+                        Chunk* chunk = mgr->getOrCreateChunk(cc);
                         if (!chunk) continue;
 
                         glm::vec3 cmin = chunkMinWorld(cc);

@@ -18,7 +18,7 @@ namespace gl3 {
     class FixedGridChunkManager {
     public:
         static constexpr uint32_t INVALID_GPU_SLOT = 0xFFFFFFFFu;
-        static constexpr uint32_t MAX_GPU_SLOTS = 1350;
+        static constexpr uint32_t MAX_GPU_SLOTS = 1850;
 
         explicit FixedGridChunkManager(int radiusChunks)
                 : R(radiusChunks),
@@ -61,7 +61,7 @@ namespace gl3 {
                 Chunk* chunk = it->second.get();
 
                 if (chunk->isCleared) {
-                    chunk->resetVoxels();
+                    chunk->allocateVoxels();
                     chunk->coord = cc;
                     chunk->gpuSlot = INVALID_GPU_SLOT;
                     chunk->isCleared = false;
@@ -75,6 +75,7 @@ namespace gl3 {
                     chunk->gpuCache.nearbyLights.clear();
                     chunk->meshDirty = true;
                     chunk->lightingDirty = true;
+                    chunk->queuedForRebuild = false;
                 }
 
                 return chunk;
@@ -140,26 +141,32 @@ namespace gl3 {
             freeGpuSlots.push_back(slot);
         }
 
-        void cleanupDistantSlots(const glm::vec3& cameraPos, int renderRadiusChunks) {
+
+        void cleanupDistantChunks(
+                const glm::vec3& cameraPos,
+                const glm::vec3& /* cameraForward */,
+                int renderRadiusChunks)
+        {
             const int camCX = worldToChunk(cameraPos.x);
             const int camCY = worldToChunk(cameraPos.y);
             const int camCZ = worldToChunk(cameraPos.z);
 
-            const int keepRadius = renderRadiusChunks + 3;
+            const int keepRadius = renderRadiusChunks + 4;
 
-            std::vector<ChunkCoord> toFree;
+            std::vector<ChunkCoord> slotsToFree;
+            slotsToFree.reserve(slotToChunkCoord.size());
 
-            for (auto& [slot, coord] : slotToChunkCoord) {
-                int dx = std::abs(coord.x - camCX);
-                int dy = std::abs(coord.y - camCY);
-                int dz = std::abs(coord.z - camCZ);
+            for (const auto& [slot, coord] : slotToChunkCoord) {
+                const int dx = std::abs(coord.x - camCX);
+                const int dy = std::abs(coord.y - camCY);
+                const int dz = std::abs(coord.z - camCZ);
 
                 if (dx > keepRadius || dy > keepRadius || dz > keepRadius) {
-                    toFree.push_back(coord);
+                    slotsToFree.push_back(coord);
                 }
             }
 
-            for (const auto& coord : toFree) {
+            for (const ChunkCoord& coord : slotsToFree) {
                 freeGpuSlot(coord);
             }
         }
@@ -227,6 +234,7 @@ namespace gl3 {
                 chunk->isCleared = true;
                 chunk->meshDirty = false;
                 chunk->lightingDirty = false;
+                chunk->queuedForRebuild=false;
             }
 
             dirtyChunks.clear();
@@ -275,7 +283,7 @@ namespace gl3 {
                 for (int cy = clampedMinCY; cy <= clampedMaxCY; ++cy)
                     for (int cz = clampedMinCZ; cz <= clampedMaxCZ; ++cz) {
                         ChunkCoord cc{cx, cy, cz};
-                        Chunk* c = getChunk(cc);
+                        Chunk* c = getOrCreateChunk(cc);
                         if (!c) continue;
                         out.emplace_back(cc, c);
                     }
@@ -284,29 +292,95 @@ namespace gl3 {
         }
 
         template<typename MeshFn>
-        void rebuildDirtyChunks(MeshFn&& rebuildMeshFn,const glm::vec3& cameraPos) {
-            if (dirtyChunks.empty()) return;
+        void rebuildDirtyChunks(
+                MeshFn&& rebuildMeshFn,
+                const glm::vec3& cameraPos,
+                const glm::mat4& projectionView)
+        {
+            if (dirtyChunks.empty()) {
+                return;
+            }
 
-            const int camCX = worldToChunk(cameraPos.x);
-            const int camCY = worldToChunk(cameraPos.y);
-            const int camCZ = worldToChunk(cameraPos.z);
+            // Partition the queue in-place:
+            //
+            // [ invisible dirty chunks | visible dirty chunks ]
+            //
+            // Invisible chunks stay queued and retain queuedForRebuild == true.
+            // They cost one visibility test but no lighting, GPU-slot, upload, or
+            // marching-cubes work this frame.
+            auto firstVisible = std::partition(
+                    dirtyChunks.begin(),
+                    dirtyChunks.end(),
+                    [&](const ChunkCoord& coord) {
+                        return !isChunkVisible(coord, projectionView);
+                    }
+            );
 
-            std::sort(dirtyChunks.begin(), dirtyChunks.end(),
-                      [&](const ChunkCoord& a, const ChunkCoord& b) {
-                          int adx = a.x - camCX, ady = a.y - camCY, adz = a.z - camCZ;
-                          int bdx = b.x - camCX, bdy = b.y - camCY, bdz = b.z - camCZ;
-                          int da = adx*adx + ady*ady + adz*adz;
-                          int db = bdx*bdx + bdy*bdy + bdz*bdz;
-                          return da > db;
-                      });
-            int toProcess = std::min(MAX_CALC_PER_FRAME, (int)dirtyChunks.size());
+            const int visibleDirtyCount = static_cast<int>(
+                    dirtyChunks.end() - firstVisible
+            );
+
+            if (visibleDirtyCount == 0) {
+                return;
+            }
+
+            const int toProcess = std::min(
+                    MAX_CALC_PER_FRAME,
+                    visibleDirtyCount
+            );
+
+            const float chunkWorldSize = float(CHUNK_SIZE) * VOXEL_SIZE;
+
+            auto distanceSqToCamera = [&](const ChunkCoord& coord) {
+                const glm::vec3 chunkCenter =
+                        (glm::vec3(
+                                static_cast<float>(coord.x),
+                                static_cast<float>(coord.y),
+                                static_cast<float>(coord.z)
+                        ) + glm::vec3(0.5f)) * chunkWorldSize;
+
+                const glm::vec3 delta = chunkCenter - cameraPos;
+                return glm::dot(delta, delta);
+            };
+
+            // Sort farthest-to-nearest because processing is done with pop_back().
+            auto farthestFirst = [&](const ChunkCoord& a, const ChunkCoord& b) {
+                return distanceSqToCamera(a) > distanceSqToCamera(b);
+            };
+
+            // Select only the nearest visible chunks. Off-screen entries before
+            // firstVisible are untouched.
+            auto selectedBegin = dirtyChunks.end() - toProcess;
+
+            if (toProcess < visibleDirtyCount) {
+                std::nth_element(
+                        firstVisible,
+                        selectedBegin,
+                        dirtyChunks.end(),
+                        farthestFirst
+                );
+            }
+
+            // MAX_CALC_PER_FRAME is small, so sorting only this suffix is cheap.
+            std::sort(
+                    selectedBegin,
+                    dirtyChunks.end(),
+                    farthestFirst
+            );
 
             for (int i = 0; i < toProcess; ++i) {
-                ChunkCoord coord = dirtyChunks.back();
+                const ChunkCoord coord = dirtyChunks.back();
                 dirtyChunks.pop_back();
 
                 Chunk* chunk = getChunk(coord);
-                if (!chunk || chunk->isCleared) {
+                if (!chunk) {
+                    continue;
+                }
+
+                // This queue entry is now being consumed.
+                chunk->queuedForRebuild = false;
+
+                if (chunk->isCleared || !chunk->voxelData) {
                     continue;
                 }
 
@@ -314,23 +388,117 @@ namespace gl3 {
                     rebuildChunkLighting(chunk);
                 }
 
-                if (chunk->meshDirty || !chunk->gpuCache.isValid) {
-                    if (chunk->gpuSlot == INVALID_GPU_SLOT) {
-                        uint32_t slot = allocateGpuSlot(coord);
-                        if (slot == INVALID_GPU_SLOT) {
-                            continue;
-                        }
-                    }
-                    rebuildMeshFn(chunk);
+                if (!chunk->meshDirty && chunk->gpuCache.isValid) {
+                    continue;
                 }
+
+                if (chunk->gpuSlot == INVALID_GPU_SLOT) {
+                    const uint32_t slot = allocateGpuSlot(coord);
+
+                    if (slot == INVALID_GPU_SLOT) {
+                        // Keep the chunk queued so it retries once a slot is freed.
+                        markChunkDirty(coord);
+                        continue;
+                    }
+                }
+
+                rebuildMeshFn(chunk);
             }
         }
 
-        void markChunkDirty(const ChunkCoord& coord) {
-            auto it = std::find(dirtyChunks.begin(), dirtyChunks.end(), coord);
-            if (it == dirtyChunks.end()) {
-                dirtyChunks.push_back(coord);
+        bool isChunkVisible(
+                const ChunkCoord& coord,
+                const glm::mat4& projectionView) const
+        {
+            // Extract the six OpenGL clip-space frustum planes from PV.
+            // GLM matrices are column-major, so these expressions construct rows.
+            glm::vec4 planes[6] = {
+                    // left, right
+                    glm::vec4(
+                            projectionView[0][3] + projectionView[0][0],
+                            projectionView[1][3] + projectionView[1][0],
+                            projectionView[2][3] + projectionView[2][0],
+                            projectionView[3][3] + projectionView[3][0]
+                    ),
+                    glm::vec4(
+                            projectionView[0][3] - projectionView[0][0],
+                            projectionView[1][3] - projectionView[1][0],
+                            projectionView[2][3] - projectionView[2][0],
+                            projectionView[3][3] - projectionView[3][0]
+                    ),
+
+                    // bottom, top
+                    glm::vec4(
+                            projectionView[0][3] + projectionView[0][1],
+                            projectionView[1][3] + projectionView[1][1],
+                            projectionView[2][3] + projectionView[2][1],
+                            projectionView[3][3] + projectionView[3][1]
+                    ),
+                    glm::vec4(
+                            projectionView[0][3] - projectionView[0][1],
+                            projectionView[1][3] - projectionView[1][1],
+                            projectionView[2][3] - projectionView[2][1],
+                            projectionView[3][3] - projectionView[3][1]
+                    ),
+
+                    // near, far
+                    glm::vec4(
+                            projectionView[0][3] + projectionView[0][2],
+                            projectionView[1][3] + projectionView[1][2],
+                            projectionView[2][3] + projectionView[2][2],
+                            projectionView[3][3] + projectionView[3][2]
+                    ),
+                    glm::vec4(
+                            projectionView[0][3] - projectionView[0][2],
+                            projectionView[1][3] - projectionView[1][2],
+                            projectionView[2][3] - projectionView[2][2],
+                            projectionView[3][3] - projectionView[3][2]
+                    )
+            };
+
+            const glm::vec3 minBounds = getChunkMin(coord);
+            const glm::vec3 maxBounds = getChunkMax(coord);
+
+            for (glm::vec4& plane : planes) {
+                const glm::vec3 normal(plane.x, plane.y, plane.z);
+                const float normalLength = glm::length(normal);
+
+                if (normalLength <= 0.00001f) {
+                    continue;
+                }
+
+                plane /= normalLength;
+
+                // Pick the AABB corner furthest in the plane normal direction.
+                // If even that corner is outside, the entire chunk is outside.
+                const glm::vec3 positiveVertex(
+                        plane.x >= 0.0f ? maxBounds.x : minBounds.x,
+                        plane.y >= 0.0f ? maxBounds.y : minBounds.y,
+                        plane.z >= 0.0f ? maxBounds.z : minBounds.z
+                );
+
+                if (glm::dot(glm::vec3(plane), positiveVertex) + plane.w < 0.0f) {
+                    return false;
+                }
             }
+
+            return true;
+        }
+
+        void markChunkDirty(const ChunkCoord& coord) {
+            Chunk* chunk = getChunk(coord);
+
+            // The caller should only queue chunks that already exist.
+            if (!chunk || chunk->isCleared || !chunk->voxelData) {
+                return;
+            }
+
+            if (chunk->queuedForRebuild) {
+                return;
+            }
+
+            chunk->queuedForRebuild = true;
+            dirtyChunks.push_back(coord);
         }
 
         void rebuildChunkLighting(Chunk* chunk) {
@@ -384,7 +552,7 @@ namespace gl3 {
     private:
         int R = 0;
         int dim = 0;
-        const int MAX_CALC_PER_FRAME = 8;
+        const int MAX_CALC_PER_FRAME = 2;
 
         std::unordered_map<ChunkCoord, std::unique_ptr<Chunk>, ChunkCoordHash> chunks;
         std::vector<ChunkCoord> dirtyChunks;

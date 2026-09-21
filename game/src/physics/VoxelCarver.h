@@ -239,7 +239,7 @@ namespace gl3 {
             chunkDirty.reserve(updates.size() / 64 + 16);
 
             for (const auto& update : updates) {
-                Chunk* chunk = chunkManager->getChunk(update.coord);
+                Chunk* chunk = chunkManager->getOrCreateChunk(update.coord);
                 if (!chunk) continue;
 
                 Voxel& voxel = chunk->voxels(update.localPos.x,update.localPos.y,update.localPos.z);
@@ -266,7 +266,7 @@ namespace gl3 {
                 const ChunkCoord& coord,
                 bool autoCreate
         ) {
-            Chunk* chunk = chunkManager->getChunk(coord);
+            Chunk* chunk = chunkManager->getOrCreateChunk(coord);
             if (!chunk) return nullptr;
             return chunk;
         }
