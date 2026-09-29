@@ -18,7 +18,7 @@ namespace gl3 {
     class FixedGridChunkManager {
     public:
         static constexpr uint32_t INVALID_GPU_SLOT = 0xFFFFFFFFu;
-        static constexpr uint32_t MAX_GPU_SLOTS = 1850;
+        static constexpr uint32_t MAX_GPU_SLOTS = 2500;
 
         explicit FixedGridChunkManager(int radiusChunks)
                 : R(radiusChunks),
@@ -91,7 +91,16 @@ namespace gl3 {
             return result;
         }
 
-        uint32_t allocateGpuSlot(const ChunkCoord& coord) {
+        void setMaxCalcPerFrame(int value)
+        {
+            MAX_CALC_PER_FRAME=value;
+        }
+        int getMaxCalcPerFrame()
+        {
+            return MAX_CALC_PER_FRAME;
+        }
+
+        uint32_t allocateGpuSlot(const ChunkCoord& coord, const glm::vec3& cameraPos) {
             Chunk* chunk = getChunk(coord);
             if (!chunk) return INVALID_GPU_SLOT;
 
@@ -107,10 +116,9 @@ namespace gl3 {
             } else if (nextGpuSlot < MAX_GPU_SLOTS) {
                 slot = nextGpuSlot++;
             } else {
-                if (!evictFurthestChunk(coord) || freeGpuSlots.empty()) {
+                if (!evictFurthestChunk(cameraPos) || freeGpuSlots.empty()) {
                     return INVALID_GPU_SLOT;
                 }
-
                 slot = freeGpuSlots.back();
                 freeGpuSlots.pop_back();
             }
@@ -122,6 +130,33 @@ namespace gl3 {
             return slot;
         }
 
+        bool evictFurthestChunk(const glm::vec3& cameraWorldPos) {
+            if (slotToChunkCoord.empty()) return false;
+
+            uint32_t furthestSlot = INVALID_GPU_SLOT;
+            float maxDistSq = -1.0f;
+
+            for (const auto& [slot, coord] : slotToChunkCoord) {
+                glm::vec3 chunkCenter = getChunkMin(coord) + glm::vec3(CHUNK_SIZE * VOXEL_SIZE * 0.5f);
+                glm::vec3 d = chunkCenter - cameraWorldPos;
+                float distSq = glm::dot(d, d);
+
+                if (distSq > maxDistSq) {
+                    maxDistSq = distSq;
+                    furthestSlot = slot;
+                }
+            }
+
+            if (furthestSlot != INVALID_GPU_SLOT) {
+                auto it = slotToChunkCoord.find(furthestSlot);
+                if (it != slotToChunkCoord.end()) {
+                    freeGpuSlot(it->second);
+                    return true;
+                }
+            }
+            return false;
+        }
+
         bool hasDirtyChunks() const { return !dirtyChunks.empty(); }
 
 
@@ -129,11 +164,14 @@ namespace gl3 {
             Chunk* chunk = getChunk(coord);
             if (!chunk || chunk->gpuSlot == INVALID_GPU_SLOT) return;
 
+            if (chunk->queuedForRebuild || chunk->meshDirty) {
+                return;
+            }
+
             uint32_t slot = chunk->gpuSlot;
 
             chunk->gpuCache.isValid = false;
             chunk->gpuCache.vertexCount = 0;
-            chunk->meshDirty = true;
             chunk->gpuSlot = INVALID_GPU_SLOT;
 
             slotToChunkCoord.erase(slot);
@@ -169,6 +207,67 @@ namespace gl3 {
             for (const ChunkCoord& coord : slotsToFree) {
                 freeGpuSlot(coord);
             }
+        }
+
+        template<typename VisibilityFn>
+        void purgeStaleDirtyChunks(VisibilityFn&& isStillRelevant)
+        {
+            size_t writeIdx = 0;
+            for (size_t i = 0; i < dirtyChunks.size(); ++i) {
+                const ChunkCoord& coord = dirtyChunks[i];
+                Chunk* chunk = getChunk(coord);
+
+                if (!chunk || chunk->isCleared || !chunk->voxelData) {
+                    if (chunk) chunk->queuedForRebuild = false;
+                    continue; // drop
+                }
+
+                if (!isStillRelevant(coord)) {
+                    chunk->queuedForRebuild = false;
+                    continue; // drop — will get re-queued later if it becomes relevant again
+                }
+
+                dirtyChunks[writeIdx++] = coord;
+            }
+            dirtyChunks.resize(writeIdx);
+        }
+
+        struct VisibleChunkInfo {
+            ChunkCoord coord;
+            Chunk* chunk;
+        };
+
+        std::vector<VisibleChunkInfo> getVisibleChunks(
+                const glm::mat4& projectionView,
+                const glm::vec3& cameraPos,
+                const glm::vec3& cameraFront,
+                float maxDistanceWorld) const
+        {
+            std::vector<VisibleChunkInfo> out;
+            const float maxDistSq = maxDistanceWorld * maxDistanceWorld;
+
+            for (const auto& [coord, chunkPtr] : chunks) {
+                Chunk* chunk = chunkPtr.get();
+                if (!chunk || chunk->isCleared || !chunk->voxelData) continue;
+
+                const glm::vec3 minB = getChunkMin(coord);
+                const glm::vec3 maxB = getChunkMax(coord);
+                const glm::vec3 center = (minB + maxB) * 0.5f;
+                const glm::vec3 delta = center - cameraPos;
+                const float distSq = glm::dot(delta, delta);
+                if (distSq > maxDistSq) continue;
+
+                // Optional extra forward test for residency-like behavior
+                if (glm::dot(glm::normalize(delta), cameraFront) < -0.2f) {
+                    continue;
+                }
+
+                if (!isChunkVisible(coord, projectionView)) continue;
+
+                out.push_back({coord, chunk});
+            }
+
+            return out;
         }
 
         inline int worldToChunk(float worldPos) {
@@ -301,13 +400,6 @@ namespace gl3 {
                 return;
             }
 
-            // Partition the queue in-place:
-            //
-            // [ invisible dirty chunks | visible dirty chunks ]
-            //
-            // Invisible chunks stay queued and retain queuedForRebuild == true.
-            // They cost one visibility test but no lighting, GPU-slot, upload, or
-            // marching-cubes work this frame.
             auto firstVisible = std::partition(
                     dirtyChunks.begin(),
                     dirtyChunks.end(),
@@ -370,17 +462,16 @@ namespace gl3 {
 
             for (int i = 0; i < toProcess; ++i) {
                 const ChunkCoord coord = dirtyChunks.back();
-                dirtyChunks.pop_back();
 
                 Chunk* chunk = getChunk(coord);
                 if (!chunk) {
+                    dirtyChunks.pop_back();
                     continue;
                 }
 
-                // This queue entry is now being consumed.
-                chunk->queuedForRebuild = false;
-
                 if (chunk->isCleared || !chunk->voxelData) {
+                    chunk->queuedForRebuild = false;
+                    dirtyChunks.pop_back();
                     continue;
                 }
 
@@ -389,20 +480,24 @@ namespace gl3 {
                 }
 
                 if (!chunk->meshDirty && chunk->gpuCache.isValid) {
+                    chunk->queuedForRebuild = false;
+                    dirtyChunks.pop_back();
                     continue;
                 }
 
                 if (chunk->gpuSlot == INVALID_GPU_SLOT) {
-                    const uint32_t slot = allocateGpuSlot(coord);
-
+                    const uint32_t slot = allocateGpuSlot(coord, cameraPos);
                     if (slot == INVALID_GPU_SLOT) {
-                        // Keep the chunk queued so it retries once a slot is freed.
-                        markChunkDirty(coord);
+                        // keep it queued, try again later
                         continue;
                     }
                 }
 
+                // Now we know we can rebuild it
                 rebuildMeshFn(chunk);
+
+                chunk->queuedForRebuild = false;
+                dirtyChunks.pop_back();
             }
         }
 
@@ -553,50 +648,22 @@ namespace gl3 {
     private:
         int R = 0;
         int dim = 0;
-        const int MAX_CALC_PER_FRAME = 10;
+        int MAX_CALC_PER_FRAME = 45;
 
         std::unordered_map<ChunkCoord, std::unique_ptr<Chunk>, ChunkCoordHash> chunks;
-        std::vector<ChunkCoord> dirtyChunks;
 
         uint32_t nextGpuSlot = 0;
         std::vector<uint32_t> freeGpuSlots;
         std::unordered_map<uint32_t, ChunkCoord> slotToChunkCoord;
         std::unordered_set<uint32_t> activeSlots;
+        std::vector<ChunkCoord> dirtyChunks;
+
 
         uint32_t toIndex(const ChunkCoord& cc) const {
             const int ix = cc.x + R;
             const int iy = cc.y + R;
             const int iz = cc.z + R;
             return (uint32_t)(ix + iy*dim + iz*dim*dim);
-        }
-
-        bool evictFurthestChunk(const ChunkCoord& referenceCoord) {
-            if (slotToChunkCoord.empty()) return false;
-
-            uint32_t furthestSlot = INVALID_GPU_SLOT;
-            int maxDistSq = -1;
-
-            for (const auto& [slot, coord] : slotToChunkCoord) {
-                int dx = coord.x - referenceCoord.x;
-                int dy = coord.y - referenceCoord.y;
-                int dz = coord.z - referenceCoord.z;
-                int distSq = dx*dx + dy*dy + dz*dz;
-
-                if (distSq > maxDistSq) {
-                    maxDistSq = distSq;
-                    furthestSlot = slot;
-                }
-            }
-
-            if (furthestSlot != INVALID_GPU_SLOT) {
-                auto it = slotToChunkCoord.find(furthestSlot);
-                if (it != slotToChunkCoord.end()) {
-                    freeGpuSlot(it->second);
-                    return true;
-                }
-            }
-
-            return false;
         }
     };
 

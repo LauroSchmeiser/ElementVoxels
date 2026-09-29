@@ -48,7 +48,9 @@
 
 namespace gl3 {
     enum class SceneId : uint8_t;
+
     class SceneManager;
+
     class EnemyManager;
 
     class Game {
@@ -62,13 +64,15 @@ namespace gl3 {
 
         GLFWwindow *getWindow() { return window; }
 
-        int getWindowWidth() {return windowWidth;}
-        int getWindowHeight() {return windowHeight;}
+        int getWindowWidth() { return windowWidth; }
+
+        int getWindowHeight() { return windowHeight; }
 
 
-        gl3::ImGuiLayer& imgui() { return imguiLayer; }
+        gl3::ImGuiLayer &imgui() { return imguiLayer; }
 
         gl3::ImGuiLayer imguiLayer;
+
         glm::vec3 getCameraFront() const;
 
         void createPhysicsMeshData(PhysicsMeshData &out,
@@ -122,8 +126,8 @@ namespace gl3 {
             glm::vec3 worldPos;   // world-space center
             float radius;         // world-space radius
             glm::vec3 color;
-            int type=0; // 1=rock, 2=lava, 3=water
-            int material=0;
+            int type = 0; // 1=rock, 2=lava, 3=water
+            int material = 0;
         };
 
         struct Plane {
@@ -255,32 +259,40 @@ namespace gl3 {
         std::unordered_map<uint64_t, size_t> animatedVoxelIndexMap;
         uint64_t nextAnimatedVoxelID = 1;
 
-        void createCraterAtPosition(const glm::vec3& worldPos, float impactFactor, float spellRadius);
+        void createCraterAtPosition(const glm::vec3 &worldPos, float impactFactor, float spellRadius);
 
-        void Game::onSpellCollision(gl3::VoxelPhysicsBody* body,
-                                    const glm::vec3& hitPos,
-                                    const glm::vec3& hitNormal,
+        void Game::onSpellCollision(gl3::VoxelPhysicsBody *body,
+                                    const glm::vec3 &hitPos,
+                                    const glm::vec3 &hitNormal,
                                     float impactSpeed);
 
-        void onBodyBodyCollision(gl3::VoxelPhysicsBody* bodyA,
-                                 gl3::VoxelPhysicsBody* bodyB,
-                                 const glm::vec3& hitPos,
-                                 const glm::vec3& hitNormal,
+        void onBodyBodyCollision(gl3::VoxelPhysicsBody *bodyA,
+                                 gl3::VoxelPhysicsBody *bodyB,
+                                 const glm::vec3 &hitPos,
+                                 const glm::vec3 &hitNormal,
                                  float impactSpeed);
-        void onPlayerBodyCollision(gl3::VoxelPhysicsBody* body,
-                                   const glm::vec3& hitPos,
-                                   const glm::vec3& hitNormal,
-                                   float playerSpeed);
-        void onEnemyDamage(gl3::VoxelPhysicsBody* body,
-                          float damage);
 
-        int estimateAvailableVoxels(const glm::vec3& center, float radius, std::vector<uint32_t> excludedMaterials ,uint32_t targetType, int maxNeeded);
+        void onPlayerBodyCollision(gl3::VoxelPhysicsBody *body,
+                                   const glm::vec3 &hitPos,
+                                   const glm::vec3 &hitNormal,
+                                   float playerSpeed);
+
+        void onEnemyDamage(gl3::VoxelPhysicsBody *body,
+                           float damage);
+
+        int estimateAvailableVoxels(const glm::vec3 &center, float radius, std::vector<uint32_t> excludedMaterials,
+                                    uint32_t targetType, int maxNeeded);
 
         static float burn01(float t, float duration);
-        void startSpellBurn(gl3::SpellEffect& spell, float radiusWorld, float durationSec);
-        void startChunkBurn(gl3::Chunk* chunk, const glm::vec3& chunkCenterWorld, float radiusWorld, float durationSec);
+
+        void startSpellBurn(gl3::SpellEffect &spell, float radiusWorld, float durationSec);
+
+        void startChunkBurn(gl3::Chunk *chunk, const glm::vec3 &chunkCenterWorld, float radiusWorld, float durationSec);
+
         void updateChunkBurns(float dt);
-        bool isChunkMeshTooSmall(const gl3::Chunk& c, uint32_t vtxThreshold);
+
+        bool isChunkMeshTooSmall(const gl3::Chunk &c, uint32_t vtxThreshold);
+
         static inline float smooth01(float x) {
             x = glm::clamp(x, 0.0f, 1.0f);
             return x * x * (3.0f - 2.0f * x); // smoothstep(0,1,x)
@@ -294,7 +306,7 @@ namespace gl3 {
             return smooth01(t);
         }
 
-            // Precomputed sphere meshes at different LODs
+        // Precomputed sphere meshes at different LODs
         struct SphereMesh {
             std::vector<glm::vec3> vertices;
             std::vector<glm::vec3> normals;
@@ -305,6 +317,7 @@ namespace gl3 {
         std::unordered_map<int, SphereMesh> sphereMeshCache; // radius -> mesh
 
         void initSphereMeshCache();
+
         SphereMesh generateIcosphere(float radius, int subdivisions);
 
 
@@ -354,13 +367,18 @@ namespace gl3 {
 
     private:
         void renderChunks();
+
         void renderAnimatedVoxels();
+
         void renderPhysicsFormations();
+
         void renderEnemies();
+
         void renderSpellPreview();
 
         //vertex/frag Shader:
         void ensurePreviewCube();
+
         void ensurePreviewSphereMesh();
 
         ////Basic-variables:
@@ -381,14 +399,13 @@ namespace gl3 {
 
         //Lighting-Variables:
         const int MAX_LIGHTS = 4; // has to match marching cubes shader
-        const float LIGHT_RADIUS = 300.0f * CHUNK_SIZE*VOXEL_SIZE*2;
+        const float LIGHT_RADIUS = chunkDist * 15;
         uint64_t frameCounter = 29; // Frame counter for light update staggering
-        const float LIGHT_RADIUS_SQ = LIGHT_RADIUS * LIGHT_RADIUS;
         std::vector<const gl3::VoxelLight *> flatEmissiveLightList;
         robin_hood::unordered_map<ChunkCoord, std::vector<VoxelLight *>, ChunkCoordHash> lightSpatialHash;
 
         std::vector<gl3::VoxelLight> mergedEmissiveLightPool;
-        static constexpr int LIGHT_UPDATE_INTERVAL = 60; // Update lights every 15 frames
+        static constexpr int LIGHT_UPDATE_INTERVAL = 60;
 
         //std::unique_ptr<SpellPhysicsManager> spellPhysics;
         std::unique_ptr<VoxelPhysicsManager> voxelPhysics;
@@ -401,8 +418,8 @@ namespace gl3 {
 
         ////Rendering-Variables:
         //Background-Variables:
-        GLuint skyboxVAO=0;
-        GLuint skyboxVBO=0;
+        GLuint skyboxVAO = 0;
+        GLuint skyboxVBO = 0;
         GLuint cubemapTexture = 0; // This replaces your noiseTexture for the background
 
         // Skybox baking
@@ -422,19 +439,19 @@ namespace gl3 {
         GLsizei previewSphereIndexCount = 0;
 
         // World-Variables:
-        const int DIM = CHUNK_SIZE+2; //Chunk Size with a bit off padding for marching cubes
-        size_t voxelCount = DIM * DIM * DIM; //How many voxels can be in one Chunk
-        static constexpr int RenderingRange = 25; //Range around Camera that is rendered
-        float lodDistance1 = 200.0f;   // beyond this -> lodStep 2
-        float lodDistance2 = 500.0f;   // beyond this -> lodStep 4
-        float lodDistance3 = 1200.0f;  // beyond this -> lodStep 8
-
-        size_t CHUNK_MAX_VERTS = 0;           // computed once from DIM
+        const int DIM = CHUNK_SIZE + 2; //Chunk Size with a bit off padding for marching cubes
+        size_t voxelCount = DIM * DIM * DIM;
+        static constexpr int RenderingRange = 40;
+        static constexpr int chunkDist = VOXEL_SIZE * CHUNK_SIZE;
+        float lodStep = RenderingRange / 4.0;
+        float lodDistance1 = chunkDist * lodStep;
+        float lodDistance2 = chunkDist * 2 * lodStep;
+        float lodDistance3 = chunkDist * 3 * lodStep;
 
         //vEffects
         SunBillboard sunBillboards;
         std::vector<SunInstance> emissiveBillboards;
-        int emissiveUpdateCounter=0;
+        int emissiveUpdateCounter = 0;
         // Billboard cache control
         static constexpr int BILLBOARD_REFRESH_INTERVAL = 240;
         bool emissiveBillboardsDirty = true;
@@ -456,8 +473,10 @@ namespace gl3 {
         GLuint postProcessColor[2] = {0, 0};
 
         void initPostFBO();
+
         void initPostProcessBuffers();
-        void CreateFullscreenTriangle(GLuint& vao, GLuint& vbo);
+
+        void CreateFullscreenTriangle(GLuint &vao, GLuint &vbo);
 
         //Materials:
         gl3::MaterialSystem materials;
@@ -493,11 +512,15 @@ namespace gl3 {
     public:
         ///Scenes
         void requestSceneChange(SceneId id) { sceneManager.requestChange(id); }
+
         bool isGameplayInitialized() const { return gameplayInitialized; }
+
         float tickGameplayPreload();
-        const std::string& getGameplayPreloadStageName() const { return preloadStageName; }
+
+        const std::string &getGameplayPreloadStageName() const { return preloadStageName; }
 
         void updateGameplayFrame();
+
         void renderGameplayFrame();
 
     private:
@@ -537,37 +560,55 @@ namespace gl3 {
         bool bootLoaded = false;
         bool needsNewRun = true;
         bool doNewRun = true;
+
         void markNeedsNewRun() { needsNewRun = true; }
 
         void clearWorldAndGameplayObjects();
 
         ////helper functions:
         RayCastResult rayCastFromCamera(float maxDistance = 1000.0f);
-        glm::vec3 calculateNormalAt(Chunk* chunk, const glm::ivec3& pos);
+
+        glm::vec3 calculateNormalAt(Chunk *chunk, const glm::ivec3 &pos);
+
         float sampleDensityAtWorld(const glm::vec3 &worldPos) const;
+
         float sampleFluidDensityAtWorld(const glm::vec3 &worldPos) const;
-        float getGasDensityAtWorld(FixedGridChunkManager* chunkManager, const glm::vec3& worldPos);
-        glm::vec3 Game::getGasColorAtWorld(FixedGridChunkManager* chunkManager, const glm::vec3& worldPos);
+
+        float getGasDensityAtWorld(FixedGridChunkManager *chunkManager, const glm::vec3 &worldPos);
+
+        glm::vec3 Game::getGasColorAtWorld(FixedGridChunkManager *chunkManager, const glm::vec3 &worldPos);
 
         glm::vec3 sampleNormalAtWorld(const glm::vec3 &worldPos) const;
+
         void updateCamera();
+
         void createNoiseTexture();
+
         void createNebulaCubemap(int size);
 
     public:
-        static uint8_t sampleTypeAtWorld(FixedGridChunkManager* chunkManager, const glm::vec3& worldPos);
-        static uint32_t sampleMaterialAtWorld(FixedGridChunkManager* chunkManager, const glm::vec3& worldPos);
+        static uint8_t sampleTypeAtWorld(FixedGridChunkManager *chunkManager, const glm::vec3 &worldPos);
+
+        static uint32_t sampleMaterialAtWorld(FixedGridChunkManager *chunkManager, const glm::vec3 &worldPos);
 
         void beginGameplayPreload(bool newRun);
+
         void bakeNebulaCubemap(int size);
+
         void setupSkybox();
 
         float getPlayerHealth() const { return playerHealth; }
+
         float getPlayerMaxHealth() const { return playerMaxHealth; }
+
         void setPlayerHealth(float h) { playerHealth = glm::clamp(h, 0.0f, playerMaxHealth); }
-        void setPlayerMaxHealth(float h) { playerMaxHealth = glm::max(1.0f, h); playerHealth = glm::min(playerHealth, playerMaxHealth); }
-        struct DamageInstance
-        {
+
+        void setPlayerMaxHealth(float h) {
+            playerMaxHealth = glm::max(1.0f, h);
+            playerHealth = glm::min(playerHealth, playerMaxHealth);
+        }
+
+        struct DamageInstance {
             float amount;
             glm::vec3 worldPosition;
             float time;
@@ -579,8 +620,8 @@ namespace gl3 {
         float maxDamagePerTimeframe = 20.0f;
         float damageTimeframe = 0.0125f;
         float damageTimer = 0;
-        void registerPlayerDamage(const DamageInstance& d)
-        {
+
+        void registerPlayerDamage(const DamageInstance &d) {
             playerDamageInstances.push_back(d);
 
             DamageInstance feedback = d;
@@ -590,51 +631,61 @@ namespace gl3 {
 
             playerDamageFeedback.push_back(feedback);
         }
-        void applyPlayerDamage()
-        {
+
+        void applyPlayerDamage() {
             float sum = 0;
 
-            for(auto& damageInstance : playerDamageInstances)
-            {
+            for (auto &damageInstance: playerDamageInstances) {
                 sum += damageInstance.amount;
             }
 
-            if(skillTree.GetPage(3).skills[2].level>0&&sampleMaterialAtWorld(chunkManager.get(),characterController->getPosition())==6u)
-            {
-                sum/2.0f;
+            if (skillTree.GetPage(3).skills[2].level > 0 &&
+                sampleMaterialAtWorld(chunkManager.get(), characterController->getPosition()) == 6u) {
+                sum / 2.0f;
             }
 
             playerDamageInstances.clear();
 
-            if(sum > maxDamagePerTimeframe)
-            {
+            if (sum > maxDamagePerTimeframe) {
                 setPlayerHealth(maxDamagePerTimeframe);
-            }
-            else
-            {
-                setPlayerHealth(getPlayerHealth()-sum);
+            } else {
+                setPlayerHealth(getPlayerHealth() - sum);
             }
         }
+
         bool isPaused() const { return paused; }
+
         void setPaused(bool p);
+
         void togglePaused();
 
         void renderGameplayUI();
+
         void renderWaveModeUI();
-        void renderCenteredTopText(const std::string& text);
+
+        void renderCenteredTopText(const std::string &text);
+
         void renderProgressBar(const char *label, float progress, const char *overlay);
+
         void renderHuntUI();
+
         void renderPreparationUI();
+
         void renderInfectionUI();
+
         void renderDestructionUI();
+
         void renderDefenseUI();
+
         void renderMiningUI();
+
         void renderSurvivalUI();
+
         void renderUpgradeSelectionUI();
 
 
-        void spawnEnemyLaunchSphere(const glm::vec3& start,
-                                    const glm::vec3& target,
+        void spawnEnemyLaunchSphere(const glm::vec3 &start,
+                                    const glm::vec3 &target,
                                     float radiusWorld,
                                     float speedWorld,
                                     glm::vec3 color, int material);
@@ -667,44 +718,47 @@ namespace gl3 {
         GLuint impactQuadVBO = 0;
 
         void setupImpactEffects();
+
         void ensureImpactQuad();
+
         void updateImpactEffects(float dt);
+
         void renderImpactEffects();
 
-        void spawnImpactEffect(const glm::vec3& hitPos,
-                               const glm::vec3& hitNormal,
+        void spawnImpactEffect(const glm::vec3 &hitPos,
+                               const glm::vec3 &hitNormal,
                                float impactSpeed,
                                float removedVoxelEstimate,
-                               const glm::vec3& tint = glm::vec3(0.45f, 0.45f, 0.45f));
+                               const glm::vec3 &tint = glm::vec3(0.45f, 0.45f, 0.45f));
 
-        void spawnImpactPresetSmall(const glm::vec3& hitPos,
-                                    const glm::vec3& hitNormal,
+        void spawnImpactPresetSmall(const glm::vec3 &hitPos,
+                                    const glm::vec3 &hitNormal,
                                     float strength01,
-                                    const glm::vec3& tint);
+                                    const glm::vec3 &tint);
 
-        void spawnImpactPresetMedium(const glm::vec3& hitPos,
-                                     const glm::vec3& hitNormal,
+        void spawnImpactPresetMedium(const glm::vec3 &hitPos,
+                                     const glm::vec3 &hitNormal,
                                      float strength01,
-                                     const glm::vec3& tint);
+                                     const glm::vec3 &tint);
 
-        void spawnImpactPresetLarge(const glm::vec3& hitPos,
-                                    const glm::vec3& hitNormal,
+        void spawnImpactPresetLarge(const glm::vec3 &hitPos,
+                                    const glm::vec3 &hitNormal,
                                     float strength01,
-                                    const glm::vec3& tint);
-
+                                    const glm::vec3 &tint);
 
 
     private:
         glm::vec2 getMouseDelta();
+
         glm::dvec2 previousMousePos = glm::dvec2(0.0, 0.0);
         bool hasPreviousMousePos = false;
         float playerMaxHealth = 100.0f;
-        float playerHealth    = 100.0f;
+        float playerHealth = 100.0f;
 
         std::unique_ptr<EnemyManager> enemyManager;
 
         bool paused = false;
-        int activeSpellMat=0;
+        int activeSpellMat = 0;
 
 
         std::vector<DrawArraysIndirectCommand> visibleDrawCmds;
@@ -723,7 +777,7 @@ namespace gl3 {
         glm::vec3 cameraUp;
 
         glm::vec3 cameraRight;
-        const float cameraSensitivity=0.075f;
+        const float cameraSensitivity = 0.075f;
 
         std::unique_ptr<Shader> speedLinesShader;
         bool enableSpeedLines = true;
@@ -732,7 +786,9 @@ namespace gl3 {
         std::unique_ptr<Shader> damageShader;
 
         void initSpeedLinesShader();
+
         bool renderSpeedLines(GLuint inputTexture, GLuint destinationFBO);
+
         WaveManager waveManager;
 
         void alignCameraRollToUp(const glm::vec3 &targetUp, float dt);
@@ -743,13 +799,17 @@ namespace gl3 {
         std::vector<ImpactInstanceGPU> impactInstancesCPU;
         static constexpr size_t kMaxImpactInstances = 4096;
         GLuint impactNoiseTexId = 0;
+
         void createImpactNoiseTexture();
+
         void initImpactInstancing();
 
         CollisionDecision
         decideCollisionResponse(const VoxelPhysicsBody &self, const VoxelPhysicsBody *other, const glm::vec3 &hitPos,
                                 const glm::vec3 &hitNormal, float impactSpeed) const;
+
         std::vector<MaterialCollisionRule> materialRules;
+
         void initMaterialRules();
 
         enum class PauseSubmenu {
@@ -761,15 +821,21 @@ namespace gl3 {
         void applyMaterial9BurnAlongSegment(const glm::vec3 &from, const glm::vec3 &to, float radius);
 
         void initFluidFBO();
-        bool isPointInsideFluid(const glm::vec3& worldPos) const;
+
+        bool isPointInsideFluid(const glm::vec3 &worldPos) const;
+
         GLuint fluidFBO = 0;
         GLuint fluidColorTex = 0;
         GLuint fluidDepthTex = 0;
         GLuint fluidThicknessTex = 0;
         std::vector<uint32_t> visibleFluidSlots;
-        bool chunkHasFluid(const Chunk& chunk);
+
+        bool chunkHasFluid(const Chunk &chunk);
+
         void renderFluids();
-        glm::vec3 sampleFluidColorAtWorld(const glm::vec3& worldPos) const;
+
+        glm::vec3 sampleFluidColorAtWorld(const glm::vec3 &worldPos) const;
+
         std::unique_ptr<Shader> fluidShader;
         GLuint compositeFBO = 0;
         GLuint compositeColorTex = 0;
@@ -780,19 +846,31 @@ namespace gl3 {
         GLuint gasDensityTex = 0;    // R16F for accumulated density
 
         std::unique_ptr<Shader> gasRayMarchShader;
+
         void initGasFBO();
+
         void renderGas();
-        const char* lastHoveredButton = nullptr;
+
+        const char *lastHoveredButton = nullptr;
 
         const float nearPlane = 0.1f;
-        const float farPlane = 1000.0f;
+        const float farPlane = 1500.0f;
 
         SkillTreeUI skillTree;
         int selectedSkillPage = 0;
 
+        int currentMaxCalcPerFrame = 20;
+        const int kMinCalcPerFrame = 20;
+        const int kMaxCalcPerFrame = 200;
+        float smoothedFrameTimeMs = 13.3f;
+
     public:
-        void convertWorldToMaterial(const glm::vec3& center, float radius, uint32_t material);
-        int Game::consumeWorldOfMaterial(const glm::vec3& center, float radius, uint32_t material);
+        SkillTreeUI getSkillTree();
+
+        void convertWorldToMaterial(const glm::vec3 &center, float radius, uint32_t material);
+
+        int Game::consumeWorldOfMaterial(const glm::vec3 &center, float radius, uint32_t material);
+
         void convertSolidWorldToMaterial(const glm::vec3 &center, float radius, uint32_t material);
 
         void convertWorldToType(const glm::vec3 &center, float radius, uint32_t type, float strength);
@@ -807,7 +885,7 @@ namespace gl3 {
 
         struct ResolutionOption {
             int w, h;
-            const char* label;
+            const char *label;
         };
 
         struct GameSettings {
@@ -838,6 +916,7 @@ namespace gl3 {
         };
 
         void applyDisplaySettings();
+
         void applyAudioSettings();
         //void applyVisualSettings();
 
@@ -845,9 +924,15 @@ namespace gl3 {
 
         int findBestResolutionIndexForMonitor(GLFWmonitor *monitor) const;
 
-        enum class CraftSpellType : uint8_t { Construct, Projectile };
-        enum class CraftForm : uint8_t { Sphere, Wall };
-        enum class CraftMaterial : uint8_t { Rock=0, Flesh=7, Lava=9 };
+        enum class CraftSpellType : uint8_t {
+            Construct, Projectile
+        };
+        enum class CraftForm : uint8_t {
+            Sphere, Wall
+        };
+        enum class CraftMaterial : uint8_t {
+            Rock = 0, Flesh = 7, Lava = 9
+        };
 
         struct SpellPreset {
             std::string name = "New Spell";
@@ -870,10 +955,11 @@ namespace gl3 {
         std::array<SpellPreset, 3> spellPresets;
         int activeSpellPresetIndex = 0;
 
-        const SpellPreset& getSpellPreset(int i) const { return spellPresets[i]; }
-        void recomputeSpellDerivedStats(SpellPreset& p);
+        const SpellPreset &getSpellPreset(int i) const { return spellPresets[i]; }
 
-        SpellPreset& getSpellPreset(int i) { return spellPresets[i]; }
+        void recomputeSpellDerivedStats(SpellPreset &p);
+
+        SpellPreset &getSpellPreset(int i) { return spellPresets[i]; }
 
         void initCompositeFBO();
 
@@ -889,17 +975,17 @@ namespace gl3 {
 
         int mineSolidWorld(const glm::vec3 &center, float radius);
 
-        const char* materialToString(uint32_t material, uint8_t type = 1);
+        const char *materialToString(uint32_t material, uint8_t type = 1);
 
         void convertEmptyWorldToMaterial(const glm::vec3 &center, float radius, uint32_t material);
 
         void convertEmptyWorldToType(const glm::vec3 &center, float radius, uint32_t type);
 
-        SkillTreeUI getSkillTree(){ return skillTree;};
-
         bool shouldKeepChunkResident(int cx, int cy, int cz, const glm::vec3 &cameraFront, float renderRadius) const;
+
+
+        void updateAdaptiveChunkBudget(float rawDeltaTime);
 
         void updateChunkLODs();
     };
-
 }

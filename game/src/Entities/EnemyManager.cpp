@@ -393,8 +393,8 @@ namespace gl3 {
             coord.y = chunkMgr->worldToChunk(samplePos.y);
             coord.z = chunkMgr->worldToChunk(samplePos.z);
 
-            Chunk* chunk = chunkMgr->getOrCreateChunk(coord);
-            if (chunk) {
+            Chunk* chunk = chunkMgr->getChunk(coord);
+            if (chunk&&!chunk->isCleared&&chunk->voxelData) {
                 glm::vec3 chunkMin = chunkMgr->getChunkMin(coord);
                 glm::ivec3 localPos = glm::ivec3(
                         samplePos.x - chunkMin.x,

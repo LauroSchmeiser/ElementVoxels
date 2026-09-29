@@ -1986,7 +1986,7 @@ namespace gl3 {
     void Game::markChunkModified(const ChunkCoord &coord) {
         Chunk *chunk = chunkManager->getOrCreateChunk(coord);
         if (chunk) {
-            if (!chunk->isCleared)
+            if (!chunk->isCleared&&chunk->voxelData)
             {
                 chunk->meshDirty = true;
                 chunkManager->markChunkDirty(coord);
@@ -1998,7 +1998,7 @@ namespace gl3 {
                         ChunkCoord neighbor{coord.x + dx, coord.y + dy, coord.z + dz};
                         Chunk *neighborChunk = chunkManager->getOrCreateChunk(neighbor);
                         if (neighborChunk) {
-                            if (!neighborChunk->isCleared) {
+                            if (!neighborChunk->isCleared&&neighborChunk->voxelData) {
                                 neighborChunk->meshDirty = true;
                                 neighborChunk->lightingDirty = true;
                                 chunkManager->markChunkDirty(neighborChunk->coord);
@@ -2010,8 +2010,8 @@ namespace gl3 {
 
     void Game::unloadChunk(const ChunkCoord &coord) {
         Chunk *chunk = chunkManager->getOrCreateChunk(coord);
-        if (chunk) {
-            chunk->clear();
+        if (chunk&&chunk->voxelData) {
+            //chunk->clear();
         }
     }
 
@@ -2052,7 +2052,9 @@ namespace gl3 {
 
         for (const auto& [coord, chunk] : chunks)
         {
-            if (!chunk) continue;
+            if (!chunk || chunk->isCleared || !chunk->voxelData) {
+                continue;
+            }
 
             glm::vec3 chunkMin = getChunkMin(coord);
 
@@ -2254,10 +2256,10 @@ namespace gl3 {
             chunk->burn.t += dt;
             if (burn01(chunk->burn.t, chunk->burn.duration) >= 1.0f)
             {
-                chunk->clear();
-                chunk->isCleared = true;
+                //chunk->clear();
+                //chunk->isCleared = true;
 
-                chunk->gpuCache.vertexCount = 0;
+                //chunk->gpuCache.vertexCount = 0;
 
                 chunk->meshDirty = false;
                 chunk->gpuCache.isValid = true; // "valid but empty"
@@ -2386,7 +2388,7 @@ namespace gl3 {
         ChunkCoord coord{cx, cy, cz};
         Chunk* chunk = chunkManager->getOrCreateChunk(coord);
 
-        if (!chunk) {
+        if (!chunk||chunk->isCleared||!chunk->voxelData) {
             std::cout << "No chunk found at impact position\n";
             return;
         }
@@ -2785,7 +2787,7 @@ namespace gl3 {
         float worldMax = chunkManager->radius() * chunkWorld;
 
         std::uniform_real_distribution<float> distPos(-worldMax * 0.9f, worldMax * 0.9f);
-        std::uniform_real_distribution<float> distScale(1.5f, 4.0f);
+        std::uniform_real_distribution<float> distScale(2.5f, 5.0f);
         std::uniform_real_distribution<float> distColor(0.3f, 1.0f);
         std::uniform_real_distribution<float> distMat(0.0f, 100.9f);
 
@@ -2885,11 +2887,13 @@ namespace gl3 {
         std::uniform_real_distribution<float> lavaDistColorR(0.7f, 1.0f);
         std::uniform_real_distribution<float> lavaDistColorG(0.3f, 0.6f);
         std::uniform_real_distribution<float> lavaDistColorB(0.0f, 0.1f);
+        std::uniform_real_distribution<float> sunScale(7.5f, 10.0f);
 
-        int lavaCount = 3 + (rng() % 3);
+
+        int lavaCount = 3*(WORLD_RADIUS_CHUNKS/10);
         for (int i = 0; i < lavaCount; ++i) {
             WorldPlanet p;
-            p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
+            p.worldPos = glm::vec3(distPos(rng),distPos(rng),distPos(rng));
             p.radius = distScale(rng) * CHUNK_SIZE;
             p.color = glm::vec3(lavaDistColorR(rng), lavaDistColorG(rng), lavaDistColorB(rng));
             p.type = 2; // fire
@@ -2921,7 +2925,9 @@ namespace gl3 {
                         // Get or create chunk using MultiGridChunkManager
                         Chunk *chunk = chunkManager->getOrCreateChunk(coord);
 
-                        if (!chunk) continue;
+                        if (!chunk || !chunk->voxelData) {
+                            continue;
+                        }
 
                         glm::vec3 chunkOrigin(cx * CHUNK_SIZE*VOXEL_SIZE, cy * CHUNK_SIZE*VOXEL_SIZE, cz * CHUNK_SIZE*VOXEL_SIZE);
                         bool chunkTouched = false;
@@ -3451,6 +3457,8 @@ void Game::update() {
         chunkRenderer->updateLightSpatialHash();
         emissiveBillboardsDirty = true;
     }*/
+    updateAdaptiveChunkBudget(deltaTime);
+
     if(frameCounter%261==0)
     {
         TRACY_CPU_ZONE("Game::uploadLightsToGPU()");
@@ -3839,11 +3847,40 @@ burn01(1.0f,5.0f);
 
 }
 
+    void Game::updateAdaptiveChunkBudget(float rawDeltaTime)
+    {
+        const float frameTimeMs = rawDeltaTime * 1000.0f;
+        smoothedFrameTimeMs = glm::mix(smoothedFrameTimeMs, frameTimeMs, 0.1f);
+
+        const float targetFrameMs = 11.1f;
+        const float headroomMs = targetFrameMs - smoothedFrameTimeMs;
+
+        int step = 0;
+        if (headroomMs > 0.0f) {
+            // We have headroom: climb slowly to avoid re-triggering a stall
+            step = (int)(headroomMs * 3.0f) + 1;
+        } else {
+            // We're over budget: back off faster
+            step = (int)(headroomMs * 5.0f); // headroomMs is negative here, so step is negative
+        }
+
+        currentMaxCalcPerFrame += step;
+        currentMaxCalcPerFrame = glm::clamp(currentMaxCalcPerFrame, kMinCalcPerFrame, kMaxCalcPerFrame);
+
+        chunkManager->setMaxCalcPerFrame(currentMaxCalcPerFrame);
+    }
+
     void Game::updateChunkLODs()
     {
-        chunkManager->forEachChunk([this](Chunk* chunk) {
+        const glm::vec3 camFront = glm::normalize(getCameraFront());
+
+        chunkManager->forEachChunk([this, &camFront](Chunk* chunk) {
             if (chunk->isCleared || !chunk->voxelData) return;
             if (chunk->gpuSlot == FixedGridChunkManager::INVALID_GPU_SLOT) return;
+
+            if (!shouldKeepChunkResident(chunk->coord.x, chunk->coord.y, chunk->coord.z,camFront, RenderingRange)) {
+                return;
+            }
 
             float dist = glm::distance(
                     chunkManager->getChunkMin(chunk->coord) + glm::vec3(CHUNK_SIZE * VOXEL_SIZE * 0.5f),
@@ -3977,15 +4014,14 @@ glDepthMask(depthMask);
         frameCounter++;
         chunkRenderer->frameCounter += 1;
 
-        const int camCX = worldToChunk(cameraPos.x);
-        const int camCY = worldToChunk(cameraPos.y);
-        const int camCZ = worldToChunk(cameraPos.z);
-        const int renderRadius = RenderingRange;
-
         // Cleanup distant chunks periodically (every 60 frames)
         if (frameCounter % 60 == 0) {
             TRACY_CPU_ZONE("renderChunks::cleanupDistantSlots");
-            chunkManager->cleanupDistantChunks(cameraPos, cameraForward, renderRadius);
+            chunkManager->cleanupDistantChunks(cameraPos, cameraForward, RenderingRange);
+            const glm::vec3 camFront = glm::normalize(getCameraFront());
+            chunkManager->purgeStaleDirtyChunks([&](const ChunkCoord& coord) {
+                return shouldKeepChunkResident(coord.x, coord.y, coord.z, camFront, RenderingRange + 2 /* padding */);
+            });
             updateChunkLODs();
         }
 
@@ -3997,44 +4033,32 @@ glDepthMask(depthMask);
         // Generate meshes / rebuild emissive lights
         {
             TRACY_CPU_ZONE("renderChunks::PrepareMeshesAndLights");
-            const int R = chunkManager->radius();
-            const glm::vec3 cameraFront = glm::normalize(getCameraFront());
+            auto visibleChunks = chunkManager->getVisibleChunks(
+                    pv,
+                    cameraPos,
+                    getCameraFront(),
+                    RenderingRange * CHUNK_SIZE * VOXEL_SIZE
+            );
 
+            for (const auto& info : visibleChunks) {
+                Chunk* chunk = info.chunk;
+                if (!shouldKeepChunkResident(info.coord.x,info.coord.y,info.coord.z, getCameraFront(), RenderingRange)) {
+                    continue;
+                }
 
-            const int minCX = std::max(camCX - renderRadius, -R);
-            const int maxCX = std::min(camCX + renderRadius, R);
-            const int minCY = std::max(camCY - renderRadius, -R);
-            const int maxCY = std::min(camCY + renderRadius, R);
-            const int minCZ = std::max(camCZ - renderRadius, -R);
-            const int maxCZ = std::min(camCZ + renderRadius, R);
+                if (!chunk||chunk->isCleared) continue;
 
-            for (int cx = minCX; cx <= maxCX; ++cx) {
-                for (int cy = minCY; cy <= maxCY; ++cy) {
-                    for (int cz = minCZ; cz <= maxCZ; ++cz) {
-                        if (!shouldKeepChunkResident(cx, cy, cz, cameraFront, renderRadius)) {
-                            continue;
-                        }
-                        ChunkCoord coord{cx, cy, cz};
-                        Chunk* chunk = chunkManager->getChunk(coord);
-
-                        if (!chunk) continue;
-
-                        // Skip empty chunks (no geometry)
-                        if (chunk->isCleared) continue;
-
-                        if (!chunk->gpuCache.isValid ||
+                if (!chunk->gpuCache.isValid ||
                             chunk->gpuSlot == FixedGridChunkManager::INVALID_GPU_SLOT) {
                             chunk->meshDirty = true;
-                            chunkManager->markChunkDirty(coord);
+                            chunkManager->markChunkDirty(info.coord);
                             continue;
-                        }
+                }
 
-                        visibleSlots.push_back(chunk->gpuSlot);
+                visibleSlots.push_back(chunk->gpuSlot);
 
-                        if (chunk->hasFluid) {
-                            visibleFluidSlots.push_back(chunk->gpuSlot);
-                        }
-                    }
+                if (chunk->hasFluid) {
+                    visibleFluidSlots.push_back(chunk->gpuSlot);
                 }
             }
         }
@@ -4825,8 +4849,8 @@ glDepthMask(depthMask);
             coord.y = worldToChunk(samplePos.y);
             coord.z = worldToChunk(samplePos.z);
 
-            Chunk* chunk = chunkManager->getOrCreateChunk(coord);
-            if (chunk) {
+            Chunk* chunk = chunkManager->getChunk(coord);
+            if (chunk && !chunk->isCleared && chunk->voxelData) {
                 // Convert world position to local chunk coordinates
                 glm::vec3 chunkMin = getChunkMin(coord);
                 glm::ivec3 localPos = glm::ivec3(
@@ -4935,9 +4959,10 @@ glDepthMask(depthMask);
             int cy = worldToChunk(cornerWorld.y);
             int cz = worldToChunk(cornerWorld.z);
             ChunkCoord coord{cx, cy, cz};
-            Chunk* chunk = chunkManager->getOrCreateChunk(coord);
-            if (!chunk) return -1000.0f;
-            // local index inside that chunk (0..CHUNK_SIZE)
+            Chunk* chunk = chunkManager->getChunk(coord);
+            if (!chunk || chunk->isCleared || !chunk->voxelData) {
+                return -1000.0f;
+            }
             glm::vec3 localCorner = (cornerWorld - getChunkMin(coord)) / VOXEL_SIZE;
             int lx = glm::clamp((int)std::round(localCorner.x), 0, CHUNK_SIZE);
             int ly = glm::clamp((int)std::round(localCorner.y), 0, CHUNK_SIZE);
@@ -4986,8 +5011,10 @@ glDepthMask(depthMask);
             int cy = worldToChunk(cornerWorld.y);
             int cz = worldToChunk(cornerWorld.z);
             ChunkCoord coord{cx, cy, cz};
-            Chunk* chunk = chunkManager->getOrCreateChunk(coord);
-            if (!chunk) return -1000.0f;
+            Chunk* chunk = chunkManager->getChunk(coord);
+            if (!chunk || chunk->isCleared || !chunk->voxelData) {
+                return -1000.0f;
+            }
             glm::vec3 localCorner = (cornerWorld - getChunkMin(coord)) / VOXEL_SIZE;
             int lx = glm::clamp((int)std::round(localCorner.x), 0, CHUNK_SIZE);
             int ly = glm::clamp((int)std::round(localCorner.y), 0, CHUNK_SIZE);
@@ -5015,53 +5042,6 @@ glDepthMask(depthMask);
         return lerp(c0, c1, fz);
     }
 
-     float Game::getGasDensityAtWorld(FixedGridChunkManager* chunkManager, const glm::vec3& worldPos) {
-        if (!chunkManager) return 0.0f;
-
-        const float chunkWorldSize = CHUNK_SIZE * VOXEL_SIZE;
-        int cx = static_cast<int>(std::floor(worldPos.x / chunkWorldSize));
-        int cy = static_cast<int>(std::floor(worldPos.y / chunkWorldSize));
-        int cz = static_cast<int>(std::floor(worldPos.z / chunkWorldSize));
-
-        ChunkCoord coord{cx, cy, cz};
-        Chunk* chunk = chunkManager->getOrCreateChunk(coord);
-        if (!chunk) return 0.0f;
-
-        glm::vec3 chunkMin = glm::vec3(coord.x * chunkWorldSize,
-                                       coord.y * chunkWorldSize,
-                                       coord.z * chunkWorldSize);
-
-        glm::vec3 local = (worldPos - chunkMin) / VOXEL_SIZE;
-        int ix = glm::clamp((int)std::round(local.x), 0, CHUNK_SIZE);
-        int iy = glm::clamp((int)std::round(local.y), 0, CHUNK_SIZE);
-        int iz = glm::clamp((int)std::round(local.z), 0, CHUNK_SIZE);
-
-        const Voxel& v = chunk->voxels(ix,iy,iz);
-        if (v.type == 4 && v.density >= 0.0f) {
-            return v.density;
-        }
-        return 0.0f;
-    }
-
-    glm::vec3 Game::getGasColorAtWorld(FixedGridChunkManager* chunkManager, const glm::vec3& worldPos) {
-        const float chunkWorldSize = CHUNK_SIZE * VOXEL_SIZE;
-        int cx = static_cast<int>(std::floor(worldPos.x / chunkWorldSize));
-        int cy = static_cast<int>(std::floor(worldPos.y / chunkWorldSize));
-        int cz = static_cast<int>(std::floor(worldPos.z / chunkWorldSize));
-
-        Chunk* chunk = chunkManager->getOrCreateChunk({cx, cy, cz});
-        if (!chunk) return glm::vec3(0.5f, 0.6f, 0.7f);
-
-        glm::vec3 chunkMin = getChunkMin({cx, cy, cz});
-        glm::vec3 local = (worldPos - chunkMin) / VOXEL_SIZE;
-        int ix = glm::clamp((int)std::round(local.x), 0, CHUNK_SIZE);
-        int iy = glm::clamp((int)std::round(local.y), 0, CHUNK_SIZE);
-        int iz = glm::clamp((int)std::round(local.z), 0, CHUNK_SIZE);
-
-        const Voxel& v = chunk->voxels(ix,iy,iz);
-        return (v.type == 4) ? v.color : glm::vec3(0.5f, 0.6f, 0.7f);
-    }
-
     glm::vec3 Game::sampleNormalAtWorld(const glm::vec3 &worldPos) const {
         const float e = VOXEL_SIZE * 0.5f;
         float dx = sampleDensityAtWorld(worldPos + glm::vec3(e,0,0)) - sampleDensityAtWorld(worldPos - glm::vec3(e,0,0));
@@ -5082,8 +5062,10 @@ glDepthMask(depthMask);
         int cz = static_cast<int>(std::floor(worldPos.z / chunkWorldSize));
 
         ChunkCoord coord{cx, cy, cz};
-        Chunk* chunk = chunkManager->getOrCreateChunk(coord);
-        if (!chunk) return 0;
+        Chunk* chunk = chunkManager->getChunk(coord);
+         if (!chunk || chunk->isCleared || !chunk->voxelData) {
+             return -1000.0f;
+         }
 
         glm::vec3 chunkMin = glm::vec3(coord.x * chunkWorldSize,
                                        coord.y * chunkWorldSize,
@@ -5107,8 +5089,10 @@ glDepthMask(depthMask);
         int cz = static_cast<int>(std::floor(worldPos.z / chunkWorldSize));
 
         ChunkCoord coord{cx, cy, cz};
-        Chunk* chunk = chunkManager->getOrCreateChunk(coord);
-        if (!chunk) return 0;
+        Chunk* chunk = chunkManager->getChunk(coord);
+        if (!chunk || chunk->isCleared || !chunk->voxelData) {
+            return -1000.0f;
+        }
 
         glm::vec3 chunkMin = glm::vec3(coord.x * chunkWorldSize,
                                        coord.y * chunkWorldSize,
@@ -6157,7 +6141,9 @@ glDepthMask(depthMask);
                 {
                     ChunkCoord cc{cx,cy,cz};
                     Chunk* chunk = chunkManager->getOrCreateChunk(cc);
-                    if (!chunk) continue;
+                    if (!chunk || chunk->isCleared|| !chunk->voxelData) {
+                        continue;
+                    }
 
                     const glm::vec3 cmin = getChunkMin(cc);
                     bool any = false;
@@ -6227,8 +6213,9 @@ glDepthMask(depthMask);
                 {
                     ChunkCoord cc{cx,cy,cz};
                     Chunk* chunk = chunkManager->getOrCreateChunk(cc);
-                    if (!chunk) continue;
-
+                    if (!chunk || chunk->isCleared|| !chunk->voxelData) {
+                        continue;
+                    }
                     const glm::vec3 cmin = getChunkMin(cc);
                     bool any = false;
 
@@ -6297,8 +6284,9 @@ glDepthMask(depthMask);
                 {
                     ChunkCoord cc{cx,cy,cz};
                     Chunk* chunk = chunkManager->getOrCreateChunk(cc);
-                    if (!chunk) continue;
-
+                    if (!chunk || chunk->isCleared|| !chunk->voxelData) {
+                        continue;
+                    }
                     const glm::vec3 cmin = getChunkMin(cc);
                     bool any = false;
 
@@ -6366,7 +6354,9 @@ glDepthMask(depthMask);
                 for (int cz = minCZ; cz <= maxCZ; ++cz) {
                     ChunkCoord cc{cx, cy, cz};
                     Chunk* chunk = chunkManager->getOrCreateChunk(cc);
-                    if (!chunk) continue;
+                    if (!chunk || !chunk->voxelData) {
+                        continue;
+                    }
 
                     const glm::vec3 cmin = getChunkMin(cc);
                     bool any = false;
@@ -6467,7 +6457,9 @@ glDepthMask(depthMask);
                 for (int cz = minCZ; cz <= maxCZ; ++cz) {
                     ChunkCoord cc{cx, cy, cz};
                     Chunk* chunk = chunkManager->getOrCreateChunk(cc);
-                    if (!chunk) continue;
+                    if (!chunk ||chunk->isCleared|| !chunk->voxelData) {
+                        continue;
+                    }
 
                     const glm::vec3 cmin = getChunkMin(cc);
                     bool any = false;
@@ -6558,7 +6550,9 @@ glDepthMask(depthMask);
                 for (int cz = minCZ; cz <= maxCZ; ++cz) {
                     ChunkCoord cc{cx, cy, cz};
                     Chunk* chunk = chunkManager->getOrCreateChunk(cc);
-                    if (!chunk) continue;
+                    if (!chunk || !chunk->voxelData) {
+                        continue;
+                    }
 
                     const glm::vec3 cmin = getChunkMin(cc);
                     bool any = false;
@@ -6640,7 +6634,9 @@ glDepthMask(depthMask);
                 {
                     ChunkCoord cc{cx,cy,cz};
                     Chunk* chunk = chunkManager->getOrCreateChunk(cc);
-                    if (!chunk) continue;
+                    if (!chunk || !chunk->voxelData) {
+                        continue;
+                    }
 
                     const glm::vec3 cmin = getChunkMin(cc);
                     bool any = false;
@@ -6709,7 +6705,9 @@ glDepthMask(depthMask);
                 {
                     ChunkCoord cc{cx,cy,cz};
                     Chunk* chunk = chunkManager->getOrCreateChunk(cc);
-                    if (!chunk) continue;
+                    if (!chunk || chunk->isCleared || !chunk->voxelData) {
+                        continue;
+                    }
 
                     const glm::vec3 cmin = getChunkMin(cc);
                     bool any = false;
@@ -7040,8 +7038,10 @@ glDepthMask(depthMask);
         int cy = (int)std::floor(worldPos.y / chunkWorldSize);
         int cz = (int)std::floor(worldPos.z / chunkWorldSize);
 
-        Chunk* chunk = chunkManager->getOrCreateChunk({cx, cy, cz});
-        if (!chunk) return glm::vec3(0.1f, 0.3f, 0.8f);
+        Chunk* chunk = chunkManager->getChunk({cx, cy, cz});
+        if (!chunk || chunk->isCleared || !chunk->voxelData) {
+            return glm::vec3(0.1f, 0.3f, 0.8f);
+        }
 
         glm::vec3 chunkMin = getChunkMin({cx,cy,cz});
         glm::vec3 local = (worldPos - chunkMin) / VOXEL_SIZE;
@@ -7151,5 +7151,9 @@ glDepthMask(depthMask);
 
     void Game::onEnemyDamage(gl3::VoxelPhysicsBody *body, float damage) {
 
+    }
+
+    SkillTreeUI Game::getSkillTree() {
+        return skillTree;
     }
 }

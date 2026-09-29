@@ -85,7 +85,9 @@ namespace gl3 {
                     for (int cz = minCZ; cz <= maxCZ; ++cz) {
                         ChunkCoord cc{cx,cy,cz};
                         Chunk* chunk = mgr->getOrCreateChunk(cc);
-                        if (!chunk) continue;
+                        if (!chunk || chunk->isCleared || !chunk->voxelData) {
+                            continue;
+                        }
 
                         glm::vec3 cmin = chunkMinWorld(cc);
                         bool touched = false;

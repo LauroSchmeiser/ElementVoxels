@@ -28,6 +28,8 @@ namespace gl3 {
         size_t CHUNK_MAX_VERTS = 0;
         size_t vertLimit=7000;
 
+        float lodStep;
+
         void setupSSBOsAndTables();
         bool tryResolveChunkVertexCount(Chunk* chunk);
         void uploadVoxelChunk(const Chunk &chunk, const glm::vec3 *overrideColor);
@@ -40,7 +42,7 @@ namespace gl3 {
         bool tryResolveFluidVertexCount(Chunk* chunk);
 
     public:
-        int MAX_CHUNKS_GPU = 1850;
+        int MAX_CHUNKS_GPU = 2500;
 
         void generateChunkMesh(Chunk* chunk, int lodStep = 1);
         void requestChunkMesh(Chunk* chunk, int lod);

@@ -1344,7 +1344,7 @@ namespace gl3 {
                 for (int cz = minCZ; cz <= maxCZ; ++cz) {
                     ChunkCoord coord{cx, cy, cz};
                     Chunk* chunk = ctx.chunks->getOrCreateChunk(coord);
-                    if (!chunk) continue;
+                    if (!chunk||!chunk->voxelData) continue;
 
                     glm::vec3 chunkOrigin = ctx.getChunkMin(coord);
                     chunksToProcess.push_back({chunk, coord, chunkOrigin});
@@ -1798,7 +1798,9 @@ namespace gl3 {
                 for (int cz = minCZ; cz <= maxCZ; ++cz) {
                     ChunkCoord coord{cx, cy, cz};
                     Chunk* chunk = ctx.chunks->getOrCreateChunk(coord);
-                    if (!chunk) continue;
+                    if (!chunk || chunk->isCleared || !chunk->voxelData) {
+                        continue;
+                    }
 
                     glm::vec3 chunkOrigin = ctx.getChunkMin(coord);
                     bool chunkModified = false;

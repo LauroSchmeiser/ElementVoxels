@@ -91,6 +91,12 @@ namespace gl3 {
     void ChunkRenderer::requestChunkMesh(Chunk* chunk, int lod)
     {
         if (!chunk) return;
+        if (chunk->gpuSlot == FixedGridChunkManager::INVALID_GPU_SLOT) {
+            chunk->pendingLod = lod;
+            chunk->meshDirty = true;
+            return;
+        }
+
         int lodStep = lodToStep(lod);
         chunk->pendingLod = lod;
         generateChunkMesh(chunk, lodStep);
@@ -108,8 +114,8 @@ namespace gl3 {
         }
         if (chunk->gpuSlot == FixedGridChunkManager::INVALID_GPU_SLOT ||
             chunk->gpuSlot >= static_cast<uint32_t>(MAX_CHUNKS_GPU)) {
-            std::cout << "Invalid chunk GPU slot: " << chunk->gpuSlot
-                      << " (MAX=" << MAX_CHUNKS_GPU << ")\n";
+            chunk->meshDirty = true;
+            chunk->queuedForRebuild = false;
             return;
         }
 
@@ -160,7 +166,7 @@ namespace gl3 {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, globalChunkVertexBuffer);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, chunkIndirectBuffer);
 
-        int cellsPerAxis = (DIM - 1) / lodStep;
+        int cellsPerAxis = ((DIM - 1) + (lodStep - 1)) / lodStep;
         if (cellsPerAxis < 1) cellsPerAxis = 1;
         int groups = (cellsPerAxis + 7) / 8;
 
@@ -786,8 +792,8 @@ namespace gl3 {
         }
         if (chunk->gpuSlot == FixedGridChunkManager::INVALID_GPU_SLOT ||
             chunk->gpuSlot >= static_cast<uint32_t>(MAX_CHUNKS_GPU)) {
-            std::cout << "Invalid chunk GPU slot: " << chunk->gpuSlot
-                      << " (MAX=" << MAX_CHUNKS_GPU << ")\n";
+            chunk->meshDirty = true;
+            chunk->queuedForRebuild = false;
             return;
         }
 

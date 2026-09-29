@@ -59,8 +59,10 @@ namespace gl3 {
         int cz = static_cast<int>(std::floor(worldPos.z / chunkWorldSize));
 
         ChunkCoord coord{cx, cy, cz};
-        Chunk* chunk = chunkManager->getOrCreateChunk(coord);
-        if (!chunk) return -10000.0f;
+        Chunk* chunk = chunkManager->getChunk(coord);
+        if (!chunk || chunk->isCleared || !chunk->voxelData) {
+            return -1000.0f;
+        }
 
         glm::vec3 chunkMin(cx * chunkWorldSize, cy * chunkWorldSize, cz * chunkWorldSize);
         glm::vec3 local = (worldPos - chunkMin) / VOXEL_SIZE;
@@ -216,8 +218,10 @@ namespace gl3 {
         ly = glm::clamp(ly, 0, CHUNK_SIZE);
         lz = glm::clamp(lz, 0, CHUNK_SIZE);
 
-        Chunk* chunk = chunkManager->getOrCreateChunk(ChunkCoord{cx, cy, cz});
-        if (!chunk) return -10000.0f;
+        Chunk* chunk = chunkManager->getChunk(ChunkCoord{cx, cy, cz});
+        if (!chunk || chunk->isCleared || !chunk->voxelData) {
+            return -1000.0f;
+        }
 
         return chunk->voxels(lx,ly,lz).density;
     }
@@ -877,7 +881,9 @@ namespace gl3 {
 
             ChunkCoord coord{cx, cy, cz};
             Chunk* chunk = chunkManager->getOrCreateChunk (coord);
-            if (!chunk) return -1000.0f;
+            if (!chunk || chunk->isCleared || !chunk->voxelData) {
+                return -1000.0f;
+            }
 
             glm::vec3 chunkOrigin(
                     coord.x * chunkWorldSize,

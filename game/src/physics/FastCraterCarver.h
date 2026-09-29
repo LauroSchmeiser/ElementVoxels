@@ -65,7 +65,9 @@ namespace gl3 {
                         ChunkCoord cc{cx,cy,cz};
 
                         Chunk* chunk = mgr->getOrCreateChunk(cc);
-                        if (!chunk) continue;
+                        if (!chunk || chunk->isCleared || !chunk->voxelData) {
+                            continue;
+                        }
 
                         const glm::vec3 cmin = chunkMinWorld(cc);
                         const glm::vec3 cmax = cmin + glm::vec3(CHUNK_SIZE * VOXEL_SIZE);

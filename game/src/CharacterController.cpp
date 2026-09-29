@@ -89,8 +89,11 @@ namespace gl3 {
         int cz = static_cast<int>(std::floor(worldPos.z / chunkWorldSize));
 
         ChunkCoord coord{cx, cy, cz};
-        Chunk *chunk = chunkManager->getOrCreateChunk(coord);
-        if (!chunk) return -10000.0f;
+        Chunk* chunk = chunkManager->getChunk(coord);
+
+        if (!chunk || chunk->isCleared || !chunk->voxelData) {
+            return -1000.0f;
+        }
 
         glm::vec3 chunkMin = glm::vec3(coord.x * chunkWorldSize,
                                        coord.y * chunkWorldSize,
@@ -108,16 +111,11 @@ namespace gl3 {
 
         const Voxel& v = chunk->voxels(ix,iy,iz);
 
-        // Fluid no longer shares this field (see Voxel::fluidDensity), so the
-        // solid density is already fluid-free by construction here.
         if (v.type == 0) return -1000.0f; // air
         return v.density;
     }
 
-    // Trilinear sample of the FLUID SDF field - mirrors sampleDensityAtWorld
-    // below but reads Voxel::fluidDensity, which is completely independent of
-    // solid terrain. Used by isPointInFluid so fluid detection and solid
-    // collision agree on the exact same sampling scheme.
+
     static float sampleFluidDensityAtWorld(FixedGridChunkManager *chunkManager, const glm::vec3 &worldPos) {
         if (!chunkManager) return -1000.0f;
 
@@ -147,8 +145,10 @@ namespace gl3 {
             int cy = static_cast<int>(std::floor(cornerWorld.y / chunkWorldSize));
             int cz = static_cast<int>(std::floor(cornerWorld.z / chunkWorldSize));
             ChunkCoord coord{cx, cy, cz};
-            Chunk *chunk = chunkManager->getOrCreateChunk(coord);
-            if (!chunk) return -1000.0f;
+            Chunk *chunk = chunkManager->getChunk(coord);
+            if (!chunk || chunk->isCleared || !chunk->voxelData) {
+                return -1000.0f;
+            }
             glm::vec3 chunkOrigin = glm::vec3(coord.x * chunkWorldSize, coord.y * chunkWorldSize, coord.z * chunkWorldSize);
             glm::vec3 localCorner = (cornerWorld - chunkOrigin) / VOXEL_SIZE;
             int lx = glm::clamp((int)std::round(localCorner.x), 0, CHUNK_SIZE);

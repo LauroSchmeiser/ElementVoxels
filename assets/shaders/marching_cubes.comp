@@ -118,7 +118,7 @@ vec3 computeNormal(vec3 worldPos) {
 
 void main() {
     ivec3 cellCoord = ivec3(gl_GlobalInvocationID);
-    ivec3 cellsDim = (voxelGridDim - ivec3(1)) / uLodStep;
+    ivec3 cellsDim = (voxelGridDim - ivec3(1) + ivec3(uLodStep - 1)) / uLodStep;
     if (any(greaterThanEqual(cellCoord, cellsDim))) return;
 
     ivec3 cell = cellCoord * uLodStep;
