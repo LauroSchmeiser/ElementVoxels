@@ -399,7 +399,7 @@ namespace gl3 {
 
         //Lighting-Variables:
         const int MAX_LIGHTS = 4; // has to match marching cubes shader
-        const float LIGHT_RADIUS = chunkDist * 15;
+        const float LIGHT_RADIUS = chunkDist * 20;
         uint64_t frameCounter = 29; // Frame counter for light update staggering
         std::vector<const gl3::VoxelLight *> flatEmissiveLightList;
         robin_hood::unordered_map<ChunkCoord, std::vector<VoxelLight *>, ChunkCoordHash> lightSpatialHash;
@@ -441,7 +441,7 @@ namespace gl3 {
         // World-Variables:
         const int DIM = CHUNK_SIZE + 2; //Chunk Size with a bit off padding for marching cubes
         size_t voxelCount = DIM * DIM * DIM;
-        static constexpr int RenderingRange = 40;
+        static constexpr int RenderingRange = 20;
         static constexpr int chunkDist = VOXEL_SIZE * CHUNK_SIZE;
         float lodStep = RenderingRange / 4.0;
         float lodDistance1 = chunkDist * lodStep;
@@ -854,7 +854,7 @@ namespace gl3 {
         const char *lastHoveredButton = nullptr;
 
         const float nearPlane = 0.1f;
-        const float farPlane = 1500.0f;
+        const float farPlane = (RenderingRange-2)*CHUNK_SIZE*VOXEL_SIZE;
 
         SkillTreeUI skillTree;
         int selectedSkillPage = 0;

@@ -123,7 +123,6 @@ namespace gl3 {
             game->windowHeight = height;
             game->initPostFBO();
             game->initFluidFBO();
-            //game->initGasFBO();
             game->initCompositeFBO();
         }
     }
@@ -174,7 +173,6 @@ namespace gl3 {
         skyboxRuntimeShader = std::make_unique<Shader>("shaders/skybox.vert", "shaders/skybox_runtime.frag");
         voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel.frag");
         fluidShader = std::make_unique<Shader>("shaders/fluid_voxel.vert", "shaders/fluid_voxel.frag");
-        gasRayMarchShader = std::make_unique<Shader>("shaders/gas_ray_march.comp");
         marchingCubesShader = std::make_unique<Shader>("shaders/marching_cubes.comp");
         spellPreviewShader = std::make_unique<Shader>("shaders/spell_prev.vert", "shaders/spell_prev.frag");
         postShader = std::make_unique<Shader>("shaders/post_fullscreen.vert", "shaders/post_fog_glow.frag");
@@ -579,9 +577,34 @@ namespace gl3 {
                 {
                     if (!body) return;
                     if (body->material != 9) return;
-
-                    const float burnRadius = glm::max(body->radius * 1.5f, VOXEL_SIZE);
-                    applyMaterial9BurnAlongSegment(from, to, burnRadius);
+                    switch(sampleMaterialAtWorld(chunkManager.get(),body->position+(glm::normalize(body->velocity)*body->radius)))
+                    {
+                        case 2u:
+                            if (body->material == 9u)
+                                convertSolidWorldToMaterial(body->position, body->radius * 1.5f, 6u);
+                            else
+                                std::cout << "Sand";
+                            return;
+                        case 4u:
+                            if (body->material == 9u&& sampleTypeAtWorld(chunkManager.get(),body->position)==1u)
+                                convertSolidWorldToType(body->position, body->radius * 1.5f, 3u);
+                            return;
+                        case 5u:
+                            if (body->material == 9u&& sampleTypeAtWorld(chunkManager.get(),body->position)==1u)
+                                convertSolidWorldToType(body->position, body->radius * 1.5f, 3u);
+                            else if(body->material == 9u)
+                                convertSolidWorldToType(body->position, body->radius * 1.0f, 0u);
+                            body->material=0u;
+                            return;
+                        case 7u:
+                        case 9u:
+                            if (body->material == 9u&& sampleTypeAtWorld(chunkManager.get(),body->position)==1u)
+                                convertSolidWorldToType(body->position, body->radius * 1.5f, 3u);
+                            return;
+                        default:
+                            const float burnRadius = glm::max(body->radius * 1.5f, VOXEL_SIZE);
+                            applyMaterial9BurnAlongSegment(from, to, burnRadius);
+                    }
                 }
         );
 
@@ -843,7 +866,6 @@ namespace gl3 {
                 preloadStageName = "Preparing Post-processing...";
                 initPostFBO();
                 initFluidFBO();
-                //initGasFBO();
                 initCompositeFBO();
                 initPostProcessBuffers();
                 preloadStage = PreloadStage::Boot_SSBOs;
@@ -2097,154 +2119,6 @@ namespace gl3 {
         return count;
     }
 
-    //optimized version if we can remove voxels from previous iterations?
-    void Game::findNearbyVoxelsForVisualNew(const glm::vec3& center, float radius,
-                                         uint64_t targetMaterial,
-                                         std::vector<AnimatedVoxel>& results,
-                                         float strength,
-                                         uint8_t& outDominantType) {
-        TRACY_CPU_ZONE("Game::findNearbyVoxelsForVisualNew");
-        const float radiusSq = radius * radius;
-
-        float voxelVolume = VOXEL_SIZE * VOXEL_SIZE * VOXEL_SIZE;
-        int maxVoxels = static_cast<int>((glm::pow(strength,4)) / voxelVolume);
-        maxVoxels = glm::clamp(maxVoxels, 3, 100);
-
-        // const size_t hardCandidateCap = (size_t)maxVoxels * 4;
-
-        bool stop = false;
-        const float stepSize = radius/(strength * strength);
-
-        std::cout << "[Spell] Targeting " << maxVoxels  << " voxels for formation\n";
-
-        int typeCounts[8] = {0};
-
-        struct VoxelCandidate {
-            glm::vec3 worldPos;
-            glm::vec3 color;
-            ChunkCoord chunkCoord;
-            glm::ivec3 localPos;
-            float distanceSq;
-            Chunk* chunk;
-            uint8_t type;
-        };
-
-        std::vector<VoxelCandidate> candidates;
-        candidates.reserve(maxVoxels);
-
-        for (int i = 0; i <= glm::ceil(radius/stepSize)&&!stop; ++i) {
-            auto chunks = chunkManager->getChunksInRadius(center, i*stepSize);
-            for (const auto& [coord, chunk] : chunks) {
-                if (stop||!chunk || !hasSolidVoxels(*chunk)) continue;
-
-                glm::vec3 chunkMin = getChunkMin(coord);
-                glm::vec3 chunkCenter = chunkMin + glm::vec3(CHUNK_SIZE * 0.5f) * VOXEL_SIZE;
-
-                float distToChunkCenter = glm::distance(chunkCenter, center);
-                float maxChunkDist = std::sqrt(3.0f) * (CHUNK_SIZE * VOXEL_SIZE * 0.5f);
-                if (distToChunkCenter > radius + maxChunkDist) continue;
-
-                int startX = std::max(0, static_cast<int>((center.x - radius - chunkMin.x) / VOXEL_SIZE));
-                int endX = std::min(CHUNK_SIZE, static_cast<int>((center.x + radius - chunkMin.x) / VOXEL_SIZE) + 1);
-                int startY = std::max(0, static_cast<int>((center.y - radius - chunkMin.y) / VOXEL_SIZE));
-                int endY = std::min(CHUNK_SIZE, static_cast<int>((center.y + radius - chunkMin.y) / VOXEL_SIZE) + 1);
-                int startZ = std::max(0, static_cast<int>((center.z - radius - chunkMin.z) / VOXEL_SIZE));
-                int endZ = std::min(CHUNK_SIZE, static_cast<int>((center.z + radius - chunkMin.z) / VOXEL_SIZE) + 1);
-
-                for (int x = startX; x <= endX&&!stop; ++x) {
-                    for (int y = startY; y <= endY&&!stop; ++y) {
-                        for (int z = startZ; z <= endZ&&!stop; ++z) {
-                            if(candidates.size()>=maxVoxels)
-                            {
-                                stop=true;
-                                continue;
-                            }
-                            const Voxel& voxel = chunk->voxels(x,y,z);
-
-                            if (voxel.isSolid() && voxel.material == targetMaterial) {
-                                glm::vec3 worldPos = chunkMin + glm::vec3((float)x, (float)y, (float)z) * VOXEL_SIZE;
-                                glm::vec3 diff = worldPos - center;
-                                float distSq = glm::dot(diff, diff);
-
-                                if (distSq <= radiusSq) {
-                                    glm::vec3 normal = calculateNormalAt(chunk, {x, y, z});
-
-                                    candidates.push_back({
-                                                                 worldPos,
-                                                                 voxel.color,
-                                                                 coord,
-                                                                 {x, y, z},
-                                                                 distSq,
-                                                                 chunk,
-                                                                 voxel.type
-                                                         });
-
-                                    if (voxel.type < 8) typeCounts[voxel.type]++;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-        }
-        /*memset(typeCounts, 0, sizeof(typeCounts));
-        for (const auto& candidate : candidates) {
-            if (candidate.type < 8) typeCounts[candidate.type]++;
-        }*/
-
-        int maxCount = 0;
-        uint8_t dominantType = 1;
-        for (int i = 0; i < 8; ++i) {
-            if (typeCounts[i] > maxCount) {
-                maxCount = typeCounts[i];
-                dominantType = static_cast<uint8_t>(i);
-            }
-        }
-        outDominantType = dominantType;
-
-        results.reserve(candidates.size());
-
-        std::vector<CraterStampBatch::Stamp> stamps;
-        stamps.reserve(candidates.size());
-
-        robin_hood::unordered_set<ChunkCoord, ChunkCoordHash> touchedChunks;
-        touchedChunks.reserve(candidates.size() / 4 + 8);
-
-        for (const auto& candidate : candidates) {
-            AnimatedVoxel animVoxel;
-
-            animVoxel.currentPos = candidate.worldPos;
-            animVoxel.originalVoxelPos = candidate.worldPos;
-            animVoxel.isAnimating = true;
-            animVoxel.animationSpeed = 1000/strength;
-            animVoxel.hasArrived = false;
-
-            animVoxel.color = candidate.color;
-
-            animVoxel.normal = calculateNormalAt(candidate.chunk, candidate.localPos);
-
-            results.push_back(animVoxel);
-
-            CraterStampBatch::Stamp s;
-            s.center = candidate.worldPos;
-            s.radius = 2.0f * gl3::VOXEL_SIZE;
-            s.depth  = 5.5f;
-            stamps.push_back(s);
-
-            touchedChunks.insert(candidate.chunkCoord);
-        }
-
-        CraterStampBatch::apply(chunkManager.get(), stamps, /*densityThreshold=*/-0.5f);
-
-        for (const ChunkCoord& c : touchedChunks) {
-            markChunkModified(c);
-        }
-
-        std::cout << "[Spell] Collected " << results.size() << "/" << maxVoxels
-                  << " closest voxels (type=" << (int)dominantType << ")\n";
-    }
-
     void Game::updateChunkBurns(float dt)
     {
         TRACY_CPU_ZONE("Game::updateChunkBurns");
@@ -2787,7 +2661,7 @@ namespace gl3 {
         float worldMax = chunkManager->radius() * chunkWorld;
 
         std::uniform_real_distribution<float> distPos(-worldMax * 0.9f, worldMax * 0.9f);
-        std::uniform_real_distribution<float> distScale(2.5f, 5.0f);
+        std::uniform_real_distribution<float> distScale(0.75f, 1.5f*VOXEL_SIZE);
         std::uniform_real_distribution<float> distColor(0.3f, 1.0f);
         std::uniform_real_distribution<float> distMat(0.0f, 100.9f);
 
@@ -2809,7 +2683,7 @@ namespace gl3 {
 
         WorldPlanet p;
         p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
-        p.radius = distScale(rng) * CHUNK_SIZE;
+        p.radius = distScale(rng) * CHUNK_SIZE * VOXEL_SIZE;
         p.color = glm::vec3(distColor(rng), distColor(rng), distColor(rng));
         p.type = 1; // solid
         p.material= 0;
@@ -2832,7 +2706,7 @@ namespace gl3 {
         for (int i = 0; i < planetCount; ++i) {
             WorldPlanet p;
             p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
-            p.radius = distScale(rng) * CHUNK_SIZE;
+            p.radius = distScale(rng) * CHUNK_SIZE ;
             p.color = glm::vec3(distColor(rng), distColor(rng), distColor(rng));
             p.type = 1; // solid
             p.material=decideMaterial((int)distMat(rng));
@@ -2854,7 +2728,7 @@ namespace gl3 {
         for (int i = 0; i < waterCount; ++i) {
             WorldPlanet p;
             p.worldPos = glm::vec3(distPos(rng), distPos(rng), distPos(rng));
-            p.radius = distScale(rng) * CHUNK_SIZE;
+            p.radius = distScale(rng) * CHUNK_SIZE ;
             p.color = glm::vec3(distColor(rng), distColor(rng), distColor(rng));
             //p.color = glm::vec3(waterDistColorR(rng), waterDistColorG(rng), waterDistColorB(rng));
             p.type = 3;
@@ -2887,14 +2761,14 @@ namespace gl3 {
         std::uniform_real_distribution<float> lavaDistColorR(0.7f, 1.0f);
         std::uniform_real_distribution<float> lavaDistColorG(0.3f, 0.6f);
         std::uniform_real_distribution<float> lavaDistColorB(0.0f, 0.1f);
-        std::uniform_real_distribution<float> sunScale(7.5f, 10.0f);
+        std::uniform_real_distribution<float> sunScale(3.0f, 5.25f);
 
 
-        int lavaCount = 3*(WORLD_RADIUS_CHUNKS/10);
+        int lavaCount = 2*(WORLD_RADIUS_CHUNKS/10);
         for (int i = 0; i < lavaCount; ++i) {
             WorldPlanet p;
             p.worldPos = glm::vec3(distPos(rng),distPos(rng),distPos(rng));
-            p.radius = distScale(rng) * CHUNK_SIZE;
+            p.radius = sunScale(rng) * CHUNK_SIZE ;
             p.color = glm::vec3(lavaDistColorR(rng), lavaDistColorG(rng), lavaDistColorB(rng));
             p.type = 2; // fire
             p.material = 9; // fire
@@ -3459,15 +3333,14 @@ void Game::update() {
     }*/
     updateAdaptiveChunkBudget(deltaTime);
 
-    if(frameCounter%261==0)
-    {
+    if (frameCounter % 261 == 0) {
         TRACY_CPU_ZONE("Game::uploadLightsToGPU()");
         chunkRenderer->uploadMergedLightsToGPU();
     }
     if (frameCounter % 247 == 0) {
         TRACY_CPU_ZONE("Game::refreshMergedLights");
 
-        chunkManager->forEachChunk([&](gl3::Chunk* chunk) {
+        chunkManager->forEachChunk([&](gl3::Chunk *chunk) {
             if (!chunk) return;
             if (!chunk->lightingDirty) return;
 
@@ -3476,6 +3349,14 @@ void Game::update() {
         });
 
         chunkRenderer->updateLightSpatialHash();
+    }
+
+    if (frameCounter % 211 == 0) {
+        TRACY_CPU_ZONE("Game::purgeDirtyQueue");
+        chunkManager->purgeStaleDirtyChunks([&](const ChunkCoord &coord) {
+            return shouldKeepChunkResident(coord.x, coord.y, coord.z, getCameraFront(),
+                                           RenderingRange + 2 /* padding */);
+        });
     }
 
     if (emissiveBillboardsDirty) {
@@ -3512,7 +3393,7 @@ void Game::update() {
         const glm::mat4 pv = projection * view;
 
         chunkManager->rebuildDirtyChunks(
-                [this](Chunk* chunk) {
+                [this](Chunk *chunk) {
                     float dist = glm::distance(
                             chunkManager->getChunkMin(chunk->coord) + glm::vec3(CHUNK_SIZE * VOXEL_SIZE * 0.5f),
                             cameraPos
@@ -3534,228 +3415,218 @@ void Game::update() {
     }
 
 // per-chunk light index buffer
-if(frameCounter % 311 == 0)
-{
-    TRACY_CPU_ZONE("renderChunks::buildAndUploadChunkLightIndexBuffer");
-    const int camCX = worldToChunk(cameraPos.x);
-    const int camCY = worldToChunk(cameraPos.y);
-    const int camCZ = worldToChunk(cameraPos.z);
-    const int renderRadius = RenderingRange;
-    chunkRenderer->buildAndUploadChunkLightIndexBuffer(camCX, camCY, camCZ, renderRadius);
-}
+    if (frameCounter % 311 == 0) {
+        TRACY_CPU_ZONE("renderChunks::buildAndUploadChunkLightIndexBuffer");
+        const int camCX = worldToChunk(cameraPos.x);
+        const int camCY = worldToChunk(cameraPos.y);
+        const int camCZ = worldToChunk(cameraPos.z);
+        const int renderRadius = RenderingRange;
+        chunkRenderer->buildAndUploadChunkLightIndexBuffer(camCX, camCY, camCZ, renderRadius);
+    }
 
-if(getPlayerHealth()<=0)
-{
-    requestSceneChange(SceneId::MainMenu);
-    SoLoud::handle musicHandle = g_SoundManager.playMusic(SoundID::MainMenuTheme, true, 1.0f);
-}
-{
-    glm::vec3 dir = characterController->getPosition();
-    float dist = glm::sqrt(dir.x*dir.x+dir.y*dir.y+dir.z*dir.z);
-    if(dist>VOXEL_SIZE*CHUNK_SIZE*WORLD_RADIUS_CHUNKS*2.0f)
+    if (getPlayerHealth() <= 0) {
+        requestSceneChange(SceneId::MainMenu);
+        SoLoud::handle musicHandle = g_SoundManager.playMusic(SoundID::MainMenuTheme, true, 1.0f);
+    }
     {
-        g_SoundManager.playSound(SoundID::Suffocate);
-        registerPlayerDamage({
-                                     2.25f*deltaTime,
-                                     dir,
-                                     (float)glfwGetTime(),
-                                     5.5f
-                             });
-    }
-
-    TRACY_CPU_ZONE("SunBurns()");
-    chunkManager->forEachEmissiveChunk([this](Chunk *chunk) {
-        VoxelLight best{
-                glm::vec3(0, 0, 0),
-                1.0f,
-                glm::vec3(0, 0, 0),
-                0
-        };
-    for (auto &light: chunk->emissiveLights) {
-        if(light.intensity>best.intensity)
-        {
-            best=light;
-        }
-    }
-    float bestGravity=0;
-    for (auto &light: chunk->emissiveLights) {
-        glm::vec3 dist=(cameraPos-light.pos);
-        float distsq = glm::sqrt(dist.x*dist.x+ dist.y*dist.y+ dist.z*dist.z);
-        if(distsq<std::sqrt(light.intensity) * 0.15f)
-        {
+        glm::vec3 dir = characterController->getPosition();
+        float dist = glm::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+        if (dist > VOXEL_SIZE * CHUNK_SIZE * WORLD_RADIUS_CHUNKS * 2.0f) {
+            g_SoundManager.playSound(SoundID::Suffocate);
             registerPlayerDamage({
-                                         deltaTime*0.25f*distsq*(glm::sqrt(light.intensity*0.00001f)),
-                                         dist,
-                                         (float)glfwGetTime(),
+                                         2.25f * deltaTime,
+                                         dir,
+                                         (float) glfwGetTime(),
                                          5.5f
                                  });
-            g_SoundManager.playSound(SoundID::Fire);
         }
-        float gravity = glm::pow(light.intensity,2.0f)/distsq;
-        if(gravity>bestGravity&&!characterController->isSurfaceAdhered())
-        {
-            bestGravity=gravity;
-            best=light;
-            characterController->setGravityIntensity(gravity);
-        }
-    }
-        if(best.pos!=characterController->settings.lastGravPoint&&!characterController->isSurfaceAdhered())
-        {
-            characterController->settings.lastGravPoint=best.pos;
-            glm::vec3 gravDir = glm::normalize(best.pos - cameraPos);
-            characterController->setGravityDirection(gravDir);
-        }
-});
-    for(auto &spell: spellSystem->spells())
-    {
-        if(spell.physicsBody&&spell.physicsBody->material==9) {
-            glm::vec3 dist = (cameraPos - spell.physicsBody->position);
-            float distsq = glm::sqrt(dist.x * dist.x + dist.y * dist.y + dist.z * dist.z);
-            if (distsq < (spell.radius*1.5f)) {
-                registerPlayerDamage({
-                                             deltaTime*0.25f * distsq*(glm::sqrt(spell.physicsBody->radius*0.01f)),
-                                             dist,
-                                             (float)glfwGetTime(),
-                                             5.5f
-                                     });
+
+        TRACY_CPU_ZONE("SunBurns()");
+        chunkManager->forEachEmissiveChunk([this](Chunk *chunk) {
+            VoxelLight best{
+                    glm::vec3(0, 0, 0),
+                    1.0f,
+                    glm::vec3(0, 0, 0),
+                    0
+            };
+            for (auto &light: chunk->emissiveLights) {
+                if (light.intensity > best.intensity) {
+                    best = light;
+                }
+            }
+            float bestGravity = 0;
+            for (auto &light: chunk->emissiveLights) {
+                glm::vec3 dist = (cameraPos - light.pos);
+                float distsq = glm::sqrt(dist.x * dist.x + dist.y * dist.y + dist.z * dist.z);
+                if (distsq < std::sqrt(light.intensity) * 0.15f) {
+                    registerPlayerDamage({
+                                                 deltaTime * 0.25f * distsq * (glm::sqrt(light.intensity * 0.00001f)),
+                                                 dist,
+                                                 (float) glfwGetTime(),
+                                                 5.5f
+                                         });
+                    g_SoundManager.playSound(SoundID::Fire);
+                }
+                float gravity = glm::pow(light.intensity, 2.0f) / distsq;
+                if (gravity > bestGravity && !characterController->isSurfaceAdhered()) {
+                    bestGravity = gravity;
+                    best = light;
+                    characterController->setGravityIntensity(gravity);
+                }
+            }
+            if (best.pos != characterController->settings.lastGravPoint && !characterController->isSurfaceAdhered()) {
+                characterController->settings.lastGravPoint = best.pos;
+                glm::vec3 gravDir = glm::normalize(best.pos - cameraPos);
+                characterController->setGravityDirection(gravDir);
+            }
+        });
+        for (auto &spell: spellSystem->spells()) {
+            if (spell.physicsBody && spell.physicsBody->material == 9) {
+                glm::vec3 dist = (cameraPos - spell.physicsBody->position);
+                float distsq = glm::sqrt(dist.x * dist.x + dist.y * dist.y + dist.z * dist.z);
+                if (distsq < (spell.radius * 1.5f)) {
+                    registerPlayerDamage({
+                                                 deltaTime * 0.25f * distsq *
+                                                 (glm::sqrt(spell.physicsBody->radius * 0.01f)),
+                                                 dist,
+                                                 (float) glfwGetTime(),
+                                                 5.5f
+                                         });
+                }
             }
         }
     }
-}
 
-input.update(window);
-actions.update(input);
+    input.update(window);
+    actions.update(input);
 
 // Now use clean, readable input checks
-if (actions["Escape"].wasJustPressed) {
-   // glfwSetWindowShouldClose(window, true);
-}
-
-if (actions["ToggleDebug"].wasJustPressed) {
-    DebugMode1 = !DebugMode1;
-    activeSpellMat=0;
-    std::cout << "Debug mode: " << (DebugMode1 ? "ON" : "OFF") << "\n";
-
-    // Optional: Update shaders like before
-    if (DebugMode1) {
-        voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel_debug.frag");
-        activeDebugMode = 0;
-    } else {
-        DebugMode2=false;
-        voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel.frag");
+    if (actions["Escape"].wasJustPressed) {
+        // glfwSetWindowShouldClose(window, true);
     }
-}
 
-if (actions["DebugMode1"].wasJustPressed&&DebugMode1) {
-    activeDebugMode = 1;
-} else if(actions["DebugMode1"].wasJustPressed)
-{
-    activeSpellMat=1;
-}
-if (actions["DebugMode2"].wasJustPressed&&DebugMode1) {
-    activeDebugMode = 2;
-} else if (actions["DebugMode2"].wasJustPressed) {
-    activeSpellMat = 2;
-}
-if (actions["DebugMode3"].wasJustPressed&&DebugMode1) {
-    activeDebugMode = 3;
-} else  if (actions["DebugMode3"].wasJustPressed) {
-    activeSpellMat = 3;
-}
-if (actions["DebugMode4"].wasJustPressed&&DebugMode1) {
-    activeDebugMode = 4;
-}
-else if (actions["DebugMode4"].wasJustPressed) {
-    activeSpellMat = 4;
-}
-if (actions["DebugMode5"].wasJustPressed&&DebugMode1) {
-    activeDebugMode = 5;
-} else  if (actions["DebugMode5"].wasJustPressed) {
-    activeSpellMat = 5;
-}
-if (actions["DebugMode6"].wasJustPressed&&DebugMode1) {
-    activeDebugMode = 6;
-} else if (actions["DebugMode6"].wasJustPressed) {
-    activeSpellMat = 9;
-}
-if (actions["Wireframe"].wasJustPressed&&DebugMode1) {
-    DebugMode2=!DebugMode2;
-}
+    if (actions["ToggleDebug"].wasJustPressed) {
+        DebugMode1 = !DebugMode1;
+        activeSpellMat = 0;
+        std::cout << "Debug mode: " << (DebugMode1 ? "ON" : "OFF") << "\n";
 
-if (actions["CastSphere"].wasJustReleased) {
-    std::cout << "Sphere Spell Triggered\n";
-    RayCastResult hit = rayCastFromCamera(5.0f);
-    glm::vec3 spellCenter = hit.hit ? hit.hitPosition :
-                            (cameraPos + getCameraFront() * 35.0f);
-
-    // Cast spell with physics enabled
-    float spellRadius = 2.0f * VOXEL_SIZE;  // Adjust size
-    float spellStrength = 3.0f;              // Affects velocity
-
-    if (spellSystem)
-        spellSystem->castSphere(spellCenter, spellRadius, activeSpellMat, spellStrength, getCameraFront(), VOXEL_SIZE*CHUNK_SIZE*3, makeVoxelTypeMask({1}));
-}
-
-
-if (actions["Teleport"].wasJustReleased&&skillTree.GetPage(3).skills[6].level>0) {
-    RayCastResult hit = rayCastFromCamera(1000.0f);
-    if(hit.hit&& hit.voxelMat==6u)
-    {
-        std::cout << "Teleport Triggered\n";
-        characterController->setPosition(hit.hitPosition);
+        // Optional: Update shaders like before
+        if (DebugMode1) {
+            voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel_debug.frag");
+            activeDebugMode = 0;
+        } else {
+            DebugMode2 = false;
+            voxelShader = std::make_unique<Shader>("shaders/voxel.vert", "shaders/voxel.frag");
+        }
     }
-}
 
-if (actions["Pull"].wasJustReleased&&skillTree.GetPage(3).skills[0].level>0) {
-    RayCastResult hit = rayCastFromCamera(500.0f);
-    if(hit.hit)
-    {
-        bool isBody = false;
-        uint64_t bodyID;
-        for(auto& body : voxelPhysics->getBodies())
-        {
-            glm::vec3 dir = hit.hitPosition-body->position;
-            float dist = glm::sqrt(dir.x*dir.x+dir.y*dir.y+dir.z*dir.z);
-            if(dist <= 0.5f)
-            {
-                isBody = true;
-                bodyID = body->id;
-                break;
+    if (actions["DebugMode1"].wasJustPressed && DebugMode1) {
+        activeDebugMode = 1;
+    } else if (actions["DebugMode1"].wasJustPressed) {
+        activeSpellMat = 1;
+    }
+    if (actions["DebugMode2"].wasJustPressed && DebugMode1) {
+        activeDebugMode = 2;
+    } else if (actions["DebugMode2"].wasJustPressed) {
+        activeSpellMat = 2;
+    }
+    if (actions["DebugMode3"].wasJustPressed && DebugMode1) {
+        activeDebugMode = 3;
+    } else if (actions["DebugMode3"].wasJustPressed) {
+        activeSpellMat = 3;
+    }
+    if (actions["DebugMode4"].wasJustPressed && DebugMode1) {
+        activeDebugMode = 4;
+    } else if (actions["DebugMode4"].wasJustPressed) {
+        activeSpellMat = 4;
+    }
+    if (actions["DebugMode5"].wasJustPressed && DebugMode1) {
+        activeDebugMode = 5;
+    } else if (actions["DebugMode5"].wasJustPressed) {
+        activeSpellMat = 5;
+    }
+    if (actions["DebugMode6"].wasJustPressed && DebugMode1) {
+        activeDebugMode = 6;
+    } else if (actions["DebugMode6"].wasJustPressed) {
+        activeSpellMat = 9;
+    }
+    if (actions["Wireframe"].wasJustPressed && DebugMode1) {
+        DebugMode2 = !DebugMode2;
+    }
+
+    if (actions["CastSphere"].wasJustReleased) {
+        std::cout << "Sphere Spell Triggered\n";
+        RayCastResult hit = rayCastFromCamera(5.0f);
+        glm::vec3 spellCenter = hit.hit ? hit.hitPosition :
+                                (cameraPos + getCameraFront() * 35.0f);
+
+        // Cast spell with physics enabled
+        float spellRadius = 2.0f * VOXEL_SIZE;  // Adjust size
+        float spellStrength = 3.0f;              // Affects velocity
+
+        if (spellSystem)
+            spellSystem->castSphere(spellCenter, spellRadius, activeSpellMat, spellStrength, getCameraFront(),
+                                    VOXEL_SIZE * CHUNK_SIZE * 3, makeVoxelTypeMask({1}));
+    }
+
+
+    if (actions["Teleport"].wasJustReleased && skillTree.GetPage(3).skills[6].level > 0) {
+        RayCastResult hit = rayCastFromCamera(1000.0f);
+        if (hit.hit && hit.voxelMat == 6u) {
+            std::cout << "Teleport Triggered\n";
+            characterController->setPosition(hit.hitPosition);
+        }
+    }
+
+    if (actions["Pull"].wasJustReleased && skillTree.GetPage(3).skills[0].level > 0) {
+        RayCastResult hit = rayCastFromCamera(500.0f);
+        if (hit.hit) {
+            bool isBody = false;
+            uint64_t bodyID;
+            for (auto &body: voxelPhysics->getBodies()) {
+                glm::vec3 dir = hit.hitPosition - body->position;
+                float dist = glm::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+                if (dist <= 0.5f) {
+                    isBody = true;
+                    bodyID = body->id;
+                    break;
+                }
             }
+            if (isBody) {
+                voxelPhysics->getBodyById(bodyID)->position += glm::normalize(
+                        characterController->getPosition() - voxelPhysics->getBodyById(bodyID)->position) *
+                                                               glm::vec3(3.0f);
+            } else {
+                characterController->setPosition(glm::normalize(characterController->getPosition() - hit.hitPosition));
+            }
+
+            std::cout << "Pull Triggered\n";
         }
-        if(isBody)
-        {
-            voxelPhysics->getBodyById(bodyID)->position += glm::normalize(characterController->getPosition()-voxelPhysics->getBodyById(bodyID)->position)*glm::vec3(3.0f);
-        } else
-        {
-            characterController->setPosition(glm::normalize(characterController->getPosition()-hit.hitPosition));
-        }
-
-        std::cout << "Pull Triggered\n";
-    }
-}
-
-if(actions["ConvertToFluid"].wasJustReleased&&skillTree.GetPage(1).skills[1].level>0) {
-    convertSolidWorldToType(characterController->getPosition(), 60.0f, 3);
-}
-if(actions["ExpandFluid"].wasJustReleased&&characterController->getState().isInFluid&&skillTree.GetPage(1).skills[4].level>0) {
-    convertEmptyWorldToMaterial(characterController->getPosition(),90.0f, sampleMaterialAtWorld(chunkManager.get(),characterController->getPosition()));
-    convertEmptyWorldToType(characterController->getPosition(), 90.0f, 3);
-}
-if (actions["CastFleshSphere"].wasJustReleased) {
-    std::cout << "Flesh Sphere Spell Triggered\n";
-    RayCastResult hit = rayCastFromCamera(5.0f);
-    glm::vec3 spellCenter = hit.hit ? hit.hitPosition :
-            (cameraPos + getCameraFront() * 35.0f);
-
-    // Cast spell with physics enabled
-    float spellRadius = 2.0f * VOXEL_SIZE;  // Adjust size
-    float spellStrength = 3.0f;              // Affects velocity
-
-    if (spellSystem)
-        spellSystem->castSphere(spellCenter, spellRadius, 7, spellStrength, getCameraFront(), VOXEL_SIZE*CHUNK_SIZE*3, makeVoxelTypeMask({1}));
     }
 
+    if (actions["ConvertToFluid"].wasJustReleased && skillTree.GetPage(1).skills[1].level > 0) {
+        convertSolidWorldToType(characterController->getPosition(), 60.0f, 3);
+    }
+    if (actions["ExpandFluid"].wasJustReleased && characterController->getState().isInFluid &&
+        skillTree.GetPage(1).skills[4].level > 0) {
+        convertEmptyWorldToMaterial(characterController->getPosition(), 90.0f,
+                                    sampleMaterialAtWorld(chunkManager.get(), characterController->getPosition()));
+        convertEmptyWorldToType(characterController->getPosition(), 90.0f, 3);
+    }
+    if (actions["CastFleshSphere"].wasJustReleased) {
+        std::cout << "Flesh Sphere Spell Triggered\n";
+        RayCastResult hit = rayCastFromCamera(5.0f);
+        glm::vec3 spellCenter = hit.hit ? hit.hitPosition :
+                                (cameraPos + getCameraFront() * 35.0f);
+
+        // Cast spell with physics enabled
+        float spellRadius = 2.0f * VOXEL_SIZE;  // Adjust size
+        float spellStrength = 3.0f;              // Affects velocity
+
+        if (spellSystem)
+            spellSystem->castSphere(spellCenter, spellRadius, 7, spellStrength, getCameraFront(),
+                                    VOXEL_SIZE * CHUNK_SIZE * 3, makeVoxelTypeMask({1}));
+    }
     if (actions["CastFireSphere"].wasJustReleased) {
         std::cout << "Fire Sphere Spell Triggered\n";
         RayCastResult hit = rayCastFromCamera(5.0f);
@@ -3763,11 +3634,11 @@ if (actions["CastFleshSphere"].wasJustReleased) {
                                 (cameraPos + getCameraFront() * 35.0f);
 
         // Cast spell with physics enabled
-        float spellRadius = 2.0f * VOXEL_SIZE;  // Adjust size
+        float spellRadius = 5.0f * VOXEL_SIZE;  // Adjust size
         float spellStrength = 1.0f;              // Affects velocity
 
         if (spellSystem)
-            spellSystem->castSphere(spellCenter, spellRadius, 9, spellStrength, getCameraFront(), VOXEL_SIZE*CHUNK_SIZE*50,  makeVoxelTypeMask({1}));
+            spellSystem->castSphere(spellCenter, spellRadius, 9u, spellStrength, getCameraFront(), VOXEL_SIZE*CHUNK_SIZE*3,  makeVoxelTypeMask({2u}));
     }
 
 if (actions["CastWall"].wasJustReleased) {
@@ -3858,10 +3729,10 @@ burn01(1.0f,5.0f);
         int step = 0;
         if (headroomMs > 0.0f) {
             // We have headroom: climb slowly to avoid re-triggering a stall
-            step = (int)(headroomMs * 3.0f) + 1;
+            step = (int)(headroomMs * 1.0f) + 1;
         } else {
             // We're over budget: back off faster
-            step = (int)(headroomMs * 5.0f); // headroomMs is negative here, so step is negative
+            step = (int)(headroomMs * 3.0f); // headroomMs is negative here, so step is negative
         }
 
         currentMaxCalcPerFrame += step;
@@ -3908,31 +3779,27 @@ glm::vec3 Game::getCameraFront() const {
             float renderRadius) const
     {
         constexpr float chunkWorldSize = CHUNK_SIZE * VOXEL_SIZE;
-        float chunkRadius =
-                0.5f * glm::sqrt(3.0f) * chunkWorldSize; // bounding-sphere radius
+        const float chunkRadius = 0.5f * glm::sqrt(3.0f) * chunkWorldSize;
 
-        const glm::vec3 chunkCenter =
+        const glm::vec3 center =
                 (glm::vec3((float)cx, (float)cy, (float)cz) + glm::vec3(0.5f))
                 * chunkWorldSize;
 
-        const glm::vec3 toChunk = chunkCenter - cameraPos;
-        const float distance = glm::length(toChunk);
+        const glm::vec3 toCenter = center - cameraPos;
+        const float dist = glm::length(toCenter);
 
-        // Always retain nearby chunks: they can enter view immediately when turning.
-        const float alwaysKeepDistance = 2.0f * chunkWorldSize;
-        if (distance <= alwaysKeepDistance + chunkRadius) {
-            return true;
-        }
+        if (dist < 0.0001f) return true;
 
-        const glm::vec3 direction = toChunk / distance;
+        // Use the chunk sphere, not just the center
+        const glm::vec3 dir = toCenter / dist;
+
+        // Expand the cone slightly by angular size of the sphere
+        const float angularMargin = glm::clamp(chunkRadius / dist, 0.0f, 0.5f);
 
         constexpr float halfConeDegrees = 55.0f;
         const float minDot = glm::cos(glm::radians(halfConeDegrees));
 
-        const float sphereAngularMargin =
-                glm::clamp(chunkRadius / distance, 0.0f, 0.5f);
-
-        return glm::dot(cameraFront, direction) >= (minDot - sphereAngularMargin);
+        return glm::dot(cameraFront, dir) >= (minDot - angularMargin);
     }
 
 ////----Rendering Code--------------------------------------------------------------------------------------------------------------------------
@@ -4019,9 +3886,6 @@ glDepthMask(depthMask);
             TRACY_CPU_ZONE("renderChunks::cleanupDistantSlots");
             chunkManager->cleanupDistantChunks(cameraPos, cameraForward, RenderingRange);
             const glm::vec3 camFront = glm::normalize(getCameraFront());
-            chunkManager->purgeStaleDirtyChunks([&](const ChunkCoord& coord) {
-                return shouldKeepChunkResident(coord.x, coord.y, coord.z, camFront, RenderingRange + 2 /* padding */);
-            });
             updateChunkLODs();
         }
 
@@ -6980,52 +6844,6 @@ glDepthMask(depthMask);
 
         if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
             std::cerr << "fluidFBO incomplete!\n";
-        }
-
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    }
-
-    void Game::initGasFBO() {
-        if (gasFBO) {
-            glDeleteFramebuffers(1, &gasFBO);
-            glDeleteTextures(1, &gasColorTex);
-            glDeleteTextures(1, &gasDepthTex);
-            glDeleteTextures(1, &gasDensityTex);
-            gasFBO = gasColorTex = gasDepthTex = gasDensityTex = 0;
-        }
-
-        glGenFramebuffers(1, &gasFBO);
-        glBindFramebuffer(GL_FRAMEBUFFER, gasFBO);
-
-        // Color texture (gas color)
-        glGenTextures(1, &gasColorTex);
-        glBindTexture(GL_TEXTURE_2D, gasColorTex);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, windowWidth, windowHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, gasColorTex, 0);
-
-        // Density texture (for thickness)
-        glGenTextures(1, &gasDensityTex);
-        glBindTexture(GL_TEXTURE_2D, gasDensityTex);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, windowWidth, windowHeight, 0, GL_RED, GL_FLOAT, nullptr);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, gasDensityTex, 0);
-
-        // Depth texture
-        glGenTextures(1, &gasDepthTex);
-        glBindTexture(GL_TEXTURE_2D, gasDepthTex);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, windowWidth, windowHeight, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, gasDepthTex, 0);
-
-        GLenum bufs[] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
-        glDrawBuffers(2, bufs);
-
-        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-            std::cerr << "gasFBO incomplete!\n";
         }
 
         glBindFramebuffer(GL_FRAMEBUFFER, 0);

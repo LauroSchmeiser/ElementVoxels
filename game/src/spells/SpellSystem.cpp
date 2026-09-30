@@ -213,7 +213,7 @@ namespace gl3 {
         req.baseFormationParams = baseFormationParams;
         req.allowedTypeMask = allowedTypeMask;
 
-        auto chunks = ctx.chunks->getChunksInRadius(center, glm::sqrt(searchRadius));
+        auto chunks = ctx.chunks->getChunksInRadius(center, searchRadius);
         req.chunks.reserve(chunks.size());
 
         for (const auto& [coord, chunk] : chunks)

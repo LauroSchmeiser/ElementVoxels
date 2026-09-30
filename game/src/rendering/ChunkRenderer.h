@@ -26,7 +26,7 @@ namespace gl3 {
         GLuint globalChunkVertexBuffer = 0;
 
         size_t CHUNK_MAX_VERTS = 0;
-        size_t vertLimit=7000;
+        size_t vertLimit=5000;
 
         float lodStep;
 

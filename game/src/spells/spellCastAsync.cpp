@@ -247,6 +247,13 @@ namespace gl3 {
             }
         }
 
+        if (candidates.empty())
+            {
+                out.debugMsg = "No eligible solid voxels found for requested material " +
+                        std::to_string(*resolvedMaterial) + " within the spell search radius";
+                        return out;
+            }
+
         // -------------------------------
         // 2) Sort / trim / dominant type
         // -------------------------------
