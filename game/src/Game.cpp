@@ -2691,9 +2691,17 @@ namespace gl3 {
         {
             p.material= testMat;
         }
+        if(p.material==4)
+        {
+            p.color= glm::vec3(0.7, 0.7, 0.0);
+        }
+        if(p.material==5)
+        {
+            p.color= glm::vec3(0.0, 0.0, 1.0);
+        }
         if(p.material==7)
         {
-            p.color= glm::vec3(1.0, 0.0, 1.0);
+            p.color= glm::vec3(1.0, 0.0, 0.0);
         }
         else if(p.material==8)
         {

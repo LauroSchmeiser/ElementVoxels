@@ -441,7 +441,7 @@ namespace gl3 {
         // World-Variables:
         const int DIM = CHUNK_SIZE + 2; //Chunk Size with a bit off padding for marching cubes
         size_t voxelCount = DIM * DIM * DIM;
-        static constexpr int RenderingRange = 20;
+        static constexpr int RenderingRange = 25;
         static constexpr int chunkDist = VOXEL_SIZE * CHUNK_SIZE;
         float lodStep = RenderingRange / 4.0;
         float lodDistance1 = chunkDist * lodStep;
@@ -573,10 +573,6 @@ namespace gl3 {
         float sampleDensityAtWorld(const glm::vec3 &worldPos) const;
 
         float sampleFluidDensityAtWorld(const glm::vec3 &worldPos) const;
-
-        float getGasDensityAtWorld(FixedGridChunkManager *chunkManager, const glm::vec3 &worldPos);
-
-        glm::vec3 Game::getGasColorAtWorld(FixedGridChunkManager *chunkManager, const glm::vec3 &worldPos);
 
         glm::vec3 sampleNormalAtWorld(const glm::vec3 &worldPos) const;
 
@@ -839,17 +835,6 @@ namespace gl3 {
         std::unique_ptr<Shader> fluidShader;
         GLuint compositeFBO = 0;
         GLuint compositeColorTex = 0;
-
-        GLuint gasFBO = 0;
-        GLuint gasColorTex = 0;      // RGBA8 for gas color
-        GLuint gasDepthTex = 0;      // Depth for composite
-        GLuint gasDensityTex = 0;    // R16F for accumulated density
-
-        std::unique_ptr<Shader> gasRayMarchShader;
-
-        void initGasFBO();
-
-        void renderGas();
 
         const char *lastHoveredButton = nullptr;
 

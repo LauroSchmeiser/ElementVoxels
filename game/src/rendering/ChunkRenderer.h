@@ -26,7 +26,7 @@ namespace gl3 {
         GLuint globalChunkVertexBuffer = 0;
 
         size_t CHUNK_MAX_VERTS = 0;
-        size_t vertLimit=5000;
+        size_t vertLimit=6000;
 
         float lodStep;
 
@@ -94,10 +94,6 @@ namespace gl3 {
         GLuint globalFluidVAO = 0;
 
         GLuint ssboVoxels = 0;
-
-        GLuint ssboGasVoxels = 0;
-
-        void uploadVoxelChunkToGasSlot(const Chunk &chunk);
 
         std::vector<Chunk*> pendingCountChunks;
 

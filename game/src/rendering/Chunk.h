@@ -8,7 +8,6 @@
 
 namespace gl3 {
     struct Chunk {
-        // Heap-allocated now — nullptr when unloaded, allocated on demand.
         std::unique_ptr<Voxel[]> voxelData;
 
         static constexpr int DIM = CHUNK_SIZE + 1;
@@ -22,7 +21,6 @@ namespace gl3 {
 
         bool hasEmissive = false;
         bool hasFluid = false;
-        bool hasGas = false;
         bool inEmissiveList = false;
 
         std::vector<VoxelLight> emissiveLights;
@@ -73,7 +71,7 @@ namespace gl3 {
             allocateVoxels();
         }
 
-        // Called when a chunk becomes active (new, or reactivated from the pool)
+        // Called when a chunk becomes active
         void allocateVoxels() {
             if (!voxelData) {
                 voxelData = std::make_unique<Voxel[]>(size_t(DIM) * DIM * DIM);
@@ -81,11 +79,12 @@ namespace gl3 {
             resetVoxels();
         }
 
-        // Called when a chunk is fully unloaded — actually gives the ~135KB back
+        // Called when a chunk is fully unloaded
         void releaseVoxels() {
             voxelData.reset();
         }
 
+        // Clears all data
         void resetVoxels() {
             if (!voxelData) return;
             for (int x = 0; x < DIM; ++x) {
@@ -115,7 +114,6 @@ namespace gl3 {
 
             hasEmissive = false;
             hasFluid = false;
-            hasGas = false;
             inEmissiveList = false;
             gpuCache.vertexCount = 0;
             gpuCache.isValid = false;

@@ -67,7 +67,6 @@ namespace gl3 {
                     chunk->isCleared = false;
                     chunk->hasEmissive = false;
                     chunk->hasFluid = false;
-                    chunk->hasGas = false;
                     chunk->inEmissiveList = false;
                     chunk->emissiveLights.clear();
                     chunk->gpuCache.vertexCount = 0;
@@ -493,7 +492,6 @@ namespace gl3 {
                     }
                 }
 
-                // Now we know we can rebuild it
                 rebuildMeshFn(chunk);
 
                 chunk->queuedForRebuild = false;

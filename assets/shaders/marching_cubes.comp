@@ -50,6 +50,38 @@ int voxelIndex(ivec3 p) {
 }
 ivec3 clampVoxel(ivec3 p) { return clamp(p, ivec3(0), voxelGridDim - ivec3(1)); }
 
+bool reserveVertices(uint count, out uint localIdx)
+{
+    localIdx = 0u;
+
+    if (uChunkMaxVerts < count) {
+        return false;
+    }
+
+    uint current = vertexCounter;
+
+    while (true) {
+        if (current > uChunkMaxVerts - count) {
+            return false;
+        }
+
+        uint previous = atomicCompSwap(
+        vertexCounter,
+        current,
+        current + count
+        );
+
+        if (previous == current) {
+            localIdx = current;
+            return true;
+        }
+
+        current = previous;
+    }
+
+    return false;
+}
+
 float sampleDensity(ivec3 p) {
     int idx = voxelIndex(clampVoxel(p));
     uint t = voxels[idx].type;
@@ -185,9 +217,8 @@ void main() {
 
     uint vertexCountForCell = uint(triangleCount * 3);
 
-    uint localBase = atomicAdd(vertexCounter, vertexCountForCell);
-
-    if (localBase > uChunkMaxVerts - vertexCountForCell) {
+    uint localBase;
+    if (!reserveVertices(vertexCountForCell, localBase)) {
         return;
     }
 

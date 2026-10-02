@@ -8,7 +8,7 @@
 namespace gl3 {
     constexpr int CHUNK_SIZE = 16;
     constexpr float VOXEL_SIZE = 3.0f;
-    static constexpr int WORLD_RADIUS_CHUNKS = 25;
+    static constexpr int WORLD_RADIUS_CHUNKS = 35;
 
     struct Voxel {
         uint8_t type = 0;
@@ -37,9 +37,9 @@ namespace gl3 {
     };
 
     struct OutVertex {
-        glm::vec4 pos;    // xyz: position, w unused
-        glm::vec4 normal; // xyz: normal, w unused
-        glm::vec4 color;  // rgb: color, a unused
+        glm::vec4 pos;
+        glm::vec4 normal;
+        glm::vec4 color;
     };
 
     struct ChunkCoord {
