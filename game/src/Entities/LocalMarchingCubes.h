@@ -112,8 +112,17 @@ namespace gl3 {
                         glm::vec3 v0 = ev[i0], v1 = ev[i1], v2 = ev[i2];
                         glm::vec3 col0 = ec[i0], col1 = ec[i1], col2 = ec[i2];
 
-                        glm::vec3 fn = glm::normalize(glm::cross(v1 - v0, v2 - v0));
-                        if (!glm::all((glm::isinf(fn)))) fn = glm::vec3(0,1,0);
+                        glm::vec3 fn = glm::cross(v1 - v0, v2 - v0);
+
+                        const float normalLengthSquared = glm::dot(fn, fn);
+
+                        if (normalLengthSquared < 0.000001f ||
+                            glm::any(glm::isnan(fn)) ||
+                            glm::any(glm::isinf(fn))) {
+                            fn = glm::vec3(0.0f, 1.0f, 0.0f);
+                        } else {
+                            fn *= glm::inversesqrt(normalLengthSquared);
+                        }
 
                         // Pick triangle material by majority / priority.
                         uint32_t triMat = em[i0];

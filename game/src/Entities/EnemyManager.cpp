@@ -282,6 +282,7 @@ namespace gl3 {
         e->inst.meshDirty = true;
     }
 
+
     EnemyRuntime* EnemyManager::findByBodyId(uint64_t bodyId) {
         for (auto& e : enemies) {
             if (e.inst.bodyId == bodyId) return &e;

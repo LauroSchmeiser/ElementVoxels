@@ -250,6 +250,9 @@ struct SpellEffect {
     PhysicsMeshData physicsMesh;
     DestructibleObject destruct;
 
+    bool  isFragment    = false;
+    float splitCooldown = 0.0f;
+
     struct BurnState {
         bool active = false;
         float t = 0.0f;

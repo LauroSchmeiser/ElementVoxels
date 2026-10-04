@@ -15,15 +15,13 @@
 namespace gl3 {
 
     SpellSystem::SpellSystem(SpellWorldContext c)
-            : ctx(std::move(c))
-    {
+            : ctx(std::move(c)) {
         spellCastAsync = std::make_unique<SpellCastAsync>();
         initSphereMeshCache();
 
     }
 
-    SpellSystem::~SpellSystem()
-    {
+    SpellSystem::~SpellSystem() {
         shuttingDown.store(true, std::memory_order_relaxed);
 
         if (spellCastAsync) {
@@ -31,7 +29,7 @@ namespace gl3 {
             spellCastAsync.reset();
         }
 
-        for (auto& t : workerThreads) {
+        for (auto &t: workerThreads) {
             if (t.joinable()) t.join();
         }
     }
@@ -48,7 +46,7 @@ namespace gl3 {
                 100.0f * VOXEL_SIZE
         };
 
-        for (float radius : commonRadii) {
+        for (float radius: commonRadii) {
             int key = static_cast<int>(radius / VOXEL_SIZE);
             sphereMeshCache[key] = generateIcosphere(radius, 2);
         }
@@ -63,20 +61,29 @@ namespace gl3 {
         const float t = (1.0f + std::sqrt(5.0f)) / 2.0f;
 
         std::vector<glm::vec3> positions = {
-                {-1,  t,  0}, { 1,  t,  0}, {-1, -t,  0}, { 1, -t,  0},
-                { 0, -1,  t}, { 0,  1,  t}, { 0, -1, -t}, { 0,  1, -t},
-                { t,  0, -1}, { t,  0,  1}, {-t,  0, -1}, {-t,  0,  1}
+                {-1, t, 0},
+                {1,  t, 0},
+                {-1, -t, 0},
+                {1,  -t, 0},
+                {0,  -1, t},
+                {0,  1, t},
+                {0,  -1, -t},
+                {0,  1, -t},
+                {t,  0, -1},
+                {t,  0, 1},
+                {-t, 0, -1},
+                {-t, 0, 1}
         };
 
-        for (auto& p : positions) {
+        for (auto &p: positions) {
             p = glm::normalize(p) * radius;
         }
 
         std::vector<uint32_t> indices = {
-                0, 11, 5,   0, 5, 1,    0, 1, 7,    0, 7, 10,   0, 10, 11,
-                1, 5, 9,    5, 11, 4,   11, 10, 2,  10, 7, 6,   7, 1, 8,
-                3, 9, 4,    3, 4, 2,    3, 2, 6,    3, 6, 8,    3, 8, 9,
-                4, 9, 5,    2, 4, 11,   6, 2, 10,   8, 6, 7,    9, 8, 1
+                0, 11, 5, 0, 5, 1, 0, 1, 7, 0, 7, 10, 0, 10, 11,
+                1, 5, 9, 5, 11, 4, 11, 10, 2, 10, 7, 6, 7, 1, 8,
+                3, 9, 4, 3, 4, 2, 3, 2, 6, 3, 6, 8, 3, 8, 9,
+                4, 9, 5, 2, 4, 11, 6, 2, 10, 8, 6, 7, 9, 8, 1
         };
 
         for (int sub = 0; sub < subdivisions; ++sub) {
@@ -119,7 +126,7 @@ namespace gl3 {
 
         mesh.vertices = positions;
         mesh.normals.reserve(positions.size());
-        for (const auto& p : positions) {
+        for (const auto &p: positions) {
             mesh.normals.push_back(glm::normalize(p));
         }
         mesh.indices = indices;
@@ -128,8 +135,7 @@ namespace gl3 {
     }
 
 
-    void SpellSystem::clear()
-    {
+    void SpellSystem::clear() {
         std::lock_guard<std::mutex> lk(spellApplyMutex);
         activeSpells.clear();
         animatedVoxels.clear();
@@ -137,29 +143,26 @@ namespace gl3 {
         nextAnimatedVoxelID = 1;
     }
 
-    void SpellSystem::update(float dt)
-    {
+    void SpellSystem::update(float dt) {
         if (isShuttingDown()) return;
         TRACY_CPU_ZONE("SpellSystem:update()");
         pumpAsyncResults();
         updateSpells(dt);
     }
 
-    void SpellSystem::castSphere(const glm::vec3& center, float radius, uint64_t material, float strength, const glm::vec3& direction, float searchRadius, uint32_t allowedTypeMask)
-    {
+    void SpellSystem::castSphere(const glm::vec3 &center, float radius, uint64_t material, float strength,
+                                 const glm::vec3 &direction, float searchRadius, uint32_t allowedTypeMask) {
         if (!spellCastAsync || !ctx.chunks) return;
 
         FormationParams params = FormationParams::Sphere(center, radius);
 
-        SpellCastRequest req = buildSpellCastRequestSnapshot(center, searchRadius, material, strength, params, allowedTypeMask);
+        SpellCastRequest req = buildSpellCastRequestSnapshot(center, searchRadius, material, strength, params,
+                                                             allowedTypeMask);
         req.physicsEnabled = true;
-        if(material!=9&&material!=7)
-        {
+        if (material != 9 && material != 7) {
             req.excludedMaterials.push_back(9);
             req.excludedMaterials.push_back(7);
-        }
-        else
-        {
+        } else {
             req.hasTargetMaterial = true;
             req.targetMaterial = material;
         }
@@ -170,10 +173,9 @@ namespace gl3 {
         spellCastAsync->enqueueOrReplaceQueued(std::move(req));
     }
 
-    void SpellSystem::castWall(const glm::vec3& center, const glm::vec3& normal,
+    void SpellSystem::castWall(const glm::vec3 &center, const glm::vec3 &normal,
                                float width, float height, float thickness,
-                               uint64_t material, float strength, uint32_t allowedTypeMask)
-    {
+                               uint64_t material, float strength, uint32_t allowedTypeMask) {
         TRACY_CPU_ZONE("SpellSystem:CastWall()");
 
         if (!spellCastAsync || !ctx.chunks) return;
@@ -181,10 +183,11 @@ namespace gl3 {
 
         FormationParams params = FormationParams::Wall(center, normal, width, height, thickness);
 
-        float axis=glm::max(width, height);
-        float searchRadiusWorld = glm::pow(axis,3);
+        float axis = glm::max(width, height);
+        float searchRadiusWorld = glm::pow(axis, 3);
 
-        SpellCastRequest req = buildSpellCastRequestSnapshot(center, searchRadiusWorld, material, strength, params, allowedTypeMask);
+        SpellCastRequest req = buildSpellCastRequestSnapshot(center, searchRadiusWorld, material, strength, params,
+                                                             allowedTypeMask);
 
         req.physicsEnabled = false;
         if (ctx.getCameraFront) req.launchDir = ctx.getCameraFront();
@@ -195,14 +198,13 @@ namespace gl3 {
     }
 
     SpellCastRequest SpellSystem::buildSpellCastRequestSnapshot(
-            const glm::vec3& center,
+            const glm::vec3 &center,
             float searchRadius,
             uint64_t targetMaterial,
             float strength,
-            const FormationParams& baseFormationParams,
+            const FormationParams &baseFormationParams,
             uint32_t allowedTypeMask
-    )
-    {
+    ) {
         TRACY_CPU_ZONE("buildSnapshot");
 
         SpellCastRequest req;
@@ -216,8 +218,7 @@ namespace gl3 {
         auto chunks = ctx.chunks->getChunksInRadius(center, searchRadius);
         req.chunks.reserve(chunks.size());
 
-        for (const auto& [coord, chunk] : chunks)
-        {
+        for (const auto &[coord, chunk]: chunks) {
             if (!chunk) continue;
 
             SpellCastRequest::ChunkSnapshot snap;
@@ -229,14 +230,13 @@ namespace gl3 {
 
             for (int x = 0; x <= CHUNK_SIZE; ++x)
                 for (int y = 0; y <= CHUNK_SIZE; ++y)
-                    for (int z = 0; z <= CHUNK_SIZE; ++z)
-                    {
+                    for (int z = 0; z <= CHUNK_SIZE; ++z) {
                         const size_t idx =
-                                (size_t)x +
-                                (size_t)y * (CHUNK_SIZE + 1) +
-                                (size_t)z * (CHUNK_SIZE + 1) * (CHUNK_SIZE + 1);
-                        if(!chunk->voxelData) continue;
-                        snap.voxelsLinear[idx] = chunk->voxels(x,y,z);
+                                (size_t) x +
+                                (size_t) y * (CHUNK_SIZE + 1) +
+                                (size_t) z * (CHUNK_SIZE + 1) * (CHUNK_SIZE + 1);
+                        if (!chunk->voxelData) continue;
+                        snap.voxelsLinear[idx] = chunk->voxels(x, y, z);
                     }
 
             req.chunks.push_back(std::move(snap));
@@ -245,16 +245,14 @@ namespace gl3 {
         return req;
     }
 
-    void SpellSystem::pumpAsyncResults()
-    {
+    void SpellSystem::pumpAsyncResults() {
         TRACY_CPU_ZONE("SpellSystem:pumpResults()");
 
         if (isShuttingDown()) return;
         if (!spellCastAsync) return;
 
         SpellCastResult r;
-        while (spellCastAsync->tryPopCompleted(r))
-        {
+        while (spellCastAsync->tryPopCompleted(r)) {
             if (!r.ok) {
                 std::cout << "[SpellAsync] failed: " << r.debugMsg << "\n";
                 continue;
@@ -269,15 +267,14 @@ namespace gl3 {
 
             // 2) Mark touched chunks dirty
             if (ctx.markChunkModified) {
-                for (const auto& c : r.touchedChunks) ctx.markChunkModified(c);
+                for (const auto &c: r.touchedChunks) ctx.markChunkModified(c);
             }
 
             // 3) Spawn animated voxels + spell (assign IDs on main thread)
             SpellEffect spell = r.spell;
             spell.ID = nextSpellID++;   // ADD THIS
 
-            for (auto& v : r.visualVoxels)
-            {
+            for (auto &v: r.visualVoxels) {
                 v.id = nextAnimatedVoxelID++;
                 if (ctx.sampleNormalAtWorld) v.normal = ctx.sampleNormalAtWorld(v.currentPos);
 
@@ -290,47 +287,41 @@ namespace gl3 {
         }
     }
 
-    SpellEffect* SpellSystem::findSpellById(uint64_t id)
-    {
-        for (auto& s : activeSpells)
+    SpellEffect *SpellSystem::findSpellById(uint64_t id) {
+        for (auto &s: activeSpells)
             if (s.ID == id) return &s;
         return nullptr;
     }
 
-    const SpellEffect* SpellSystem::findSpellById(uint64_t id) const
-    {
-        for (const auto& s : activeSpells)
+    const SpellEffect *SpellSystem::findSpellById(uint64_t id) const {
+        for (const auto &s: activeSpells)
             if (s.ID == id) return &s;
         return nullptr;
     }
 
-    void SpellSystem::updateSpells(float dt)
-    {
+    void SpellSystem::updateSpells(float dt) {
         TRACY_CPU_ZONE("SpellSystem:LoopUpdate()");
 
-        // Process async results first
+        // Process async results
         processAsyncFormations();
         processAsyncPhysics();
 
         const float kSlowSpeedThreshold = 0.0001f * VOXEL_SIZE;
-        const float kSlowTimeToBurn     = 0.75f;
-        const float kBurnDuration       = 3.0f;
+        const float kSlowTimeToBurn = 0.75f;
+        const float kBurnDuration = 3.0f;
 
-        // Process spells - but we need to be careful with parallel processing
-        // since spells might be removed
-
-        // First pass: update all spells (can be parallel)
-        #pragma omp parallel for schedule(static) if(activeSpells.size() > 50)
-        for (int i = 0; i < (int)activeSpells.size(); ++i) {
+        // First pass: update all spells in parallel
+#pragma omp parallel for schedule(static) if(activeSpells.size() > 50)
+        for (int i = 0; i < (int) activeSpells.size(); ++i) {
             processSingleSpell(activeSpells[i], dt, kSlowSpeedThreshold, kSlowTimeToBurn, kBurnDuration);
         }
 
-        // Second pass: remove marked spells (must be single-threaded)
-        for (size_t i = 0; i < activeSpells.size(); ) {
+        // Second pass: remove marked spells
+        for (size_t i = 0; i < activeSpells.size();) {
             if (activeSpells[i].markForRemoval) {
                 forceCleanupSpellAnimatedVoxels(activeSpells[i]);
                 destroyPhysicsBodyForSpell(activeSpells[i]);
-                activeSpells.erase(activeSpells.begin() + (ptrdiff_t)i);
+                activeSpells.erase(activeSpells.begin() + (ptrdiff_t) i);
             } else {
                 ++i;
             }
@@ -343,9 +334,8 @@ namespace gl3 {
 
     void scheduleSpellRemoval(SpellEffect &effect);
 
-    void SpellSystem::processSingleSpell(SpellEffect& s, float dt,
-                                         float speedThreshold, float timeToBurn, float burnDuration)
-    {
+    void SpellSystem::processSingleSpell(SpellEffect &s, float dt,
+                                         float speedThreshold, float timeToBurn, float burnDuration) {
         TRACY_CPU_ZONE("SpellSystem:Process One Spell()");
 
         if (s.lifetime > 0.0f) s.creationTime += dt;
@@ -379,17 +369,19 @@ namespace gl3 {
             return;
         }
 
-       /* // Check if spell should start burning
-        const bool tooSmall = isSpellTooSmall(s);
-        const bool tooSlowNow = isSpellTooSlowNow(s, speedThreshold);
-        s.burn.slowAccum = tooSlowNow ? (s.burn.slowAccum + dt) : 0.0f;
-        const bool tooSlowLong = (s.burn.slowAccum >= timeToBurn);
+        /* // Check if spell should start burning
+         const bool tooSmall = isSpellTooSmall(s);
+         const bool tooSlowNow = isSpellTooSlowNow(s, speedThreshold);
+         s.burn.slowAccum = tooSlowNow ? (s.burn.slowAccum + dt) : 0.0f;
+         const bool tooSlowLong = (s.burn.slowAccum >= timeToBurn);
 
-        if (tooSmall || tooSlowLong) {
-            const float r = glm::max(s.formationParams.getBoundingRadius(), 1.0f * VOXEL_SIZE);
-            startSpellBurn(s, r, burnDuration);
-            return;
-        }*/
+         if (tooSmall || tooSlowLong) {
+             const float r = glm::max(s.formationParams.getBoundingRadius(), 1.0f * VOXEL_SIZE);
+             startSpellBurn(s, r, burnDuration);
+             return;
+         }*/
+
+        s.splitCooldown = glm::max(0.0f, s.splitCooldown - dt);
 
         if (s.physicsBody && s.physicsBody->renderMesh) {
             if (s.destruct.meshDirty) {
@@ -402,12 +394,7 @@ namespace gl3 {
         processAnimatedVoxelsForSpell(s, dt);
     }
 
-    void scheduleSpellRemoval(SpellEffect &effect) {
-
-    }
-
-    void SpellSystem::processAnimatedVoxelsForSpell(SpellEffect& s, float dt)
-    {
+    void SpellSystem::processAnimatedVoxelsForSpell(SpellEffect &s, float dt) {
         TRACY_CPU_ZONE("SpellSystem:AnimVoxelProcess()");
 
         // Batch process voxel arrivals
@@ -415,10 +402,10 @@ namespace gl3 {
         newlyArrivedIDs.reserve(s.animatedVoxelIDs.size() / 4); // Estimate
 
         // Use local cache for hot path
-        auto& localVoxelMap = animatedVoxelIndexMap;
-        auto& localVoxels = animatedVoxels;
+        auto &localVoxelMap = animatedVoxelIndexMap;
+        auto &localVoxels = animatedVoxels;
 
-        for (uint64_t id : s.animatedVoxelIDs) {
+        for (uint64_t id: s.animatedVoxelIDs) {
             auto itIndex = localVoxelMap.find(id);
 
             if (itIndex == localVoxelMap.end()) {
@@ -446,7 +433,7 @@ namespace gl3 {
                 } else {
                     float distance = std::sqrt(distanceSq);
                     float speed = voxel.animationSpeed;
-                    float slowdown = glm::clamp(distance*distance / 2.0f, 0.75f, 3.0f);
+                    float slowdown = glm::clamp(distance * distance / 2.0f, 0.75f, 3.0f);
                     voxel.velocity = (toTarget / (VOXEL_SIZE * CHUNK_SIZE)) * speed * slowdown * 4.0f;
                     voxel.currentPos += voxel.velocity * dt;
                 }
@@ -462,7 +449,7 @@ namespace gl3 {
             arrivalCache.assign(s.animatedVoxelIDs.size(), false);
 
             int arrivedCount = 0;
-            int total = (int)s.animatedVoxelIDs.size();
+            int total = (int) s.animatedVoxelIDs.size();
 
             for (size_t i = 0; i < s.animatedVoxelIDs.size(); ++i) {
                 uint64_t id = s.animatedVoxelIDs[i];
@@ -479,7 +466,7 @@ namespace gl3 {
                 }
             }
 
-            float arrivalRatio = total ? (float)arrivedCount / (float)total : 1.0f;
+            float arrivalRatio = total ? (float) arrivedCount / (float) total : 1.0f;
 
             if (arrivalRatio >= 0.8f) {
                 if (!s.isPhysicsEnabled) {
@@ -502,7 +489,7 @@ namespace gl3 {
         // Cleanup voxels if all arrived (deferred)
         if (s.geometryCreated && s.isPhysicsEnabled && !s.voxelsCleaned) {
             int stillAnimating = 0;
-            for (uint64_t id : s.animatedVoxelIDs) {
+            for (uint64_t id: s.animatedVoxelIDs) {
                 auto jt = animatedVoxelIndexMap.find(id);
                 if (jt != animatedVoxelIndexMap.end()) {
                     AnimatedVoxel &v = animatedVoxels[jt->second];
@@ -522,13 +509,13 @@ namespace gl3 {
     }
 
     void SpellSystem::cleanupExpiredSpells() {
-        for (auto spellIt = activeSpells.begin(); spellIt != activeSpells.end(); ) {
-            gl3::VoxelPhysicsBody* body = nullptr;
+        for (auto spellIt = activeSpells.begin(); spellIt != activeSpells.end();) {
+            gl3::VoxelPhysicsBody *body = nullptr;
             if (spellIt->physicsBodyId != 0 && ctx.physics) {
                 body = ctx.physics->getBodyById(spellIt->physicsBodyId);
             }
 
-            if (spellIt->physicsBodyId != 0 && body && glm::length(body->velocity) < 0.5f){
+            if (spellIt->physicsBodyId != 0 && body && glm::length(body->velocity) < 0.5f) {
                 spellIt->markForRemoval = true;
             }
 
@@ -550,12 +537,12 @@ namespace gl3 {
         }
     }
 
-    void SpellSystem::destroyPhysicsBodyForSpell(gl3::SpellEffect& spell) {
+    void SpellSystem::destroyPhysicsBodyForSpell(gl3::SpellEffect &spell) {
         if (spell.physicsBodyId != 0 && ctx.physics) {
-            gl3::VoxelPhysicsBody* body = ctx.physics->getBodyById(spell.physicsBodyId);
+            gl3::VoxelPhysicsBody *body = ctx.physics->getBodyById(spell.physicsBodyId);
 
-            if(body && (glm::length(body->velocity) < 0.5f ||
-                        (spell.lifetime > 0 && spell.creationTime > spell.lifetime))) {
+            if (body && (glm::length(body->velocity) < 0.5f ||
+                         (spell.lifetime > 0 && spell.creationTime > spell.lifetime))) {
                 // Create formation before removing body
                 const float safeCollectedProxy = (float) spell.physicsMesh.vertexCount;
                 createSpellFormation(
@@ -592,8 +579,8 @@ namespace gl3 {
         spell.physicsMesh.vertexCount = 0;
     }
 
-    void SpellSystem::forceCleanupSpellAnimatedVoxels(gl3::SpellEffect& s) {
-        for (uint64_t id : s.animatedVoxelIDs) {
+    void SpellSystem::forceCleanupSpellAnimatedVoxels(gl3::SpellEffect &s) {
+        for (uint64_t id: s.animatedVoxelIDs) {
             auto it = animatedVoxelIndexMap.find(id);
             if (it == animatedVoxelIndexMap.end()) continue;
             size_t idx = it->second;
@@ -604,8 +591,7 @@ namespace gl3 {
         s.animatedVoxelIDs.clear();
     }
 
-    void SpellSystem::queueAsyncFormationCreation(const SpellEffect& s, float arrivalRatio)
-    {
+    void SpellSystem::queueAsyncFormationCreation(const SpellEffect &s, float arrivalRatio) {
         if (isShuttingDown()) return;
         // Copy what we need
         const glm::vec3 center = s.center;
@@ -616,8 +602,10 @@ namespace gl3 {
         FormationParams paramsCopy = s.formationParams;
         paramsCopy.center = center;
 
-        switch(paramsCopy.type) {
-            case FormationType::SPHERE:   paramsCopy.radius *= (arrivalRatio * 0.7f + 0.3f); break;
+        switch (paramsCopy.type) {
+            case FormationType::SPHERE:
+                paramsCopy.radius *= (arrivalRatio * 0.7f + 0.3f);
+                break;
             case FormationType::PLATFORM:
             case FormationType::WALL:
             case FormationType::CUBE:
@@ -629,14 +617,14 @@ namespace gl3 {
                 paramsCopy.radius *= (arrivalRatio * 0.7f + 0.3f);
                 paramsCopy.sizeY *= (arrivalRatio * 0.7f + 0.3f);
                 break;
-            default: break;
+            default:
+                break;
         }
 
         std::weak_ptr<SpellSystem> weakSelf = shared_from_this();
 
         std::async(std::launch::async,
-                   [weakSelf, center, material, color, dominantType, paramsCopy]() mutable
-                   {
+                   [weakSelf, center, material, color, dominantType, paramsCopy]() mutable {
                        // If SpellSystem was destroyed/reset -> do nothing
                        auto self = weakSelf.lock();
                        if (!self || self->isShuttingDown()) return;
@@ -650,8 +638,7 @@ namespace gl3 {
                        if (self->ctx.mainThreadDispatcher) {
                            // IMPORTANT: also avoid capturing raw `this` here
                            self->ctx.mainThreadDispatcher(
-                                   [weakSelf, formation, material, paramsCopy]() mutable
-                                   {
+                                   [weakSelf, formation, material, paramsCopy]() mutable {
                                        auto self2 = weakSelf.lock();
                                        if (!self2 || self2->isShuttingDown()) return;
                                        self2->carveFormationWithSDF(formation, material, paramsCopy);
@@ -662,8 +649,7 @@ namespace gl3 {
         );
     }
 
-    void SpellSystem::queueAsyncPhysicsCreation(SpellEffect& s)
-    {
+    void SpellSystem::queueAsyncPhysicsCreation(SpellEffect &s) {
         TRACY_CPU_ZONE("SpellSystem:Async Physics()");
 
         if (isShuttingDown()) return;
@@ -679,9 +665,12 @@ namespace gl3 {
         ctx.mainThreadDispatcher([this, spellId]() {
             if (isShuttingDown()) return;
             // Find the live spell object
-            SpellEffect* live = nullptr;
-            for (auto& sp : activeSpells) {
-                if (sp.ID == spellId) { live = &sp; break; }
+            SpellEffect *live = nullptr;
+            for (auto &sp: activeSpells) {
+                if (sp.ID == spellId) {
+                    live = &sp;
+                    break;
+                }
             }
             if (!live) return;
 
@@ -700,7 +689,7 @@ namespace gl3 {
                            if (!tri.vertsLocal.empty()) {
                                glm::vec3 mn = tri.vertsLocal[0];
                                glm::vec3 mx = tri.vertsLocal[0];
-                               for (const auto& v : tri.vertsLocal) {
+                               for (const auto &v: tri.vertsLocal) {
                                    mn = glm::min(mn, v);
                                    mx = glm::max(mx, v);
                                }
@@ -715,17 +704,20 @@ namespace gl3 {
                            if (ctx.mainThreadDispatcher) {
                                ctx.mainThreadDispatcher([this, spellId, extents]() {
                                    if (isShuttingDown()) return;
-                                   SpellEffect* live2 = nullptr;
-                                   for (auto& sp : activeSpells) {
-                                       if (sp.ID == spellId) { live2 = &sp; break; }
+                                   SpellEffect *live2 = nullptr;
+                                   for (auto &sp: activeSpells) {
+                                       if (sp.ID == spellId) {
+                                           live2 = &sp;
+                                           break;
+                                       }
                                    }
                                    if (!live2) return;
 
-                        if (!ctx.physics || live2->physicsBody != nullptr) return;
-                        // Create body on main thread (safe)
-                        float voxelVolume = VOXEL_SIZE * VOXEL_SIZE * VOXEL_SIZE;
-                        float mass = (float)live2->animatedVoxelIDs.size() * voxelVolume * 0.5f;
-                        mass = glm::clamp(mass, 1.0f, 1000.0f);
+                                   if (!ctx.physics || live2->physicsBody != nullptr) return;
+                                   // Create body on main thread (safe)
+                                   float voxelVolume = VOXEL_SIZE * VOXEL_SIZE * VOXEL_SIZE;
+                                   float mass = (float) live2->animatedVoxelIDs.size() * voxelVolume * 0.5f;
+                                   mass = glm::clamp(mass, 1.0f, 1000.0f);
 
                                    if (live2->formationParams.type == FormationType::SPHERE) {
                                        live2->physicsBody = ctx.physics->createBody(
@@ -742,29 +734,28 @@ namespace gl3 {
                                                extents
                                        );
                                    }
-                        live2->physicsBodyId = live2->physicsBody ? live2->physicsBody->id : 0;
+                                   live2->physicsBodyId = live2->physicsBody ? live2->physicsBody->id : 0;
 
-                        if (live2->physicsBody) {
-                            live2->physicsBody->userData =
-                                    reinterpret_cast<void*>((uintptr_t)live2->ID);
+                                   if (live2->physicsBody) {
+                                       live2->physicsBody->userData =
+                                               reinterpret_cast<void *>((uintptr_t) live2->ID);
 
-                            live2->physicsBody->velocity = live2->initialVelocity;
-                            live2->isPhysicsEnabled = true;
+                                       live2->physicsBody->velocity = live2->initialVelocity;
+                                       live2->isPhysicsEnabled = true;
 
-                            initSpellDestructibleVolume(*live2);
-                            rebuildDestructibleMeshIfNeeded(live2->destruct);
-                            live2->physicsBody->renderMesh = &live2->destruct.mesh;
+                                       initSpellDestructibleVolume(*live2);
+                                       rebuildDestructibleMeshIfNeeded(live2->destruct);
+                                       live2->physicsBody->renderMesh = &live2->destruct.mesh;
 
-                            removeFormationVoxels(*live2);
-                        }
-                    });
-                }
-            });
+                                       removeFormationVoxels(*live2);
+                                   }
+                               });
+                           }
+                       });
         });
     }
 
-    void SpellSystem::processAsyncFormations()
-    {
+    void SpellSystem::processAsyncFormations() {
         TRACY_CPU_ZONE("SpellSystem:process Async Formations()");
 
         if (isShuttingDown()) return;
@@ -774,12 +765,12 @@ namespace gl3 {
         std::queue<AsyncFormationRequest> completed;
 
         while (!formationQueue.empty()) {
-            auto& request = formationQueue.front();
+            auto &request = formationQueue.front();
             if (request.result.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
                 try {
                     request.result.get(); // Check for exceptions
                     completed.push(std::move(request));
-                } catch (const std::exception& e) {
+                } catch (const std::exception &e) {
                     std::cout << "Async formation failed: " << e.what() << "\n";
                 }
                 formationQueue.pop();
@@ -789,12 +780,12 @@ namespace gl3 {
         }
     }
 
-    bool SpellSystem::isSpellTooSmall(const gl3::SpellEffect& s) {
+    bool SpellSystem::isSpellTooSmall(const gl3::SpellEffect &s) {
         float r = s.formationParams.getBoundingRadius();
         return (r < (0.05f * gl3::VOXEL_SIZE));
     }
 
-    bool SpellSystem::isSpellTooSlowNow(const gl3::SpellEffect& s, float speedThreshold) {
+    bool SpellSystem::isSpellTooSlowNow(const gl3::SpellEffect &s, float speedThreshold) {
         if (!s.physicsBody) return false;
         return glm::length(s.physicsBody->velocity) < speedThreshold;
     }
@@ -803,7 +794,7 @@ namespace gl3 {
         return glm::clamp(t / duration, 0.0f, 1.0f);
     }
 
-    void SpellSystem::startSpellBurn(SpellEffect& s, float radius, float duration) {
+    void SpellSystem::startSpellBurn(SpellEffect &s, float radius, float duration) {
         s.burn.active = true;
         s.burn.t = 0.0f;
         s.burn.duration = duration;
@@ -811,11 +802,10 @@ namespace gl3 {
         s.burn.center = s.center;
     }
 
-    void SpellSystem::cleanupNonAnimatingVoxels()
-    {
+    void SpellSystem::cleanupNonAnimatingVoxels() {
         TRACY_CPU_ZONE("SpellSystem:CleanupNonAnimatingVoxels");
 
-        for (size_t vi = 0; vi < animatedVoxels.size(); ) {
+        for (size_t vi = 0; vi < animatedVoxels.size();) {
             if (!animatedVoxels[vi].isAnimating) {
                 uint64_t removedID = animatedVoxels[vi].id;
                 size_t last = animatedVoxels.size() - 1;
@@ -831,8 +821,7 @@ namespace gl3 {
         }
     }
 
-    void SpellSystem::processAsyncPhysics()
-    {
+    void SpellSystem::processAsyncPhysics() {
         TRACY_CPU_ZONE("SpellSystem: Process Async Physics()");
 
         if (isShuttingDown()) return;
@@ -841,9 +830,9 @@ namespace gl3 {
         std::vector<SpellEffect> resultsToMerge;
         resultsToMerge.swap(pendingPhysicsResults);
 
-        for (auto& result : resultsToMerge) {
+        for (auto &result: resultsToMerge) {
             bool found = false;
-            for (auto& spell : activeSpells) {
+            for (auto &spell: activeSpells) {
                 if (spell.ID == result.ID) {
                     // Safely merge data
                     spell.physicsBody = result.physicsBody;
@@ -874,13 +863,11 @@ namespace gl3 {
         }
     }
 
-    void SpellSystem::createPartialFormation(const SpellEffect& spell, float completionRatio)
-    {
+    void SpellSystem::createPartialFormation(const SpellEffect &spell, float completionRatio) {
         queueAsyncFormationCreation(spell, completionRatio);
     }
 
-    SpellSystem::GpuTrianglesReadback SpellSystem::readbackTrianglesMainThread(const SpellEffect& spell)
-    {
+    SpellSystem::GpuTrianglesReadback SpellSystem::readbackTrianglesMainThread(const SpellEffect &spell) {
         TRACY_CPU_ZONE("ReadbackTriangles");
 
         GpuTrianglesReadback out;
@@ -898,25 +885,24 @@ namespace gl3 {
 
         for (int cx = minCX; cx <= maxCX; ++cx)
             for (int cy = minCY; cy <= maxCY; ++cy)
-                for (int cz = minCZ; cz <= maxCZ; ++cz)
-                {
+                for (int cz = minCZ; cz <= maxCZ; ++cz) {
                     ChunkCoord coord{cx, cy, cz};
-                    Chunk* chunk = ctx.chunks->getOrCreateChunk(coord);
+                    Chunk *chunk = ctx.chunks->getOrCreateChunk(coord);
                     if (!chunk || !chunk->gpuCache.isValid) continue;
                     if (chunk->gpuCache.vertexCount == 0) continue;
 
                     glBindBuffer(GL_SHADER_STORAGE_BUFFER, chunk->gpuCache.triangleSSBO);
 
-                    const size_t vcount   = chunk->gpuCache.vertexCount;
+                    const size_t vcount = chunk->gpuCache.vertexCount;
                     const size_t byteSize = vcount * sizeof(OutVertex);
 
-                    void* mapPtr = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, byteSize, GL_MAP_READ_BIT);
+                    void *mapPtr = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, byteSize, GL_MAP_READ_BIT);
                     if (!mapPtr) {
                         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
                         continue;
                     }
 
-                    OutVertex* ov = reinterpret_cast<OutVertex*>(mapPtr);
+                    OutVertex *ov = reinterpret_cast<OutVertex *>(mapPtr);
 
                     // Copy *all* triangles (or you can keep your radius checks here).
                     // IMPORTANT: we only COPY data; no heavy processing here.
@@ -924,14 +910,13 @@ namespace gl3 {
                     out.normals.reserve(out.normals.size() + vcount);
                     out.colors.reserve(out.colors.size() + vcount);
 
-                    for (size_t i = 0; i < vcount; ++i)
-                    {
+                    for (size_t i = 0; i < vcount; ++i) {
                         glm::vec3 wpos(ov[i].pos.x, ov[i].pos.y, ov[i].pos.z);
                         glm::vec3 local = wpos - spell.center;
 
                         out.vertsLocal.push_back(local);
                         out.normals.push_back(glm::vec3(ov[i].normal.x, ov[i].normal.y, ov[i].normal.z));
-                        out.colors.push_back(glm::vec3(ov[i].color.x,  ov[i].color.y,  ov[i].color.z));
+                        out.colors.push_back(glm::vec3(ov[i].color.x, ov[i].color.y, ov[i].color.z));
                     }
 
                     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
@@ -941,7 +926,7 @@ namespace gl3 {
         return out;
     }
 
-    void SpellSystem::createPhysicsBodyForSpell(SpellEffect& spell) {
+    void SpellSystem::createPhysicsBodyForSpell(SpellEffect &spell) {
         if (!ctx.physics || spell.physicsBody != nullptr) return;
 
         if (spell.formationParams.type == FormationType::SPHERE) {
@@ -963,7 +948,7 @@ namespace gl3 {
                 spell.physicsBody->material = static_cast<uint32_t>(spell.targetMaterial);
                 spell.physicsBody->ownerSpell = &spell;
 
-                spell.physicsBody->userData = reinterpret_cast<void*>((uintptr_t)spell.ID);
+                spell.physicsBody->userData = reinterpret_cast<void *>((uintptr_t) spell.ID);
                 spell.physicsBody->velocity = spell.initialVelocity;
                 spell.physicsBody->orientation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
 
@@ -981,13 +966,14 @@ namespace gl3 {
 
         struct TargetKey {
             int64_t x, y, z;
-            bool operator==(const TargetKey& other) const {
+
+            bool operator==(const TargetKey &other) const {
                 return x == other.x && y == other.y && z == other.z;
             }
         };
 
         struct TargetKeyHash {
-            std::size_t operator()(const TargetKey& k) const {
+            std::size_t operator()(const TargetKey &k) const {
                 return ((k.x * 73856093) ^ (k.y * 19349663) ^ (k.z * 83492791));
             }
         };
@@ -995,12 +981,12 @@ namespace gl3 {
         std::unordered_map<TargetKey, bool, TargetKeyHash> expectedVoxels;
         std::unordered_map<TargetKey, bool, TargetKeyHash> boundaryVoxels;
 
-        for (uint64_t id : spell.animatedVoxelIDs) {
+        for (uint64_t id: spell.animatedVoxelIDs) {
             auto it = animatedVoxelIndexMap.find(id);
             if (it != animatedVoxelIndexMap.end()) {
                 size_t idx = it->second;
                 if (idx >= animatedVoxels.size()) continue;
-                const AnimatedVoxel& voxel = animatedVoxels[idx];
+                const AnimatedVoxel &voxel = animatedVoxels[idx];
                 TargetKey key{
                         static_cast<int64_t>(std::round(voxel.targetPos.x / VOXEL_SIZE)),
                         static_cast<int64_t>(std::round(voxel.targetPos.y / VOXEL_SIZE)),
@@ -1037,7 +1023,7 @@ namespace gl3 {
             std::cout << "Generated " << expectedVoxels.size() << " expected voxels from SDF\n";
         }
 
-        for (const auto& [key, _] : expectedVoxels) {
+        for (const auto &[key, _]: expectedVoxels) {
             for (int dx = -1; dx <= 1; ++dx) {
                 for (int dy = -1; dy <= 1; ++dy) {
                     for (int dz = -1; dz <= 1; ++dz) {
@@ -1068,7 +1054,7 @@ namespace gl3 {
             for (int cy = minCY; cy <= maxCY; ++cy) {
                 for (int cz = minCZ; cz <= maxCZ; ++cz) {
                     ChunkCoord coord{cx, cy, cz};
-                    Chunk* chunk = ctx.chunks->getOrCreateChunk(coord);
+                    Chunk *chunk = ctx.chunks->getOrCreateChunk(coord);
                     if (!chunk || !chunk->gpuCache.isValid) continue;
                     if (chunk->gpuCache.vertexCount == 0) continue;
 
@@ -1077,10 +1063,10 @@ namespace gl3 {
                     size_t byteSize = vcount * sizeof(OutVertex);
 
                     if (byteSize > 0) {
-                        void* mapPtr = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0,
+                        void *mapPtr = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0,
                                                         byteSize, GL_MAP_READ_BIT);
                         if (mapPtr) {
-                            OutVertex* ov = reinterpret_cast<OutVertex*>(mapPtr);
+                            OutVertex *ov = reinterpret_cast<OutVertex *>(mapPtr);
 
                             for (size_t vi = 0; vi < vcount; vi += 3) {
                                 glm::vec3 v0(ov[vi].pos.x, ov[vi].pos.y, ov[vi].pos.z);
@@ -1098,7 +1084,7 @@ namespace gl3 {
 
                                 std::vector<glm::vec3> samplePoints = {v0, v1, v2, center};
 
-                                for (const auto& point : samplePoints) {
+                                for (const auto &point: samplePoints) {
                                     TargetKey pointKey{
                                             static_cast<int64_t>(std::round(point.x / VOXEL_SIZE)),
                                             static_cast<int64_t>(std::round(point.y / VOXEL_SIZE)),
@@ -1136,8 +1122,10 @@ namespace gl3 {
                                         glm::vec3 worldVert(ov[vi + j].pos.x, ov[vi + j].pos.y, ov[vi + j].pos.z);
                                         glm::vec3 localVert = worldVert - spell.center;
                                         triangleVerts.push_back(localVert);
-                                        triangleNormals.push_back(glm::vec3(ov[vi + j].normal.x, ov[vi + j].normal.y, ov[vi + j].normal.z));
-                                        triangleColors.push_back(glm::vec3(ov[vi + j].color.x, ov[vi + j].color.y, ov[vi + j].color.z));
+                                        triangleNormals.push_back(glm::vec3(ov[vi + j].normal.x, ov[vi + j].normal.y,
+                                                                            ov[vi + j].normal.z));
+                                        triangleColors.push_back(
+                                                glm::vec3(ov[vi + j].color.x, ov[vi + j].color.y, ov[vi + j].color.z));
                                     }
                                 }
                             }
@@ -1154,7 +1142,7 @@ namespace gl3 {
             std::cout << "createPhysicsBody: No triangles found for spell, falling back to bounding box\n";
 
             glm::vec3 extents;
-            switch(spell.formationParams.type) {
+            switch (spell.formationParams.type) {
                 case FormationType::CUBE:
                     extents = glm::vec3(
                             spell.formationParams.sizeX * 0.5f,
@@ -1200,7 +1188,7 @@ namespace gl3 {
                 spell.physicsBody->material = static_cast<uint32_t>(spell.targetMaterial);
                 spell.physicsBody->ownerSpell = &spell;
 
-                spell.physicsBody->userData = reinterpret_cast<void*>((uintptr_t)spell.ID);
+                spell.physicsBody->userData = reinterpret_cast<void *>((uintptr_t) spell.ID);
                 spell.physicsBody->velocity = spell.initialVelocity;
                 spell.physicsBody->orientation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
                 initSpellDestructibleVolume(spell);
@@ -1217,7 +1205,7 @@ namespace gl3 {
 
         glm::vec3 minBound = triangleVerts[0];
         glm::vec3 maxBound = triangleVerts[0];
-        for (const auto& v : triangleVerts) {
+        for (const auto &v: triangleVerts) {
             minBound = glm::min(minBound, v);
             maxBound = glm::max(maxBound, v);
         }
@@ -1238,7 +1226,7 @@ namespace gl3 {
         spell.physicsBodyId = spell.physicsBody ? spell.physicsBody->id : 0;
 
         if (spell.physicsBody) {
-            spell.physicsBody->userData = reinterpret_cast<void*>((uintptr_t)spell.ID);
+            spell.physicsBody->userData = reinterpret_cast<void *>((uintptr_t) spell.ID);
             spell.physicsBody->velocity = spell.initialVelocity;
 
             spell.physicsBody->orientation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
@@ -1255,8 +1243,7 @@ namespace gl3 {
         removeFormationVoxels(spell);
     }
 
-    void SpellSystem::generateMeshAsync(Chunk* chunk)
-    {
+    void SpellSystem::generateMeshAsync(Chunk *chunk) {
         if (!chunk || !ctx.generateChunkMesh) return;
 
         // Delegate to main thread dispatcher if available
@@ -1272,30 +1259,29 @@ namespace gl3 {
         }
     }
 
-    void SpellSystem::carveSdfInChunk(Chunk* chunk,
-                                      const glm::vec3& chunkOrigin,
-                                      const WorldPlanet& formation,
+    void SpellSystem::carveSdfInChunk(Chunk *chunk,
+                                      const glm::vec3 &chunkOrigin,
+                                      const WorldPlanet &formation,
                                       uint64_t material,
-                                      const FormationParams& params)
-    {
+                                      const FormationParams &params) {
         const float voxelSize = VOXEL_SIZE;
         bool chunkTouched = false;
 
         for (int lx = 0; lx <= CHUNK_SIZE; ++lx) {
             for (int ly = 0; ly <= CHUNK_SIZE; ++ly) {
                 for (int lz = 0; lz <= CHUNK_SIZE; ++lz) {
-                    glm::vec3 worldPos = chunkOrigin + glm::vec3((float)lx, (float)ly, (float)lz) * voxelSize;
+                    glm::vec3 worldPos = chunkOrigin + glm::vec3((float) lx, (float) ly, (float) lz) * voxelSize;
 
                     float formationDensity = params.evaluate(worldPos);
-                    float existingDensity = chunk->voxels(lx,ly,lz).density;
+                    float existingDensity = chunk->voxels(lx, ly, lz).density;
 
                     if (formationDensity > existingDensity) {
-                        chunk->voxels(lx,ly,lz).density = formationDensity;
+                        chunk->voxels(lx, ly, lz).density = formationDensity;
 
                         if (formationDensity >= -1.0f) {
-                            chunk->voxels(lx,ly,lz).type = formation.type;
-                            chunk->voxels(lx,ly,lz).color = formation.color;
-                            chunk->voxels(lx,ly,lz).material = material;
+                            chunk->voxels(lx, ly, lz).type = formation.type;
+                            chunk->voxels(lx, ly, lz).color = formation.color;
+                            chunk->voxels(lx, ly, lz).material = material;
 
                             if (formationDensity >= 0.0f) {
                                 chunkTouched = true;
@@ -1311,8 +1297,8 @@ namespace gl3 {
         }
     }
 
-    void SpellSystem::carveFormationWithSDF(const WorldPlanet& formation, uint64_t material,
-                                            const FormationParams& params) {
+    void SpellSystem::carveFormationWithSDF(const WorldPlanet &formation, uint64_t material,
+                                            const FormationParams &params) {
         if (!ctx.chunks || !ctx.worldToChunk || !ctx.getChunkMin || !ctx.markChunkModified) return;
         TRACY_CPU_ZONE("Carve");
 
@@ -1332,7 +1318,7 @@ namespace gl3 {
 
         // Collect chunks for parallel processing
         struct ChunkWork {
-            Chunk* chunk;
+            Chunk *chunk;
             ChunkCoord coord;
             glm::vec3 origin;
         };
@@ -1343,8 +1329,8 @@ namespace gl3 {
             for (int cy = minCY; cy <= maxCY; ++cy) {
                 for (int cz = minCZ; cz <= maxCZ; ++cz) {
                     ChunkCoord coord{cx, cy, cz};
-                    Chunk* chunk = ctx.chunks->getOrCreateChunk(coord);
-                    if (!chunk||!chunk->voxelData) continue;
+                    Chunk *chunk = ctx.chunks->getOrCreateChunk(coord);
+                    if (!chunk || !chunk->voxelData) continue;
 
                     glm::vec3 chunkOrigin = ctx.getChunkMin(coord);
                     chunksToProcess.push_back({chunk, coord, chunkOrigin});
@@ -1354,9 +1340,9 @@ namespace gl3 {
 
         // Process based on formation type
         if (params.type == FormationType::SPHERE) {
-            #pragma omp parallel for schedule(dynamic)
-            for (int i = 0; i < (int)chunksToProcess.size(); ++i) {
-                auto& work = chunksToProcess[i];
+#pragma omp parallel for schedule(dynamic)
+            for (int i = 0; i < (int) chunksToProcess.size(); ++i) {
+                auto &work = chunksToProcess[i];
                 carveSphereInChunk(work.chunk, work.origin, center, params.radius,
                                    formation, material);
             }
@@ -1365,22 +1351,22 @@ namespace gl3 {
             glm::vec3 minBounds = center - halfSize;
             glm::vec3 maxBounds = center + halfSize;
 
-            #pragma omp parallel for schedule(dynamic)
-            for (int i = 0; i < (int)chunksToProcess.size(); ++i) {
-                auto& work = chunksToProcess[i];
+#pragma omp parallel for schedule(dynamic)
+            for (int i = 0; i < (int) chunksToProcess.size(); ++i) {
+                auto &work = chunksToProcess[i];
                 carveBoxInChunk(work.chunk, work.origin, minBounds, maxBounds,
                                 formation, material);
             }
         } else {
-            #pragma omp parallel for schedule(dynamic)
-            for (int i = 0; i < (int)chunksToProcess.size(); ++i) {
-                auto& work = chunksToProcess[i];
+#pragma omp parallel for schedule(dynamic)
+            for (int i = 0; i < (int) chunksToProcess.size(); ++i) {
+                auto &work = chunksToProcess[i];
                 carveSdfInChunk(work.chunk, work.origin, formation, material, params);
             }
         }
 
         // Mark chunks dirty on main thread
-        for (auto& work : chunksToProcess) {
+        for (auto &work: chunksToProcess) {
             if (work.chunk->meshDirty) {
                 work.chunk->lightingDirty = true;
                 if (ctx.markChunkModified) {
@@ -1391,9 +1377,9 @@ namespace gl3 {
     }
 
 // Optimized sphere carving
-    void SpellSystem::carveSphereInChunk(Chunk* chunk, const glm::vec3& chunkOrigin,
-                                         const glm::vec3& center, float radius,
-                                         const WorldPlanet& formation, uint64_t material) {
+    void SpellSystem::carveSphereInChunk(Chunk *chunk, const glm::vec3 &chunkOrigin,
+                                         const glm::vec3 &center, float radius,
+                                         const WorldPlanet &formation, uint64_t material) {
         const float voxelSize = VOXEL_SIZE;
         const int chunkSize = CHUNK_SIZE;
         const float radiusSq = radius * radius;
@@ -1402,28 +1388,28 @@ namespace gl3 {
         glm::vec3 localOrigin = chunkOrigin - center;
 
         // Pre-calculate bounds in local space
-        int minX = std::max(0, (int)((-radius - localOrigin.x) / voxelSize));
-        int maxX = std::min(chunkSize, (int)((radius - localOrigin.x) / voxelSize) + 1);
-        int minY = std::max(0, (int)((-radius - localOrigin.y) / voxelSize));
-        int maxY = std::min(chunkSize, (int)((radius - localOrigin.y) / voxelSize) + 1);
-        int minZ = std::max(0, (int)((-radius - localOrigin.z) / voxelSize));
-        int maxZ = std::min(chunkSize, (int)((radius - localOrigin.z) / voxelSize) + 1);
+        int minX = std::max(0, (int) ((-radius - localOrigin.x) / voxelSize));
+        int maxX = std::min(chunkSize, (int) ((radius - localOrigin.x) / voxelSize) + 1);
+        int minY = std::max(0, (int) ((-radius - localOrigin.y) / voxelSize));
+        int maxY = std::min(chunkSize, (int) ((radius - localOrigin.y) / voxelSize) + 1);
+        int minZ = std::max(0, (int) ((-radius - localOrigin.z) / voxelSize));
+        int maxZ = std::min(chunkSize, (int) ((radius - localOrigin.z) / voxelSize) + 1);
 
         bool chunkTouched = false;
 
         // Fast sphere carving with bounds checking
         for (int lz = minZ; lz <= maxZ; ++lz) {
-            float z = localOrigin.z + (float)lz * voxelSize;
+            float z = localOrigin.z + (float) lz * voxelSize;
             float zSq = z * z;
 
             for (int ly = minY; ly <= maxY; ++ly) {
-                float y = localOrigin.y + (float)ly * voxelSize;
+                float y = localOrigin.y + (float) ly * voxelSize;
                 float ySq = y * y;
                 float yzSq = ySq + zSq;
                 if (yzSq > radiusSq) continue;
 
                 for (int lx = minX; lx <= maxX; ++lx) {
-                    float x = localOrigin.x + (float)lx * voxelSize;
+                    float x = localOrigin.x + (float) lx * voxelSize;
                     float distSq = yzSq + x * x;
 
                     if (distSq <= radiusSq) {
@@ -1432,7 +1418,7 @@ namespace gl3 {
                         // Optional: add some noise for natural look
                         // density = std::max(0.0f, std::min(1.0f, density));
 
-                        auto& voxel = chunk->voxels(lx,ly,lz);
+                        auto &voxel = chunk->voxels(lx, ly, lz);
                         if (density > voxel.density) {
                             voxel.density = density;
                             voxel.type = formation.type;
@@ -1451,19 +1437,19 @@ namespace gl3 {
     }
 
 // Optimized box carving
-    void SpellSystem::carveBoxInChunk(Chunk* chunk, const glm::vec3& chunkOrigin,
-                                      const glm::vec3& minBounds, const glm::vec3& maxBounds,
-                                      const WorldPlanet& formation, uint64_t material) {
+    void SpellSystem::carveBoxInChunk(Chunk *chunk, const glm::vec3 &chunkOrigin,
+                                      const glm::vec3 &minBounds, const glm::vec3 &maxBounds,
+                                      const WorldPlanet &formation, uint64_t material) {
         const float voxelSize = VOXEL_SIZE;
         const int chunkSize = CHUNK_SIZE;
 
         // Calculate chunk-local bounds
-        int minX = std::max(0, (int)((minBounds.x - chunkOrigin.x) / voxelSize));
-        int maxX = std::min(chunkSize, (int)((maxBounds.x - chunkOrigin.x) / voxelSize) + 1);
-        int minY = std::max(0, (int)((minBounds.y - chunkOrigin.y) / voxelSize));
-        int maxY = std::min(chunkSize, (int)((maxBounds.y - chunkOrigin.y) / voxelSize) + 1);
-        int minZ = std::max(0, (int)((minBounds.z - chunkOrigin.z) / voxelSize));
-        int maxZ = std::min(chunkSize, (int)((maxBounds.z - chunkOrigin.z) / voxelSize) + 1);
+        int minX = std::max(0, (int) ((minBounds.x - chunkOrigin.x) / voxelSize));
+        int maxX = std::min(chunkSize, (int) ((maxBounds.x - chunkOrigin.x) / voxelSize) + 1);
+        int minY = std::max(0, (int) ((minBounds.y - chunkOrigin.y) / voxelSize));
+        int maxY = std::min(chunkSize, (int) ((maxBounds.y - chunkOrigin.y) / voxelSize) + 1);
+        int minZ = std::max(0, (int) ((minBounds.z - chunkOrigin.z) / voxelSize));
+        int maxZ = std::min(chunkSize, (int) ((maxBounds.z - chunkOrigin.z) / voxelSize) + 1);
 
         // Early out if box doesn't intersect this chunk
         if (minX > maxX || minY > maxY || minZ > maxZ) return;
@@ -1475,15 +1461,15 @@ namespace gl3 {
         glm::vec3 halfSize = (maxBounds - minBounds) * 0.5f;
 
         for (int lz = minZ; lz <= maxZ; ++lz) {
-            float worldZ = chunkOrigin.z + (float)lz * voxelSize;
+            float worldZ = chunkOrigin.z + (float) lz * voxelSize;
             if (worldZ < minBounds.z || worldZ > maxBounds.z) continue;
 
             for (int ly = minY; ly <= maxY; ++ly) {
-                float worldY = chunkOrigin.y + (float)ly * voxelSize;
+                float worldY = chunkOrigin.y + (float) ly * voxelSize;
                 if (worldY < minBounds.y || worldY > maxBounds.y) continue;
 
                 for (int lx = minX; lx <= maxX; ++lx) {
-                    float worldX = chunkOrigin.x + (float)lx * voxelSize;
+                    float worldX = chunkOrigin.x + (float) lx * voxelSize;
                     if (worldX < minBounds.x || worldX > maxBounds.x) continue;
 
                     // Calculate density based on distance to box surface
@@ -1502,7 +1488,7 @@ namespace gl3 {
                         density = std::max(0.0f, 1.0f - (maxDistToEdge / (voxelSize * 2.0f)));
                     }
 
-                    auto& voxel = chunk->voxels(lx,ly,lz);
+                    auto &voxel = chunk->voxels(lx, ly, lz);
                     if (density > voxel.density) {
                         voxel.density = density;
                         voxel.type = formation.type;
@@ -1519,12 +1505,14 @@ namespace gl3 {
         }
     }
 
-    void SpellSystem::createSpellFormation(const glm::vec3& center,
-                                           const FormationParams& formationParams,
+    void SpellSystem::createSpellFormation(const glm::vec3 &center,
+                                           const FormationParams &formationParams,
                                            float strength, uint64_t material,
-                                           const glm::vec3& color, size_t collectedVoxels,
+                                           const glm::vec3 &color, size_t collectedVoxels,
                                            uint8_t dominantType) {
-        if (!ctx.chunks || !ctx.worldToChunk || !ctx.getChunkMin || !ctx.markChunkModified || !ctx.generateChunkMesh) return;
+        if (!ctx.chunks || !ctx.worldToChunk || !ctx.getChunkMin || !ctx.markChunkModified ||
+            !ctx.generateChunkMesh)
+            return;
         TRACY_CPU_ZONE("CreateFormation");
 
         WorldPlanet newFormation;
@@ -1559,7 +1547,7 @@ namespace gl3 {
             for (int cy = regenMinCY; cy <= regenMaxCY; ++cy) {
                 for (int cz = regenMinCZ; cz <= regenMaxCZ; ++cz) {
                     ChunkCoord coord{cx, cy, cz};
-                    Chunk* chunk = ctx.chunks->getOrCreateChunk(coord);
+                    Chunk *chunk = ctx.chunks->getOrCreateChunk(coord);
                     if (chunk && chunk->meshDirty && ctx.generateChunkMesh) {
                         ctx.generateChunkMesh(chunk);
                     }
@@ -1568,10 +1556,10 @@ namespace gl3 {
         }
     }
 
-    void SpellSystem::initSpellDestructibleVolume(SpellEffect& spell) {
+    void SpellSystem::initSpellDestructibleVolume(SpellEffect &spell) {
         TRACY_CPU_ZONE("InitVolume");
 
-        auto& d = spell.destruct;
+        auto &d = spell.destruct;
         d.voxelSize = VOXEL_SIZE;
 
         glm::vec3 halfExtWorld(2.0f * VOXEL_SIZE);
@@ -1592,12 +1580,12 @@ namespace gl3 {
 
         if (spell.formationParams.type == FormationType::SPHERE) {
             d.volume.fillSphere(centerLocal, spell.formationParams.radius,
-                                spell.formationColor, (uint32_t)spell.targetMaterial,
+                                spell.formationColor, (uint32_t) spell.targetMaterial,
                                 spell.dominantType);
         } else {
             glm::vec3 halfBox = halfExtWorld;
 
-            switch(spell.formationParams.type) {
+            switch (spell.formationParams.type) {
                 case FormationType::CUBE:
                     halfBox = glm::vec3(
                             spell.formationParams.sizeX * 0.5f,
@@ -1625,13 +1613,13 @@ namespace gl3 {
             }
 
             fillBox(d.volume, centerLocal, halfBox, spell.formationColor,
-                    (uint32_t)spell.targetMaterial, spell.dominantType);
+                    (uint32_t) spell.targetMaterial, spell.dominantType);
         }
 
         d.meshDirty = true;
     }
 
-    void SpellSystem::rebuildDestructibleMeshIfNeeded(DestructibleObject& d) {
+    void SpellSystem::rebuildDestructibleMeshIfNeeded(DestructibleObject &d) {
         if (!d.meshDirty) return;
         TRACY_CPU_ZONE("RebuildMesh");
 
@@ -1645,7 +1633,7 @@ namespace gl3 {
         std::vector<uint32_t> allFlags;
 
         size_t totalVerts = 0;
-        for (const auto& p : mesh.parts) {
+        for (const auto &p: mesh.parts) {
             totalVerts += p.vertices.size();
         }
 
@@ -1655,7 +1643,7 @@ namespace gl3 {
         allUvs.reserve(totalVerts);
         allFlags.reserve(totalVerts);
 
-        for (const auto& p : mesh.parts) {
+        for (const auto &p: mesh.parts) {
             uint32_t fallbackFlags = (p.material << 1u);
 
             for (size_t i = 0; i < p.vertices.size(); ++i) {
@@ -1680,13 +1668,12 @@ namespace gl3 {
     }
 
     void SpellSystem::createPhysicsMeshData(
-            PhysicsMeshData& mesh,
-            const std::vector<glm::vec3>& vertices,
-            const std::vector<glm::vec3>& normals,
-            const std::vector<glm::vec3>& colors,
-            const std::vector<glm::vec2>& uvs,
-            const std::vector<uint32_t>& flags)
-    {
+            PhysicsMeshData &mesh,
+            const std::vector<glm::vec3> &vertices,
+            const std::vector<glm::vec3> &normals,
+            const std::vector<glm::vec3> &colors,
+            const std::vector<glm::vec2> &uvs,
+            const std::vector<uint32_t> &flags) {
         TRACY_CPU_ZONE("CreateMeshData");
 
         if (vertices.empty()) {
@@ -1718,10 +1705,10 @@ namespace gl3 {
         for (size_t i = 0; i < vertices.size(); ++i) {
             InterleavedVertex v{};
             v.position = vertices[i];
-            v.normal   = (i < normals.size()) ? normals[i] : glm::vec3(0.0f, 1.0f, 0.0f);
-            v.color    = (i < colors.size())  ? colors[i]  : glm::vec3(1.0f);
-            v.uv       = (i < uvs.size())     ? uvs[i]     : glm::vec2(0.0f);
-            v.flags    = (i < flags.size())   ? flags[i]   : 0u;
+            v.normal = (i < normals.size()) ? normals[i] : glm::vec3(0.0f, 1.0f, 0.0f);
+            v.color = (i < colors.size()) ? colors[i] : glm::vec3(1.0f);
+            v.uv = (i < uvs.size()) ? uvs[i] : glm::vec2(0.0f);
+            v.flags = (i < flags.size()) ? flags[i] : 0u;
             interleaved.push_back(v);
         }
 
@@ -1739,35 +1726,35 @@ namespace gl3 {
         glVertexAttribPointer(
                 0, 3, GL_FLOAT, GL_FALSE,
                 sizeof(InterleavedVertex),
-                (void*)offsetof(InterleavedVertex, position)
+                (void *) offsetof(InterleavedVertex, position)
         );
 
         glEnableVertexAttribArray(1);
         glVertexAttribPointer(
                 1, 3, GL_FLOAT, GL_FALSE,
                 sizeof(InterleavedVertex),
-                (void*)offsetof(InterleavedVertex, normal)
+                (void *) offsetof(InterleavedVertex, normal)
         );
 
         glEnableVertexAttribArray(2);
         glVertexAttribPointer(
                 2, 3, GL_FLOAT, GL_FALSE,
                 sizeof(InterleavedVertex),
-                (void*)offsetof(InterleavedVertex, color)
+                (void *) offsetof(InterleavedVertex, color)
         );
 
         glEnableVertexAttribArray(3);
         glVertexAttribPointer(
                 3, 2, GL_FLOAT, GL_FALSE,
                 sizeof(InterleavedVertex),
-                (void*)offsetof(InterleavedVertex, uv)
+                (void *) offsetof(InterleavedVertex, uv)
         );
 
         glEnableVertexAttribArray(4);
         glVertexAttribIPointer(
                 4, 1, GL_UNSIGNED_INT,
                 sizeof(InterleavedVertex),
-                (void*)offsetof(InterleavedVertex, flags)
+                (void *) offsetof(InterleavedVertex, flags)
         );
 
         glBindVertexArray(0);
@@ -1777,7 +1764,7 @@ namespace gl3 {
         mesh.vertexCount = static_cast<int>(vertices.size());
     }
 
-    void SpellSystem::removeFormationVoxels(SpellEffect& spell) {
+    void SpellSystem::removeFormationVoxels(SpellEffect &spell) {
         TRACY_CPU_ZONE("RemoveVoxelsFromForm");
 
         if (!ctx.chunks || !ctx.worldToChunk || !ctx.markChunkModified) return;
@@ -1797,7 +1784,7 @@ namespace gl3 {
             for (int cy = minCY; cy <= maxCY; ++cy) {
                 for (int cz = minCZ; cz <= maxCZ; ++cz) {
                     ChunkCoord coord{cx, cy, cz};
-                    Chunk* chunk = ctx.chunks->getOrCreateChunk(coord);
+                    Chunk *chunk = ctx.chunks->getOrCreateChunk(coord);
                     if (!chunk || chunk->isCleared || !chunk->voxelData) {
                         continue;
                     }
@@ -1812,7 +1799,7 @@ namespace gl3 {
                                 float sdfValue = spell.formationParams.evaluate(worldPos);
 
                                 if (sdfValue >= -removeMargin) {
-                                    auto& v = chunk->voxels(lx,ly,lz);
+                                    auto &v = chunk->voxels(lx, ly, lz);
                                     v.density = -1.0f;
                                     v.type = 0;
                                     chunkModified = true;
@@ -1831,7 +1818,7 @@ namespace gl3 {
         }
     }
 
-    glm::vec3 SpellSystem::calculateSphereDistribution(size_t index, size_t total, const FormationParams& params) {
+    glm::vec3 SpellSystem::calculateSphereDistribution(size_t index, size_t total, const FormationParams &params) {
         if (total <= 1) return params.center;
 
         float goldenAngle = glm::pi<float>() * (3.0f - glm::sqrt(5.0f));
@@ -1847,7 +1834,7 @@ namespace gl3 {
     }
 
     glm::vec3 SpellSystem::calculatePlatformDistribution(size_t index, size_t total,
-                                                  const FormationParams& params) {
+                                                         const FormationParams &params) {
         float u = haltonSequence(index, 2) - 0.5f;
         float v = haltonSequence(index, 3) - 0.5f;
 
@@ -1865,7 +1852,7 @@ namespace gl3 {
     }
 
     glm::vec3 SpellSystem::calculateWallDistribution(size_t index, size_t total,
-                                              const FormationParams& params) {
+                                                     const FormationParams &params) {
         float u = haltonSequence(index, 2) - 0.5f;
         float v = haltonSequence(index, 3) - 0.5f;
 
@@ -1883,13 +1870,13 @@ namespace gl3 {
     }
 
     glm::vec3 SpellSystem::calculateCubeDistribution(size_t index, size_t total,
-                                              const FormationParams& params) {
+                                                     const FormationParams &params) {
         int faceIndex = index % 6;
         float u = haltonSequence(index, 2) - 0.5f;
         float v = haltonSequence(index, 3) - 0.5f;
 
         glm::vec3 localPos;
-        switch(faceIndex) {
+        switch (faceIndex) {
             case 0:
                 localPos = glm::vec3(params.sizeX * 0.5f, u * params.sizeY, v * params.sizeZ);
                 break;
@@ -1915,7 +1902,7 @@ namespace gl3 {
     }
 
     glm::vec3 SpellSystem::calculateCylinderDistribution(size_t index, size_t total,
-                                                  const FormationParams& params) {
+                                                         const FormationParams &params) {
         float angle = static_cast<float>(index) / static_cast<float>(total) * glm::two_pi<float>();
         float height = haltonSequence(index, 2) - 0.5f;
 
@@ -1930,7 +1917,7 @@ namespace gl3 {
     }
 
     glm::vec3 SpellSystem::calculatePyramidDistribution(size_t index, size_t total,
-                                                 const FormationParams& params) {
+                                                        const FormationParams &params) {
         int surface = index % 5;
 
         if (surface < 4) {
@@ -1941,7 +1928,7 @@ namespace gl3 {
             float baseZ = (v - 0.5f) * params.sizeZ;
 
             glm::vec3 localPos;
-            switch(surface) {
+            switch (surface) {
                 case 0:
                     localPos = glm::vec3(baseX, 0.0f, params.sizeZ * 0.5f);
                     break;
@@ -1992,10 +1979,206 @@ namespace gl3 {
         return result;
     }
 
-    SpellEffect* SpellSystem::spellFromBody(VoxelPhysicsBody* body) {
+    SpellEffect *SpellSystem::spellFromBody(VoxelPhysicsBody *body) {
         if (!body) return nullptr;
         if (body->ownerSpell) return body->ownerSpell;
-        uint64_t id = (uint64_t)(uintptr_t)body->userData;
+        uint64_t id = (uint64_t) (uintptr_t) body->userData;
         return findSpellById(id);
+    }
+
+    size_t SpellSystem::countSolidCorners(const gl3::LocalVoxelVolume &volume) {
+        size_t count = 0;
+
+        for (const auto &corner: volume.corners) {
+            if (corner.type != 0 && corner.density >= 0.0f) {
+                ++count;
+            }
+        }
+
+        return count;
+    }
+
+    float SpellSystem::fractionOfOriginalVolume(
+            const gl3::LocalVoxelVolume &original,
+            const gl3::LocalVoxelVolume &piece) {
+        const size_t originalSolidCount = countSolidCorners(original);
+        if (originalSolidCount == 0) {
+            return 1.0f;
+        }
+
+        const size_t pieceSolidCount = countSolidCorners(piece);
+
+        return glm::clamp(
+                static_cast<float>(pieceSolidCount) /
+                static_cast<float>(originalSolidCount),
+                0.05f,
+                1.0f);
+    }
+
+    void SpellSystem::splitDestructibleObject(
+            DestructibleObject& sourceDestructible,
+            VoxelPhysicsBody& sourcePhysics,
+            const glm::vec3& hitPositionWorld,
+            const glm::vec3& hitForceWorld,
+            float materialDensity,
+            float damageStrength,
+            uint32_t maxSplinters)
+    {
+        if (!sourcePhysics.active || !sourceDestructible.volume.isInitialized()) {
+            return;
+        }
+
+        const glm::vec3 hitPositionLocal =
+                sourceDestructible.worldToLocal(
+                        hitPositionWorld,
+                        sourcePhysics.position, sourcePhysics.orientation);
+
+        std::vector<glm::vec3> pieceImpulses;
+
+        std::vector<LocalVoxelVolume> pieces =
+                LocalVoxelVolume::splinterSphere(
+                        sourceDestructible.volume,
+                        hitPositionLocal,
+                        materialDensity,
+                        damageStrength,
+                        hitForceWorld,
+                        maxSplinters,
+                        &pieceImpulses);
+
+        if (pieces.size() <= 1) {
+            return;
+        }
+
+        sourcePhysics.active = false;
+
+        const float sourceMass = glm::max(sourcePhysics.mass, 0.01f);
+        const float sourceRadius = glm::max(sourcePhysics.radius, 0.05f);
+        const float pieceCount = static_cast<float>(pieces.size());
+
+        const float pieceRadius = glm::max(
+                sourceRadius / glm::pow(pieceCount, 1.0f / 3.0f),
+                0.05f);
+
+        for (size_t i = 0; i < pieces.size(); ++i) {
+            DestructibleObject fragmentDestructible{};
+
+            fragmentDestructible.volume = std::move(pieces[i]);
+            fragmentDestructible.voxelSize = sourceDestructible.voxelSize;
+            fragmentDestructible.localCenterOffsetWorld =
+                    sourceDestructible.localCenterOffsetWorld;
+            fragmentDestructible.meshDirty = true;
+
+            rebuildDestructibleMeshIfNeeded(fragmentDestructible);
+
+            if (!fragmentDestructible.mesh.isValid ||
+                fragmentDestructible.mesh.vertexCount == 0) {
+                continue;
+            }
+
+            const glm::vec3 rawImpulse =
+                    i < pieceImpulses.size()
+                    ? pieceImpulses[i]
+                    : glm::vec3(0.0f);
+
+            glm::vec3 outwardDirection(0.0f, 1.0f, 0.0f);
+
+            if (glm::dot(rawImpulse, rawImpulse) > 0.000001f) {
+                outwardDirection = glm::normalize(rawImpulse);
+            }
+
+            VoxelPhysicsBody fragmentPhysics = sourcePhysics;
+
+            fragmentPhysics.mass = glm::max(sourceMass / pieceCount, 0.01f);
+            fragmentPhysics.radius = pieceRadius;
+            fragmentPhysics.shapeExtents = glm::vec3(pieceRadius);
+
+            const float spawnOffset =
+                    sourceRadius * 0.35f + pieceRadius * 1.25f;
+
+            fragmentPhysics.position =
+                    sourcePhysics.position + outwardDirection * spawnOffset;
+
+            fragmentPhysics.prevPosition = fragmentPhysics.position;
+
+            const float ejectionSpeed = glm::clamp(
+                    damageStrength * 0.05f,
+                    2.0f,
+                    25.0f);
+
+            fragmentPhysics.velocity =
+                    sourcePhysics.velocity * 0.20f +
+                    outwardDirection * ejectionSpeed;
+
+            fragmentPhysics.angularVelocity =
+                    sourcePhysics.angularVelocity * 0.005f +
+                    glm::vec3(
+                            outwardDirection.z,
+                            outwardDirection.x,
+                            outwardDirection.y) * ejectionSpeed * 0.005f;
+
+            fragmentPhysics.active = true;
+
+            std::cout << "fragment " << i
+                      << " verts=" << fragmentDestructible.mesh.vertexCount
+                      << " radius=" << fragmentPhysics.radius
+                      << " speed=" << glm::length(fragmentPhysics.velocity)
+                      << '\n';
+
+            spawnDestructibleSpellFragment(
+                    std::move(fragmentDestructible),
+                    std::move(fragmentPhysics));
+        }
+    }
+
+    static void solidBoundsLocal(const LocalVoxelVolume& v, glm::vec3& mn, glm::vec3& mx, size_t& count) {
+        mn = glm::vec3(1e9f); mx = glm::vec3(-1e9f); count = 0;
+        for (int z=0; z<v.dims.z; ++z)
+            for (int y=0; y<v.dims.y; ++y)
+                for (int x=0; x<v.dims.x; ++x)
+                    if (v.at(x,y,z).density >= 0.0f) {
+                        glm::vec3 p = glm::vec3(x,y,z) * v.voxelSize;
+                        mn = glm::min(mn, p); mx = glm::max(mx, p); ++count;
+                    }
+    }
+
+    void SpellSystem::spawnDestructibleSpellFragment(
+            DestructibleObject&& destructible,
+            const VoxelPhysicsBody& s)
+    {
+        activeSpells.emplace_back();
+        SpellEffect& f = activeSpells.back();
+
+        f.ID = nextSpellID++;
+        f.type = SpellEffect::Type::CONSTRUCT;
+        f.center = s.position;                 // never leave this uninitialized
+        f.destruct = std::move(destructible);
+        f.isFragment = true;
+        f.splitCooldown = 0.6f;
+        f.geometryCreated = f.physicsInitialized = f.isPhysicsEnabled = true;
+        f.markForRemoval = false;
+
+        VoxelPhysicsBody* b = ctx.physics->createBody(
+                s.position, s.mass, s.shapeType, s.shapeExtents);
+        if (!b) { activeSpells.pop_back(); return; }
+
+        f.physicsBody   = b;
+        f.physicsBodyId = b->id;
+
+        b->prevPosition    = s.prevPosition;
+        b->velocity        = s.velocity;
+        b->angularVelocity = s.angularVelocity;
+        b->orientation     = s.orientation;
+        b->radius          = s.radius;
+        b->restitution     = s.restitution;
+        b->friction        = s.friction;
+        b->lifetime        = s.lifetime;
+        b->material        = s.material;
+        b->bodiesCanPassThrough = s.bodiesCanPassThrough;
+        b->stuck = false; b->stuckToBodyId = 0; b->stuckOffset = glm::vec3(0);
+
+        b->ownerSpell = &f;
+        b->userData   = reinterpret_cast<void*>((uintptr_t)f.ID);
+        b->renderMesh = &f.destruct.mesh;
+        b->active     = true;
     }
 }

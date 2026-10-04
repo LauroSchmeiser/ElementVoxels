@@ -3,6 +3,7 @@
 #include "../rendering/VoxelStructures.h"
 #include "../entities/EnemyVoxelVolume.h"
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 namespace gl3 {
 
@@ -14,9 +15,9 @@ namespace gl3 {
         glm::vec3 localCenterOffsetWorld{0};
         float voxelSize = VOXEL_SIZE;
 
-        glm::vec3 worldToLocal(const glm::vec3& worldPos, const glm::vec3& bodyPos) const {
-            glm::vec3 originWorld = bodyPos - localCenterOffsetWorld;
-            return (worldPos - originWorld);
+        glm::vec3 worldToLocal(const glm::vec3& worldPos, const glm::vec3& bodyPos,
+                               const glm::quat& orientation) const {
+            return glm::conjugate(orientation) * (worldPos - bodyPos) + localCenterOffsetWorld;
         }
     };
 

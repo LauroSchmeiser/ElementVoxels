@@ -43,6 +43,13 @@ namespace gl3 {
                       uint64_t material, float strength,
                       uint32_t allowedTypeMask = kAllVoxelTypesMask);
 
+        void splitDestructibleObject(DestructibleObject &sourceDestructible, VoxelPhysicsBody &sourcePhysics,
+                                     const glm::vec3 &hitPositionWorld, const glm::vec3 &hitForceWorld,
+                                     float materialDensity,
+                                     float damageStrength, uint32_t maxSplinters = 6);
+        size_t countSolidCorners(const LocalVoxelVolume &volume);
+
+
     private:
         SpellWorldContext ctx;
 
@@ -207,6 +214,10 @@ namespace gl3 {
         }
 
         SpellEffect* spellFromBody(VoxelPhysicsBody* body);
+
+        void spawnDestructibleSpellFragment(DestructibleObject &&destructible, const VoxelPhysicsBody &s);
+
+        float fractionOfOriginalVolume(const LocalVoxelVolume &original, const LocalVoxelVolume &piece);
     };
 
 }

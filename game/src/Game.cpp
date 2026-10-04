@@ -581,26 +581,24 @@ namespace gl3 {
                     {
                         case 2u:
                             if (body->material == 9u)
-                                convertSolidWorldToMaterial(body->position, body->radius * 1.5f, 6u);
-                            else
-                                std::cout << "Sand";
-                            return;
+                                convertSolidWorldToMaterial(body->position, body->radius * 2.5f, 6u);
+                            body->velocity*=-0.95;
+                            break;
                         case 4u:
                             if (body->material == 9u&& sampleTypeAtWorld(chunkManager.get(),body->position)==1u)
                                 convertSolidWorldToType(body->position, body->radius * 1.5f, 3u);
-                            return;
+                            break;
                         case 5u:
-                            if (body->material == 9u&& sampleTypeAtWorld(chunkManager.get(),body->position)==1u)
-                                convertSolidWorldToType(body->position, body->radius * 1.5f, 3u);
-                            else if(body->material == 9u)
-                                convertSolidWorldToType(body->position, body->radius * 1.0f, 0u);
-                            body->material=0u;
-                            return;
+                               //else if(body->material == 9u)
+                              //  convertSolidWorldToType(body->position, body->radius * 1.0f, 0u);
+                            convertSolidWorldToType(body->position, body->radius * 2.25f, 3u);
+                            break;
+                        case 6u:
                         case 7u:
                         case 9u:
                             if (body->material == 9u&& sampleTypeAtWorld(chunkManager.get(),body->position)==1u)
                                 convertSolidWorldToType(body->position, body->radius * 1.5f, 3u);
-                            return;
+                            break;
                         default:
                             const float burnRadius = glm::max(body->radius * 1.5f, VOXEL_SIZE);
                             applyMaterial9BurnAlongSegment(from, to, burnRadius);
@@ -634,6 +632,8 @@ namespace gl3 {
 
         g_SoundManager.loadSound(SoundID::Collision,
                                  resolveAssetPath("audio/lordsonny-small-rock-break-194553.mp3").string());
+        g_SoundManager.loadSound(SoundID::CollisionBreak,
+                                 resolveAssetPath("audio/lordsonny-punch-a-rock-161647.mp3").string());
         g_SoundManager.loadSound(SoundID::Fire,
                                  resolveAssetPath("audio/alice_soundz-fire-sound-effects-224089.mp3").string());
         g_SoundManager.loadSound(SoundID::WaterSplash,
@@ -2219,38 +2219,91 @@ namespace gl3 {
             convertSolidWorldToType(hitPos, (body->radius * 1.5f), 0);
             return;
         }*/
-        SoLoud::handle h = g_SoundManager.playSound3D(
-                SoundID::Collision,
-                hitPos,
-                glm::sqrt(impactSpeed)/100,  // volume
-                1.0f   // pitch
-        );
 
-        std::mt19937 rng(std::random_device{}());
-        std::uniform_real_distribution<float> dist(-0.5f, 0.5f);
+        //if(body->mass*impactSpeed<500.0f)
+        if(false)
+        {
+            SoLoud::handle h = g_SoundManager.playSound3D(
+                    SoundID::Collision,
+                    hitPos,
+                    glm::sqrt(impactSpeed)/100,  // volume
+                    1.0f   // pitch
+            );
 
-        uint64_t spellId = (uint64_t)(uintptr_t)body->userData;
-        if (auto* spell = spellSystem->findSpellById(spellId)) {
-            float mass = spell->physicsBody ? spell->physicsBody->mass : 1.0f;
+            std::mt19937 rng(std::random_device{}());
+            std::uniform_real_distribution<float> dist(-0.5f, 0.5f);
 
-            float craterStrength = glm::sqrt((impactSpeed * glm::pow(mass,1)*spell->physicsBody->radius)) / 30.0f;
-            float spellRadius = glm::max(spell->physicsBody->radius, 0.001f);
-            createCraterAtPosition(hitPos, craterStrength, spellRadius);
+            uint64_t spellId = (uint64_t)(uintptr_t)body->userData;
+            if (auto* spell = spellSystem->findSpellById(spellId)) {
+                float mass = spell->physicsBody ? spell->physicsBody->mass : 1.0f;
 
-            // Estimate removed voxels from crater strength
-            float removedVoxelEstimate = craterStrength * 40.0f;
+                float craterStrength = glm::sqrt((impactSpeed * glm::pow(mass,1)*spell->physicsBody->radius)) / 30.0f;
+                float spellRadius = glm::max(spell->physicsBody->radius, 0.001f);
+                createCraterAtPosition(hitPos, craterStrength, spellRadius);
 
-            /*glm::vec3 tint = spell->formationColor;
-            if (glm::length(tint) < 0.001f) {
-                tint = glm::vec3(0.45f, 0.45f, 0.45f);
-            }*/
-            glm::vec3 tint = glm::vec3(0.45f, 0.45f, 0.45f);
-            glm::vec3 variance = glm::vec3(dist(rng));
-            tint+=(spell->formationColor/glm::vec3(10));
-            tint+=variance;
+                // Estimate removed voxels from crater strength
+                float removedVoxelEstimate = craterStrength * 40.0f;
 
-            spawnImpactEffect(hitPos, hitNormal, impactSpeed, removedVoxelEstimate, tint);
+                /*glm::vec3 tint = spell->formationColor;
+                if (glm::length(tint) < 0.001f) {
+                    tint = glm::vec3(0.45f, 0.45f, 0.45f);
+                }*/
+                glm::vec3 tint = glm::vec3(0.45f, 0.45f, 0.45f);
+                glm::vec3 variance = glm::vec3(dist(rng));
+                tint+=(spell->formationColor/glm::vec3(10));
+                tint+=variance;
+
+                spawnImpactEffect(hitPos, hitNormal, impactSpeed, removedVoxelEstimate, tint);
+            }
         }
+        else
+        {
+            SoLoud::handle h = g_SoundManager.playSound3D(
+                    SoundID::CollisionBreak,
+                    hitPos,
+                    glm::sqrt(impactSpeed)/100,  // volume
+                    1.0f   // pitch
+            );
+
+            std::mt19937 rng(std::random_device{}());
+            std::uniform_real_distribution<float> dist(-0.5f, 0.5f);
+
+            uint64_t spellId = (uint64_t)(uintptr_t)body->userData;
+            if (auto* spell = spellSystem->findSpellById(spellId)) {
+                float mass = spell->physicsBody ? spell->physicsBody->mass : 1.0f;
+
+                float craterStrength = glm::sqrt((impactSpeed * glm::pow(mass,1)*spell->physicsBody->radius)) / 30.0f;
+                float spellRadius = glm::max(spell->physicsBody->radius, 0.001f);
+
+                // Estimate removed voxels from crater strength
+                float removedVoxelEstimate = craterStrength * 40.0f;
+
+                /*glm::vec3 tint = spell->formationColor;
+                if (glm::length(tint) < 0.001f) {
+                    tint = glm::vec3(0.45f, 0.45f, 0.45f);
+                }*/
+                glm::vec3 tint = glm::vec3(0.45f, 0.45f, 0.45f);
+                glm::vec3 variance = glm::vec3(dist(rng));
+                tint+=(spell->formationColor/glm::vec3(10));
+                tint+=variance;
+
+                const float kMinSplitSpeed = 30.0f;     // tune
+                const size_t kMinSplitVoxels = 20;     // tune: don't split tiny pieces
+
+                if (auto* spell = spellSystem->findSpellById(spellId)) {
+                    bool canSplit = impactSpeed > kMinSplitSpeed
+                                    && spell->splitCooldown <= 0.0f
+                                    && spell->destruct.volume.isInitialized()
+                                    && spellSystem->countSolidCorners(spell->destruct.volume) > kMinSplitVoxels;
+                    if (canSplit) {
+                        spellSystem->splitDestructibleObject(spell->destruct, *spell->physicsBody,
+                                                             hitPos, hitNormal, 1.0f, impactSpeed);
+                    }
+                }
+                spawnImpactEffect(hitPos, hitNormal, impactSpeed, removedVoxelEstimate, tint);
+            }
+        }
+
     }
 
     void Game::createCraterAtPosition(const glm::vec3& worldPos, float impactFactor, float spellRadius) {
@@ -2693,13 +2746,13 @@ namespace gl3 {
         }
         if(p.material==4)
         {
-            p.color= glm::vec3(0.7, 0.7, 0.0);
+            p.color = glm::vec3(waterDistColorR(rng), waterDistColorG(rng), waterDistColorB(rng));
         }
-        if(p.material==5)
+        else if(p.material==5)
         {
             p.color= glm::vec3(0.0, 0.0, 1.0);
         }
-        if(p.material==7)
+        else if(p.material==7)
         {
             p.color= glm::vec3(1.0, 0.0, 0.0);
         }
@@ -2707,6 +2760,7 @@ namespace gl3 {
         {
             p.color= glm::vec3(1.0, 0.6, 0.0);
         }
+
         //p.material=0;
         worldPlanets.push_back(p);
         cameraPos=p.worldPos+glm::vec3(0,VOXEL_SIZE,0);
@@ -2725,6 +2779,18 @@ namespace gl3 {
             if(p.material==4)
             {
                 p.color = glm::vec3(waterDistColorR(rng), waterDistColorG(rng), waterDistColorB(rng));
+            }
+            else if(p.material==5)
+            {
+                p.color= glm::vec3(0.0, 0.0, 1.0);
+            }
+            else if(p.material==7)
+            {
+                p.color= glm::vec3(0.9, 0.8, 0.0);
+            }
+            else if(p.material==8)
+            {
+                p.color= glm::vec3(1.0, 0.6, 0.0);
             }
             //p.material=0;
             worldPlanets.push_back(p);
@@ -2750,18 +2816,19 @@ namespace gl3 {
             {
                 p.color = glm::vec3(waterDistColorR(rng), waterDistColorG(rng), waterDistColorB(rng));
             }
-            if(p.material==7)
+            else if(p.material==5)
             {
-                p.color= glm::vec3(1.0, 0.0, 0.0);
+                p.color= glm::vec3(0.0, 0.0, 1.0);
             }
-            if(p.material==6)
+            else if(p.material==7)
             {
-                p.color= glm::vec3(1.0, 0.0, 1.0);
+                p.color= glm::vec3(0.9, 0.8, 0.0);
             }
-            if(p.material==5)
+            else if(p.material==8)
             {
-                p.color= glm::vec3(0.7, 0.7, 0.7);
+                p.color= glm::vec3(1.0, 0.6, 0.0);
             }
+
             worldPlanets.push_back(p);
         }
 
@@ -3196,7 +3263,7 @@ namespace gl3 {
 
             if (spell) {
                 // Convert world hit to local spell volume and carve damage
-                const glm::vec3 localHit = spell->destruct.worldToLocal(hitPos, spell->center);
+                const glm::vec3 localHit = spell->destruct.worldToLocal(hitPos, spell->center,spell->physicsBody->orientation);
 
                 // Tune these two to taste:
                 const float damageRadius   = glm::max(self->radius * 0.35f, 1.5f * VOXEL_SIZE);
@@ -4272,38 +4339,44 @@ glDepthMask(depthMask);
 
         // Render each physics-enabled formation
         for (const auto& spell : spellSystem->spells()) {
-            if (!spell.isPhysicsEnabled || !spell.physicsBody|| spell.physicsBodyId == 0) continue;
-            auto* body = voxelPhysics->getBodyById(spell.physicsBodyId);
-            if (!body || !body->renderMesh) continue;
+            if (!spell.isPhysicsEnabled || spell.physicsBodyId == 0) {
+                continue;
+            }
 
-            const auto& mesh = *body->renderMesh;
-            if (!mesh.isValid || mesh.vertexCount == 0) continue;
+            VoxelPhysicsBody* body =
+                    voxelPhysics->getBodyById(spell.physicsBodyId);
 
-            int currentChunkX = worldToChunk(spell.physicsBody->position.x);
-            int currentChunkY = worldToChunk(spell.physicsBody->position.y);
-            int currentChunkZ = worldToChunk(spell.physicsBody->position.z);
+            if (body == nullptr || !body->active || body->renderMesh == nullptr) {
+                continue;
+            }
 
-            glm::vec3 pos = glm::vec3(spell.physicsBody->position.x,spell.physicsBody->position.y,spell.physicsBody->position.z) ;
-            glm::quat rot = spell.physicsBody->orientation;
+            const PhysicsMeshData& mesh = *body->renderMesh;
 
-            // Build model matrix
-            glm::vec3 originWorld = spell.physicsBody->position;
-            glm::mat4 model = glm::translate(glm::mat4(1.0f), originWorld);
-//            model *= glm::mat4_cast(rot);
-            //          model = glm::scale(model, glm::vec3(VOXEL_SIZE));  // Apply VOXEL_SIZE scaling
+            if (!mesh.isValid || mesh.vertexCount <= 0) {
+                continue;
+            }
+
+            glm::mat4 model = glm::translate(
+                    glm::mat4(1.0f),
+                    body->position);
+
+            model *= glm::mat4_cast(body->orientation);
 
             voxelShader->setMatrix("model", model);
-            voxelShader->setMatrix("mvp", pv*model );
+            voxelShader->setMatrix("mvp", pv * model);
 
             if (spell.burn.active) {
-                float u = burn01(spell.burn.t, spell.burn.duration);
+                const float u = burn01(spell.burn.t, spell.burn.duration);
+
                 voxelShader->setInt("uBurnEnabled", 1);
                 voxelShader->setFloat("uBurn", u);
                 voxelShader->setVec3("uBurnCenter", spell.burn.center);
                 voxelShader->setFloat("uBurnRadius", spell.burn.radius);
                 voxelShader->setFloat("uBurnNoiseScale", spell.burn.noiseScale);
                 voxelShader->setFloat("uBurnEdgeWidth", spell.burn.edgeWidth);
-                voxelShader->setVec3("uBurnEmberColor", glm::vec3(2.5f, 0.9f, 0.2f));
+                voxelShader->setVec3(
+                        "uBurnEmberColor",
+                        glm::vec3(2.5f, 0.9f, 0.2f));
                 voxelShader->setFloat("uBurnCharStrength", 0.85f);
             } else {
                 voxelShader->setInt("uBurnEnabled", 0);
@@ -6046,6 +6119,23 @@ glDepthMask(depthMask);
                                 v.density = glm::max(v.density, 1.0f);
 
                                 any = true;
+
+                                if(v.material==4)
+                                {
+                                    v.color= glm::vec3(0.7, 0.7, 0.0);
+                                }
+                                else if(v.material==5)
+                                {
+                                    v.color= glm::vec3(0.0, 0.0, 1.0);
+                                }
+                                else if(v.material==7)
+                                {
+                                    v.color= glm::vec3(1.0, 0.0, 0.0);
+                                }
+                                else if(v.material==8)
+                                {
+                                    v.color= glm::vec3(1.0, 0.6, 0.0);
+                                }
                             }
                         }
                     }
@@ -6186,6 +6276,22 @@ glDepthMask(depthMask);
                                     v.material = material;
                                     any = true;
                                 }
+                                if(v.material==4)
+                                {
+                                    v.color= glm::vec3(0.7, 0.7, 0.0);
+                                }
+                                else if(v.material==5)
+                                {
+                                    v.color= glm::vec3(0.0, 0.0, 1.0);
+                                }
+                                else if(v.material==7)
+                                {
+                                    v.color= glm::vec3(1.0, 0.0, 0.0);
+                                }
+                                else if(v.material==8)
+                                {
+                                    v.color= glm::vec3(1.0, 0.6, 0.0);
+                                }
                             }
                         }
                     }
@@ -6288,6 +6394,23 @@ glDepthMask(depthMask);
                                 }
 
                                 any = true;
+
+                                if(v.material==4)
+                                {
+                                    v.color= glm::vec3(0.7, 0.7, 0.0);
+                                }
+                                else if(v.material==5)
+                                {
+                                    v.color= glm::vec3(0.0, 0.0, 1.0);
+                                }
+                                else if(v.material==7)
+                                {
+                                    v.color= glm::vec3(1.0, 0.0, 0.0);
+                                }
+                                else if(v.material==8)
+                                {
+                                    v.color= glm::vec3(1.0, 0.6, 0.0);
+                                }
                             }
                         }
                     }
@@ -6378,6 +6501,23 @@ glDepthMask(depthMask);
                                 else {
                                     // Solid -> a different solid type.
                                     v.fluidDensity = -1.0f;
+                                }
+
+                                if(v.material==4)
+                                {
+                                    v.color= glm::vec3(0.7, 0.7, 0.0);
+                                }
+                                else if(v.material==5)
+                                {
+                                    v.color= glm::vec3(0.0, 0.0, 1.0);
+                                }
+                                else if(v.material==7)
+                                {
+                                    v.color= glm::vec3(1.0, 0.0, 0.0);
+                                }
+                                else if(v.material==8)
+                                {
+                                    v.color= glm::vec3(1.0, 0.6, 0.0);
                                 }
 
                                 any = true;

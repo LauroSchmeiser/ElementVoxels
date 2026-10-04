@@ -24,6 +24,7 @@ enum class SoundID {
     MenuClose,
 
     Collision,
+    CollisionBreak,
     WaterSplash,
     Fire,
     Crunch,
